@@ -1,6 +1,20 @@
 package: "com.android.internal.telephony.flags"
 
 flag {
+  name: "use_alarm_callback"
+  namespace: "telephony"
+  description: "Use alarm callback instead of broadcast."
+  bug: "311476875"
+}
+
+flag {
+  name: "refine_preferred_data_profile_selection"
+  namespace: "telephony"
+  description: "Upon internet network connect, refine selection of preferred data profile."
+  bug: "311476883"
+}
+
+flag {
   name: "unthrottle_check_transport"
   namespace: "telephony"
   description: "Check transport when unthrottle."
@@ -34,3 +48,18 @@ flag {
   description: "Support additional slicing error codes and functionality."
   bug: "307378699"
 }
+
+flag {
+  name: "apn_setting_field_support_flag"
+  namespace: "telephony"
+  description: "Expose apn setting supporting field"
+  bug: "307038091"
+}
+
+flag {
+  name: "network_validation"
+  namespace: "telephony"
+  description: "Request network validation for data networks and response status."
+  bug:"286171724"
+}
+

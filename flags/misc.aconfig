@@ -16,6 +16,13 @@ flag {
 }
 
 flag {
+  name: "stop_spamming_emergency_notification"
+  namespace: "telephony"
+  description: "When set, the no wifi emergency calling availability notif will have a do not ask again button"
+  bug: "275225402"
+}
+
+flag {
   name: "enable_wps_check_api_flag"
   namespace: "telephony"
   description: "Enable system api isWpsCallNumber. Its an utility api to check if the dialed number is for Wireless Priority Service call."
@@ -27,4 +34,32 @@ flag {
   namespace: "telephony"
   description: "Check if access to mobile network configs restricted before displaying call options"
   bug: "309655251"
+}
+
+flag {
+  name: "reorganize_roaming_notification"
+  namespace: "telephony"
+  description: "Reorganize conditions to show and dismiss roaming notifications."
+  bug: "310594087"
+}
+
+flag {
+  name: "dismiss_network_selection_notification_on_sim_disable"
+  namespace: "telephony"
+  description: "Fix to dismiss network selection notification when disable sim."
+  bug: "310594186"
+}
+
+flag {
+  name: "load_dds_on_create"
+  namespace: "telephony"
+  description: "Load default data subid on create in PhoneGlobals."
+  bug: "310591561"
+}
+
+flag {
+  name: "enable_telephony_analytics"
+  namespace: "telephony"
+  description: "Enable Telephony Analytics information of Service State , Sms and Call scenarios"
+  bug: "309896524"
 }
