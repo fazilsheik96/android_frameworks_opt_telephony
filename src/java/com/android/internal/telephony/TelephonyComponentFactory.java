@@ -55,6 +55,7 @@ import com.android.internal.telephony.data.TelephonyNetworkFactory;
 import com.android.internal.telephony.emergency.EmergencyNumberTracker;
 import com.android.internal.telephony.flags.FeatureFlagsImpl;
 import com.android.internal.telephony.flags.FeatureFlags;
+import com.android.internal.telephony.flags.FeatureFlagsImpl;
 import com.android.internal.telephony.imsphone.ImsExternalCallTracker;
 import com.android.internal.telephony.imsphone.ImsNrSaModeHandler;
 import com.android.internal.telephony.imsphone.ImsPhone;
@@ -417,9 +418,28 @@ public class TelephonyComponentFactory {
         return new InboundSmsTracker(context, cursor, isCurrentFormat3gpp2);
     }
 
+    /**
+     * Create an ImsPhoneCallTracker.
+     *
+     * @param imsPhone imsphone
+     * @return ImsPhoneCallTracker newly created ImsPhoneCallTracker
+     * @deprecated Use {@link #makeImsPhoneCallTracker(ImsPhone, FeatureFlags)} instead
+     */
     public ImsPhoneCallTracker makeImsPhoneCallTracker(ImsPhone imsPhone) {
         Rlog.d(LOG_TAG, "makeImsPhoneCallTracker");
-        return new ImsPhoneCallTracker(imsPhone, ImsManager::getConnector);
+        return makeImsPhoneCallTracker(imsPhone, new FeatureFlagsImpl());
+    }
+
+    /**
+     * Create a ims phone call tracker.
+     *
+     * @param imsPhone imsphone
+     * @param featureFlags feature flags
+     * @return ImsPhoneCallTracker newly created ImsPhoneCallTracker
+     */
+    public ImsPhoneCallTracker makeImsPhoneCallTracker(ImsPhone imsPhone,
+                                                       @NonNull FeatureFlags featureFlags) {
+        return new ImsPhoneCallTracker(imsPhone, ImsManager::getConnector, featureFlags);
     }
 
     public ImsExternalCallTracker makeImsExternalCallTracker(ImsPhone imsPhone) {

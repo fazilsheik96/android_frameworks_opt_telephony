@@ -2295,6 +2295,10 @@ public class DataNetwork extends StateMachine {
             }
         }
 
+        if (mDataNetworkController.isEsimBootStrapProvisioningActivated()) {
+            builder.removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED);
+        }
+
         // If one of the capabilities are for special use, for example, IMS, CBS, then this
         // network should be restricted, regardless data is enabled or not.
         if (NetworkCapabilitiesUtils.inferRestrictedCapability(builder.build())
@@ -3336,7 +3340,8 @@ public class DataNetwork extends StateMachine {
             TelephonyNetworkRequest networkRequest = mAttachedNetworkRequestList.get(0);
             DataProfile dataProfile = mDataNetworkController.getDataProfileManager()
                     .getDataProfileForNetworkRequest(networkRequest, targetNetworkType,
-                            mPhone.getServiceState().isUsingNonTerrestrialNetwork(), false);
+                            mPhone.getServiceState().isUsingNonTerrestrialNetwork(),
+                            mDataNetworkController.isEsimBootStrapProvisioningActivated(), false);
             if (dataProfile != null) {
                 mHandoverDataProfile = dataProfile;
                 log("Used different data profile for handover. " + mDataProfile);

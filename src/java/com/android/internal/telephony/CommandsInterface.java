@@ -1751,6 +1751,12 @@ public interface CommandsInterface {
     public void getImei(Message response);
 
     /**
+     * Register to listen for the changes in the primary IMEI with respect to the sim slot.
+     */
+
+    public void registerForImeiMappingChanged(Handler h, int what, Object obj);
+
+    /**
      * Request the device MDN / H_SID / H_NID / MIN.
      * "response" is const char **
      *   [0] is MDN if CDMA subscription is available
@@ -2914,4 +2920,19 @@ public interface CommandsInterface {
      *  @param result Callback message.
      */
     public void getEnhancedRadioCapability(Message result);
+
+    /**
+     * Enables or disables cellular identifier disclosure transparency.
+     *
+     * @param enable {@code true} to enable, {@code false} to disable.
+     * @param result Callback message to receive the result.
+     */
+    default void setCellularIdentifierTransparencyEnabled(boolean enable, Message result) {}
+
+    /**
+     * Check whether cellular identifier transparency.
+     *
+     * @param result Callback message to receive the result.
+     */
+    default void isCellularIdentifierTransparencyEnabled(Message result) {}
 }
