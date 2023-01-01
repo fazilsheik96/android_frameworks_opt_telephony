@@ -546,7 +546,7 @@ public class MultiSimSettingController extends Handler {
         boolean setDefaultData = true;
         List<SubscriptionInfo> activeSubList = mSubscriptionManagerService
                 .getActiveSubscriptionInfoList(mContext.getOpPackageName(),
-                        mContext.getAttributionTag());
+                        mContext.getAttributionTag(), true/*isForAllProfile*/);
         for (SubscriptionInfo activeInfo : activeSubList) {
             if (!(groupUuid.equals(activeInfo.getGroupUuid()))) {
                 // Do not set refSubId as defaultDataSubId if there are other active
@@ -593,7 +593,7 @@ public class MultiSimSettingController extends Handler {
 
         List<SubscriptionInfo> activeSubInfos = mSubscriptionManagerService
                 .getActiveSubscriptionInfoList(mContext.getOpPackageName(),
-                        mContext.getAttributionTag());
+                        mContext.getAttributionTag(), true/*isForAllProfile*/);
 
         if (ArrayUtils.isEmpty(activeSubInfos)) {
             mPrimarySubList.clear();
