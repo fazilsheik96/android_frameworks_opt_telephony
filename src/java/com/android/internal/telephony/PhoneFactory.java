@@ -34,6 +34,7 @@ import android.os.Build;
 import android.os.HandlerThread;
 import android.os.Looper;
 import android.preference.PreferenceManager;
+import android.provider.DeviceConfig;
 import android.provider.Settings;
 import android.provider.Settings.SettingNotFoundException;
 import android.telephony.AnomalyReporter;
@@ -124,8 +125,11 @@ public class PhoneFactory {
             if (!sMadeDefaults) {
                 sContext = context;
 
+                // This is a temp flag which will be removed before U AOSP public release.
                 sSubscriptionManagerServiceEnabled = context.getResources().getBoolean(
-                        com.android.internal.R.bool.config_using_subscription_manager_service);
+                        com.android.internal.R.bool.config_using_subscription_manager_service)
+                        || DeviceConfig.getBoolean(DeviceConfig.NAMESPACE_TELEPHONY,
+                        "enable_subscription_manager_service", false);
 
                 // create the telephony device controller.
                 TelephonyDevController.create();
@@ -214,9 +218,14 @@ public class PhoneFactory {
                     TelephonyComponentFactory.getInstance().inject(SubscriptionController.class
                             .getName()).initSubscriptionController(context);
                 }
+
+                SubscriptionController sc = null;
+                if (!isSubscriptionManagerServiceEnabled()) {
+                    sc = SubscriptionController.getInstance();
+                }
+
                 TelephonyComponentFactory.getInstance().inject(MultiSimSettingController.class.
-                        getName()).initMultiSimSettingController(context,
-                        SubscriptionController.getInstance());
+                        getName()).initMultiSimSettingController(context, sc);
 
                 if (context.getPackageManager().hasSystemFeature(
                         PackageManager.FEATURE_TELEPHONY_EUICC)) {
@@ -606,9 +615,7 @@ public class PhoneFactory {
         pw.decreaseIndent();
         pw.println("++++++++++++++++++++++++++++++++");
 
-        if (isSubscriptionManagerServiceEnabled()) {
-            SubscriptionManagerService.getInstance().dump(fd, pw, args);
-        } else {
+        if (!isSubscriptionManagerServiceEnabled()) {
             pw.println("SubscriptionController:");
             pw.increaseIndent();
             try {

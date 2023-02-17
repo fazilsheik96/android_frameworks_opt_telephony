@@ -158,7 +158,6 @@ public class NetworkTypeController extends StateMachine {
     private boolean mIsTimerResetEnabledForLegacyStateRrcIdle;
     private int mLtePlusThresholdBandwidth;
     private int mNrAdvancedThresholdBandwidth;
-    private boolean mIncludeLteForNrAdvancedThresholdBandwidth;
     private @NonNull int[] mAdditionalNrAdvancedBandsList;
     private @NonNull String mPrimaryTimerState;
     private @NonNull String mSecondaryTimerState;
@@ -282,8 +281,6 @@ public class NetworkTypeController extends StateMachine {
                 CarrierConfigManager.KEY_LTE_PLUS_THRESHOLD_BANDWIDTH_KHZ_INT);
         mNrAdvancedThresholdBandwidth = config.getInt(
                 CarrierConfigManager.KEY_NR_ADVANCED_THRESHOLD_BANDWIDTH_KHZ_INT);
-        mIncludeLteForNrAdvancedThresholdBandwidth = config.getBoolean(
-                CarrierConfigManager.KEY_INCLUDE_LTE_FOR_NR_ADVANCED_THRESHOLD_BANDWIDTH_BOOL);
         mEnableNrAdvancedWhileRoaming = config.getBoolean(
                 CarrierConfigManager.KEY_ENABLE_NR_ADVANCED_WHILE_ROAMING_BOOL);
         mAdditionalNrAdvancedBandsList = config.getIntArray(
@@ -743,7 +740,8 @@ public class NetworkTypeController extends StateMachine {
                     // fallthrough
                 case EVENT_UPDATE:
                     int rat = getDataNetworkType();
-                    if (rat == TelephonyManager.NETWORK_TYPE_NR || isLte(rat) && isNrConnected()) {
+                    if (rat == TelephonyManager.NETWORK_TYPE_NR
+                            || (isLte(rat) && isNrConnected())) {
                         if (isNrAdvanced()) {
                             transitionTo(mNrConnectedAdvancedState);
                         } else {
@@ -755,7 +753,7 @@ public class NetworkTypeController extends StateMachine {
                         if (isPhysicalLinkActive()) {
                             transitionWithTimerTo(mLteConnectedState);
                         } else {
-                            // Update in case of LTE/LTE+ switch
+                            // Update in case the override network type changed
                             updateOverrideNetworkType();
                         }
                     }
@@ -839,7 +837,7 @@ public class NetworkTypeController extends StateMachine {
                         if (!isPhysicalLinkActive()) {
                             transitionWithTimerTo(mIdleState);
                         } else {
-                            // Update in case of LTE/LTE+ switch
+                            // Update in case the override network type changed
                             updateOverrideNetworkType();
                         }
                     }
@@ -910,11 +908,13 @@ public class NetworkTypeController extends StateMachine {
                     // fallthrough
                 case EVENT_UPDATE:
                     int rat = getDataNetworkType();
-                    if (rat == TelephonyManager.NETWORK_TYPE_NR || isLte(rat) && isNrConnected()) {
+                    if (rat == TelephonyManager.NETWORK_TYPE_NR
+                            || (isLte(rat) && isNrConnected())) {
                         if (isNrAdvanced()) {
                             transitionTo(mNrConnectedAdvancedState);
                         } else {
-                            // Same NR connected state
+                            // Update in case the override network type changed
+                            updateOverrideNetworkType();
                         }
                     } else if (isLte(rat) && isNrNotRestricted()) {
                         transitionWithTimerTo(isPhysicalLinkActive()
@@ -985,7 +985,8 @@ public class NetworkTypeController extends StateMachine {
                     if (rat == TelephonyManager.NETWORK_TYPE_NR
                             || (isLte(rat) && isNrConnected())) {
                         if (isNrAdvanced()) {
-                            // Same NR advanced state
+                            // Update in case the override network type changed
+                            updateOverrideNetworkType();
                         } else {
                             transitionWithTimerTo(mNrConnectedState);
                         }
@@ -1132,6 +1133,13 @@ public class NetworkTypeController extends StateMachine {
                 resetAllTimers();
             }
 
+            if (currentState.equals(STATE_CONNECTED)
+                    && !mPrimaryTimerState.equals(STATE_CONNECTED_NR_ADVANCED)
+                    && !mSecondaryTimerState.equals(STATE_CONNECTED_NR_ADVANCED)) {
+                if (DBG) log("Reset non-NR_advanced timers since state is NR_CONNECTED");
+                resetAllTimers();
+            }
+
             int rat = getDataNetworkType();
             if (!isLte(rat) && rat != TelephonyManager.NETWORK_TYPE_NR) {
                 if (DBG) log("Reset timers since 2G and 3G don't need NR timers.");
@@ -1259,20 +1267,11 @@ public class NetworkTypeController extends StateMachine {
             return false;
         }
 
-        int bandwidths = 0;
-        if (mPhone.getServiceStateTracker().getPhysicalChannelConfigList() != null) {
-            bandwidths = mPhone.getServiceStateTracker().getPhysicalChannelConfigList()
-                    .stream()
-                    .filter(config -> mIncludeLteForNrAdvancedThresholdBandwidth
-                            || config.getNetworkType() == TelephonyManager.NETWORK_TYPE_NR)
-                    .map(PhysicalChannelConfig::getCellBandwidthDownlinkKhz)
-                    .mapToInt(Integer::intValue)
-                    .sum();
-        }
-
         // Check if meeting minimum bandwidth requirement. For most carriers, there is no minimum
         // bandwidth requirement and mNrAdvancedThresholdBandwidth is 0.
-        if (mNrAdvancedThresholdBandwidth > 0 && bandwidths < mNrAdvancedThresholdBandwidth) {
+        if (mNrAdvancedThresholdBandwidth > 0
+                && IntStream.of(mPhone.getServiceState().getCellBandwidths()).sum()
+                < mNrAdvancedThresholdBandwidth) {
             return false;
         }
 

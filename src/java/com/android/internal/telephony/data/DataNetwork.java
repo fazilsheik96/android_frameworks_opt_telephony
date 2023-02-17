@@ -551,6 +551,10 @@ public class DataNetwork extends StateMachine {
     /** Data network controller. */
     private final @NonNull DataNetworkController mDataNetworkController;
 
+    /** Data network controller callback. */
+    private final @NonNull DataNetworkController.DataNetworkControllerCallback
+            mDataNetworkControllerCallback;
+
     /** Data config manager. */
     private final @NonNull DataConfigManager mDataConfigManager;
 
@@ -675,6 +679,9 @@ public class DataNetwork extends StateMachine {
      * The UIDs of packages that have carrier privilege.
      */
     private @NonNull int[] mAdministratorUids = new int[0];
+
+    /** Carrier privileges callback to monitor administrator UID change. */
+    private @Nullable TelephonyManager.CarrierPrivilegesCallback mCarrierPrivilegesCallback;
 
     /**
      * Carrier service package uid. This UID will not change through the life cycle of data network.
@@ -887,12 +894,14 @@ public class DataNetwork extends StateMachine {
         mAccessNetworksManager = phone.getAccessNetworksManager();
         mVcnManager = mPhone.getContext().getSystemService(VcnManager.class);
         mDataNetworkController = phone.getDataNetworkController();
+        mDataNetworkControllerCallback = new DataNetworkController.DataNetworkControllerCallback(
+                getHandler()::post) {
+            @Override
+            public void onSubscriptionPlanOverride() {
+                sendMessage(EVENT_SUBSCRIPTION_PLAN_OVERRIDE);
+            }};
         mDataNetworkController.registerDataNetworkControllerCallback(
-                new DataNetworkController.DataNetworkControllerCallback(getHandler()::post) {
-                    @Override
-                    public void onSubscriptionPlanOverride() {
-                        sendMessage(EVENT_SUBSCRIPTION_PLAN_OVERRIDE);
-                    }});
+                mDataNetworkControllerCallback);
         mDataConfigManager = mDataNetworkController.getDataConfigManager();
         mDataCallSessionStats = new DataCallSessionStats(mPhone);
         mDataNetworkCallback = callback;
@@ -911,8 +920,8 @@ public class DataNetwork extends StateMachine {
         for (int transportType : mAccessNetworksManager.getAvailableTransports()) {
             mCid.put(transportType, INVALID_CID);
         }
-        mTcpBufferSizes = mDataConfigManager.getDefaultTcpConfigString();
         mTelephonyDisplayInfo = mPhone.getDisplayInfoController().getTelephonyDisplayInfo();
+        mTcpBufferSizes = mDataConfigManager.getTcpConfigString(mTelephonyDisplayInfo);
 
         for (TelephonyNetworkRequest networkRequest : networkRequestList) {
             networkRequest.setAttachedNetwork(DataNetwork.this);
@@ -1042,8 +1051,22 @@ public class DataNetwork extends StateMachine {
                 mDataServiceManagers.get(transport)
                         .registerForDataCallListChanged(getHandler(), EVENT_DATA_STATE_CHANGED);
             }
-            mPhone.getCarrierPrivilegesTracker().registerCarrierPrivilegesListener(getHandler(),
-                    EVENT_CARRIER_PRIVILEGED_UIDS_CHANGED, null);
+
+            mCarrierPrivilegesCallback =
+                    (Set<String> privilegedPackageNames, Set<Integer> privilegedUids) -> {
+                        log("onCarrierPrivilegesChanged, Uids=" + privilegedUids.toString());
+                        Message message = obtainMessage(EVENT_CARRIER_PRIVILEGED_UIDS_CHANGED);
+                        AsyncResult.forMessage(
+                                message,
+                                privilegedUids.stream().mapToInt(i -> i).toArray(),
+                                null /* ex */);
+                        message.sendToTarget();
+                    };
+            TelephonyManager tm = mPhone.getContext().getSystemService(TelephonyManager.class);
+            if (tm != null) {
+                tm.registerCarrierPrivilegesCallback(
+                        mPhone.getPhoneId(), getHandler()::post, mCarrierPrivilegesCallback);
+            }
 
             mPhone.getServiceStateTracker().registerForCssIndicatorChanged(
                     getHandler(), EVENT_CSS_INDICATOR_CHANGED, null);
@@ -1077,7 +1100,10 @@ public class DataNetwork extends StateMachine {
             mPhone.getCallTracker().unregisterForVoiceCallEnded(getHandler());
 
             mPhone.getServiceStateTracker().unregisterForCssIndicatorChanged(getHandler());
-            mPhone.getCarrierPrivilegesTracker().unregisterCarrierPrivilegesListener(getHandler());
+            TelephonyManager tm = mPhone.getContext().getSystemService(TelephonyManager.class);
+            if (tm != null && mCarrierPrivilegesCallback != null) {
+                tm.unregisterCarrierPrivilegesCallback(mCarrierPrivilegesCallback);
+            }
             for (int transport : mAccessNetworksManager.getAvailableTransports()) {
                 mDataServiceManagers.get(transport)
                         .unregisterForDataCallListChanged(getHandler());
@@ -1326,17 +1352,6 @@ public class DataNetwork extends StateMachine {
                     }
 
                     int tearDownReason = msg.arg1;
-                    // If the tear down request is from upper layer, for example, IMS service
-                    // releases network request, we don't need to delay. The purpose of the delay
-                    // is to have IMS service have time to perform IMS de-registration, so if this
-                    // request is from IMS service itself, that means IMS service is already aware
-                    // of the tear down. So there is no need to delay in this case.
-                    if (tearDownReason != TEAR_DOWN_REASON_CONNECTIVITY_SERVICE_UNWANTED
-                            && shouldDelayImsTearDown()) {
-                        logl("Delay IMS tear down until call ends. reason="
-                                + tearDownReasonToString(tearDownReason));
-                        break;
-                    }
 
                     removeMessages(EVENT_TEAR_DOWN_NETWORK);
                     removeDeferredMessages(EVENT_TEAR_DOWN_NETWORK);
@@ -1585,6 +1600,8 @@ public class DataNetwork extends StateMachine {
             }
             notifyPreciseDataConnectionState();
             mNetworkAgent.unregister();
+            mDataNetworkController.unregisterDataNetworkControllerCallback(
+                    mDataNetworkControllerCallback);
             mDataCallSessionStats.onDataCallDisconnected(mFailCause);
 
             if (mTransport == AccessNetworkConstants.TRANSPORT_TYPE_WLAN
@@ -2384,7 +2401,7 @@ public class DataNetwork extends StateMachine {
         logl("onSetupResponse: resultCode=" + DataServiceCallback.resultCodeToString(resultCode)
                 + ", response=" + response);
         mFailCause = getFailCauseFromDataCallResponse(resultCode, response);
-        validateDataCallResponse(response);
+        validateDataCallResponse(response, true /*isSetupResponse*/);
         if (mFailCause == DataFailCause.NONE) {
             DataNetwork dataNetwork = mDataNetworkController.getDataNetworkByInterface(
                     response.getInterfaceName());
@@ -2449,15 +2466,18 @@ public class DataNetwork extends StateMachine {
                 getDataNetworkType(),
                 apnTypeBitmask,
                 protocol,
-                mFailCause);
+                // Log the raw fail cause to avoid large amount of UNKNOWN showing on metrics.
+                response != null ? response.getCause() : mFailCause);
     }
 
     /**
      * If the {@link DataCallResponse} contains invalid info, triggers an anomaly report.
      *
      * @param response The response to be validated
+     * @param isSetupResponse {@code true} if the response is for initial data call setup
      */
-    private void validateDataCallResponse(@Nullable DataCallResponse response) {
+    private void validateDataCallResponse(@Nullable DataCallResponse response,
+            boolean isSetupResponse) {
         if (response == null
                 || response.getLinkStatus() == DataCallResponse.LINK_STATUS_INACTIVE) return;
         int failCause = response.getCause();
@@ -2477,9 +2497,12 @@ public class DataNetwork extends StateMachine {
                 reportAnomaly("Invalid DataCallResponse detected",
                         "1f273e9d-b09c-46eb-ad1c-421d01f61164");
             }
+            // Check IP for initial setup response
             NetworkRegistrationInfo nri = getNetworkRegistrationInfo();
-            if (mDataProfile.getApnSetting() != null && nri != null && nri.isInService()) {
-                boolean isRoaming = mPhone.getServiceState().getDataRoamingFromRegistration();
+            if (isSetupResponse
+                    && mDataProfile.getApnSetting() != null && nri != null && nri.isInService()) {
+                boolean isRoaming = nri.getNetworkRegistrationState()
+                        == NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING;
                 int protocol = isRoaming ? mDataProfile.getApnSetting().getRoamingProtocol()
                         : mDataProfile.getApnSetting().getProtocol();
                 String underlyingDataService = mTransport
@@ -2570,7 +2593,7 @@ public class DataNetwork extends StateMachine {
      * @return {@code true} if this is an IMS network and tear down should be delayed until call
      * ends on this data network.
      */
-    public boolean shouldDelayImsTearDown() {
+    public boolean shouldDelayImsTearDownDueToInCall() {
         return mDataConfigManager.isImsDelayTearDownEnabled()
                 && mNetworkCapabilities != null
                 && mNetworkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_MMTEL)
@@ -2637,7 +2660,7 @@ public class DataNetwork extends StateMachine {
         if (response != null) {
             if (!response.equals(mDataCallResponse)) {
                 log("onDataStateChanged: " + response);
-                validateDataCallResponse(response);
+                validateDataCallResponse(response, false /*isSetupResponse*/);
                 mDataCallResponse = response;
                 if (response.getLinkStatus() != DataCallResponse.LINK_STATUS_INACTIVE) {
                     updateDataNetwork(response);
@@ -2794,9 +2817,12 @@ public class DataNetwork extends StateMachine {
             log("updateMeteredAndCongested: mTempNotMeteredSupported changed to "
                     + mTempNotMeteredSupported);
         }
-        if ((mDataNetworkController.getUnmeteredOverrideNetworkTypes().contains(networkType)
-                || isNetworkTypeUnmetered(networkType)) != mTempNotMetered) {
-            mTempNotMetered = !mTempNotMetered;
+        boolean isTempNotMetered = mDataConfigManager.isNetworkTypeUnmetered(
+                mTelephonyDisplayInfo, mPhone.getServiceState())
+                && (mDataNetworkController.getUnmeteredOverrideNetworkTypes().contains(networkType)
+                || isNetworkTypeUnmetered(networkType));
+        if (isTempNotMetered != mTempNotMetered) {
+            mTempNotMetered = isTempNotMetered;
             changed = true;
             log("updateMeteredAndCongested: mTempNotMetered changed to " + mTempNotMetered);
         }
@@ -3215,7 +3241,7 @@ public class DataNetwork extends StateMachine {
         logl("onHandoverResponse: resultCode=" + DataServiceCallback.resultCodeToString(resultCode)
                 + ", response=" + response);
         mFailCause = getFailCauseFromDataCallResponse(resultCode, response);
-        validateDataCallResponse(response);
+        validateDataCallResponse(response, false /*isSetupResponse*/);
         if (mFailCause == DataFailCause.NONE) {
             // Handover succeeded.
 
@@ -3258,7 +3284,7 @@ public class DataNetwork extends StateMachine {
             mDataNetworkCallback.invokeFromExecutor(
                     () -> mDataNetworkCallback.onHandoverFailed(DataNetwork.this,
                             mFailCause, retry, handoverFailureMode));
-            trackHandoverFailure();
+            trackHandoverFailure(response != null ? response.getCause() : mFailCause);
         }
 
         // No matter handover succeeded or not, transit back to connected state.
@@ -3268,13 +3294,15 @@ public class DataNetwork extends StateMachine {
     /**
      * Called when handover failed. Record the source and target RAT{@link NetworkType} and the
      * failure cause {@link android.telephony.DataFailCause}.
+     *
+     * @param cause The fail cause.
      */
-    private void trackHandoverFailure() {
+    private void trackHandoverFailure(int cause) {
         int sourceRat = getDataNetworkType();
         int targetTransport = DataUtils.getTargetTransport(mTransport);
         int targetRat = getDataNetworkType(targetTransport);
 
-        mDataCallSessionStats.onHandoverFailure(mFailCause, sourceRat, targetRat);
+        mDataCallSessionStats.onHandoverFailure(cause, sourceRat, targetRat);
     }
 
     /**

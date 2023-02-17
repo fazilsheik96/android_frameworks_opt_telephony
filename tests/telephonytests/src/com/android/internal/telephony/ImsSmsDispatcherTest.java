@@ -29,6 +29,7 @@ import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -114,6 +115,73 @@ public class ImsSmsDispatcherTest extends TelephonyTest {
         assertEquals(token + 1, mImsSmsDispatcher.mNextToken.get());
         verify(mImsManager).onMemoryAvailable(eq(token + 1));
     }
+
+    /**
+     * Receive SEND_STATUS_ERROR_RETRY with onMemoryAvailableResult Api and check if
+     * sending SMMA Notification is retried once
+     */
+    @Test
+    @SmallTest
+    public void testOnMemoryAvailableResultErrorRetry() throws Exception {
+        int token = mImsSmsDispatcher.mNextToken.get();
+        //Send SMMA
+        mImsSmsDispatcher.onMemoryAvailable();
+        assertEquals(token + 1, mImsSmsDispatcher.mNextToken.get());
+        verify(mImsManager).onMemoryAvailable(eq(token + 1));
+        // Retry over IMS
+        mImsSmsDispatcher.getSmsListener().onMemoryAvailableResult(token + 1,
+                ImsSmsImplBase.SEND_STATUS_ERROR_RETRY, SmsResponse.NO_ERROR_CODE);
+        waitForMs(SMSDispatcher.SEND_RETRY_DELAY + 200);
+        processAllMessages();
+        verify(mImsManager).onMemoryAvailable(eq(token + 2));
+        //2nd Failure should not retry
+        mImsSmsDispatcher.getSmsListener().onMemoryAvailableResult(token + 2,
+                ImsSmsImplBase.SEND_STATUS_ERROR_RETRY, SmsResponse.NO_ERROR_CODE);
+        waitForMs(SMSDispatcher.SEND_RETRY_DELAY + 200);
+        processAllMessages();
+        verify(mImsManager, times(0)).onMemoryAvailable(eq(token + 3));
+
+    }
+    /**
+     * Receive SEND_STATUS_OK with onMemoryAvailableResult Api and check if
+     * sending SMMA Notification behaviour is correct
+     */
+    @Test
+    @SmallTest
+    public void testOnMemoryAvailableResultSuccess() throws Exception {
+        int token = mImsSmsDispatcher.mNextToken.get();
+        //Send SMMA
+        mImsSmsDispatcher.onMemoryAvailable();
+        assertEquals(token + 1, mImsSmsDispatcher.mNextToken.get());
+        verify(mImsManager).onMemoryAvailable(eq(token + 1));
+        // Retry over IMS
+        mImsSmsDispatcher.getSmsListener().onMemoryAvailableResult(token + 1,
+                ImsSmsImplBase.SEND_STATUS_OK, SmsResponse.NO_ERROR_CODE);
+        waitForMs(SMSDispatcher.SEND_RETRY_DELAY + 200);
+        processAllMessages();
+        verify(mImsManager, times(0)).onMemoryAvailable(eq(token + 2));
+
+    }
+    /**
+     * Receive SEND_STATUS_ERROR with onMemoryAvailableResult Api and check if
+     * sending SMMA Notification behaviour is correct
+     */
+    @Test
+    @SmallTest
+    public void testOnMemoryAvailableResultError() throws Exception {
+        int token = mImsSmsDispatcher.mNextToken.get();
+        //Send SMMA
+        mImsSmsDispatcher.onMemoryAvailable();
+        assertEquals(token + 1, mImsSmsDispatcher.mNextToken.get());
+        verify(mImsManager).onMemoryAvailable(eq(token + 1));
+        // Retry over IMS
+        mImsSmsDispatcher.getSmsListener().onMemoryAvailableResult(token + 1,
+                ImsSmsImplBase.SEND_STATUS_ERROR, SmsResponse.NO_ERROR_CODE);
+        waitForMs(SMSDispatcher.SEND_RETRY_DELAY + 200);
+        processAllMessages();
+        verify(mImsManager, times(0)).onMemoryAvailable(eq(token + 2));
+
+    }
     /**
      * Send an SMS and verify that the token and PDU is correct.
      */
@@ -176,7 +244,7 @@ public class ImsSmsDispatcherTest extends TelephonyTest {
                                 .KEY_SMS_OVER_IMS_SEND_RETRY_DELAY_MILLIS_INT,
                                 2000);
         mContextFixture.getCarrierConfigBundle().putInt(CarrierConfigManager.ImsSms
-                                                .KEY_SMS_MAX_RETRY_COUNT_OVER_IMS_INT, 3);
+                                                .KEY_SMS_MAX_RETRY_OVER_IMS_COUNT_INT, 3);
         mContextFixture.getCarrierConfigBundle().putInt(CarrierConfigManager.ImsSms
                                                 .KEY_SMS_MAX_RETRY_COUNT_INT, 3);
         mTrackerData.put("pdu", com.android.internal.telephony.gsm.SmsMessage.getSubmitPdu(null,
@@ -254,7 +322,10 @@ public class ImsSmsDispatcherTest extends TelephonyTest {
     @Test
     public void testSendSmswithMessageRef() throws Exception {
         int token = mImsSmsDispatcher.mNextToken.get();
-        int messageRef = mImsSmsDispatcher.nextMessageRef() + 1;
+        int messageRef = mImsSmsDispatcher.nextMessageRef();
+        if (mImsSmsDispatcher.isMessageRefIncrementViaTelephony()) {
+            messageRef += 1;
+        }
 
         when(mImsManager.getSmsFormat()).thenReturn(SmsMessage.FORMAT_3GPP);
         when(mPhone.getPhoneType()).thenReturn(PhoneConstants.PHONE_TYPE_GSM);
@@ -270,7 +341,10 @@ public class ImsSmsDispatcherTest extends TelephonyTest {
     @Test
     public void testFallbackGsmRetrywithMessageRef() throws Exception {
         int token = mImsSmsDispatcher.mNextToken.get();
-        int messageRef = mImsSmsDispatcher.nextMessageRef() + 1;
+        int messageRef = mImsSmsDispatcher.nextMessageRef();
+        if (mImsSmsDispatcher.isMessageRefIncrementViaTelephony()) {
+            messageRef += 1;
+        }
 
         when(mImsManager.getSmsFormat()).thenReturn(SmsMessage.FORMAT_3GPP);
         when(mPhone.getPhoneType()).thenReturn(PhoneConstants.PHONE_TYPE_GSM);
@@ -289,18 +363,26 @@ public class ImsSmsDispatcherTest extends TelephonyTest {
         ArgumentCaptor<SMSDispatcher.SmsTracker> captor =
                 ArgumentCaptor.forClass(SMSDispatcher.SmsTracker.class);
         verify(mSmsDispatchersController).sendRetrySms(captor.capture());
-        assertTrue(messageRef + 1 == captor.getValue().mMessageRef);
+        if (mImsSmsDispatcher.isMessageRefIncrementViaTelephony()) {
+            assertTrue(messageRef + 1 == captor.getValue().mMessageRef);
+        } else {
+            assertTrue(messageRef == captor.getValue().mMessageRef);
+        }
     }
 
     @Test
     public void testErrorImsRetrywithMessageRef() throws Exception {
         int token = mImsSmsDispatcher.mNextToken.get();
-        int messageRef = mImsSmsDispatcher.nextMessageRef() + 1;
+        int messageRef = mImsSmsDispatcher.nextMessageRef();
+        if (mImsSmsDispatcher.isMessageRefIncrementViaTelephony()) {
+            messageRef += 1;
+        }
+
         mContextFixture.getCarrierConfigBundle().putInt(CarrierConfigManager.ImsSms
                                                 .KEY_SMS_OVER_IMS_SEND_RETRY_DELAY_MILLIS_INT,
                                                 2000);
         mContextFixture.getCarrierConfigBundle().putInt(CarrierConfigManager.ImsSms
-                                                .KEY_SMS_MAX_RETRY_COUNT_OVER_IMS_INT, 3);
+                                                .KEY_SMS_MAX_RETRY_OVER_IMS_COUNT_INT, 3);
         mContextFixture.getCarrierConfigBundle().putInt(CarrierConfigManager.ImsSms
                                                 .KEY_SMS_MAX_RETRY_COUNT_INT, 3);
         when(mImsManager.getSmsFormat()).thenReturn(SmsMessage.FORMAT_3GPP);
@@ -331,12 +413,16 @@ public class ImsSmsDispatcherTest extends TelephonyTest {
     @Test
     public void testErrorImsRetrywithRetryConfig() throws Exception {
         int token = mImsSmsDispatcher.mNextToken.get();
-        int messageRef = mImsSmsDispatcher.nextMessageRef() + 1;
+        int messageRef = mImsSmsDispatcher.nextMessageRef();
+        if (mImsSmsDispatcher.isMessageRefIncrementViaTelephony()) {
+            messageRef += 1;
+        }
+
         mContextFixture.getCarrierConfigBundle().putInt(CarrierConfigManager.ImsSms
                                                 .KEY_SMS_OVER_IMS_SEND_RETRY_DELAY_MILLIS_INT,
                                                 3000);
         mContextFixture.getCarrierConfigBundle().putInt(CarrierConfigManager.ImsSms
-                                                .KEY_SMS_MAX_RETRY_COUNT_OVER_IMS_INT, 2);
+                                                .KEY_SMS_MAX_RETRY_OVER_IMS_COUNT_INT, 2);
         mContextFixture.getCarrierConfigBundle().putInt(CarrierConfigManager.ImsSms
                                                 .KEY_SMS_MAX_RETRY_COUNT_INT, 3);
         when(mImsManager.getSmsFormat()).thenReturn(SmsMessage.FORMAT_3GPP);

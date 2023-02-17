@@ -26,13 +26,17 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import android.content.ComponentName;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
 import android.net.NetworkCapabilities;
+import android.os.AsyncResult;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.Message;
+import android.os.PersistableBundle;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.AccessNetworkConstants.AccessNetworkType;
 import android.telephony.NetworkService;
@@ -65,6 +69,8 @@ public class AccessNetworksManagerTest extends TelephonyTest {
     // The real callback passed created by AccessNetworksManager.
     private IQualifiedNetworksServiceCallback.Stub mQnsCallback;
 
+    private PersistableBundle mBundle;
+
     private void addQnsService() throws Exception {
         ServiceInfo QnsInfo = new ServiceInfo();
         QnsInfo.packageName = "fake.qns";
@@ -95,6 +101,9 @@ public class AccessNetworksManagerTest extends TelephonyTest {
         mMockedQns = mock(IQualifiedNetworksService.class);
         mMockedIBinder = mock(IBinder.class);
 
+        mBundle = mContextFixture.getCarrierConfigBundle();
+        when(mCarrierConfigManager.getConfigForSubId(anyInt(), any())).thenReturn(mBundle);
+
         addQnsService();
         mContextFixture.putResource(
                 com.android.internal.R.string.config_qualified_networks_service_package,
@@ -119,6 +128,7 @@ public class AccessNetworksManagerTest extends TelephonyTest {
     @After
     public void tearDown() throws Exception {
         mAccessNetworksManager = null;
+        mBundle = null;
         super.tearDown();
     }
 
@@ -146,6 +156,32 @@ public class AccessNetworksManagerTest extends TelephonyTest {
         assertThat(mAccessNetworksManager.getPreferredTransport(ApnSetting.TYPE_MMS))
                 .isEqualTo(AccessNetworkConstants.TRANSPORT_TYPE_WLAN);
         assertThat(mAccessNetworksManager.isAnyApnOnIwlan()).isTrue();
+    }
+
+    @Test
+    public void testGuideTransportTypeForEmergencyDataNetwork() throws Exception {
+        doAnswer(invocation -> {
+            int accessNetwork = AccessNetworkType.UNKNOWN;
+            if (invocation.getArguments()[1].equals(AccessNetworkConstants.TRANSPORT_TYPE_WLAN)) {
+                accessNetwork = AccessNetworkType.IWLAN;
+            } else if (invocation.getArguments()[1]
+                    .equals(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)) {
+                accessNetwork = AccessNetworkType.EUTRAN;
+            }
+            mQnsCallback.onQualifiedNetworkTypesChanged(ApnSetting.TYPE_EMERGENCY,
+                    new int[]{accessNetwork});
+            return null;
+        }).when(mMockedQns).reportEmergencyDataNetworkPreferredTransportChanged(anyInt(), anyInt());
+
+        AsyncResult asyncResult =
+                new AsyncResult(null, AccessNetworkConstants.TRANSPORT_TYPE_WLAN, null);
+        Message msg = this.mAccessNetworksManager
+                .obtainMessage(1 /* EVENT_GUIDE_TRANSPORT_TYPE_FOR_EMERGENCY */, asyncResult);
+        mAccessNetworksManager.sendMessage(msg);
+        processAllMessages();
+
+        assertThat(mAccessNetworksManager.getPreferredTransport(ApnSetting.TYPE_EMERGENCY))
+                .isEqualTo(AccessNetworkConstants.TRANSPORT_TYPE_WLAN);
     }
 
     @Test

@@ -42,6 +42,7 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
+import android.content.res.Resources.NotFoundException;
 import android.database.ContentObserver;
 import android.net.Uri;
 import android.os.AsyncResult;
@@ -149,6 +150,8 @@ public abstract class SMSDispatcher extends Handler {
     /** New status report received. */
     protected static final int EVENT_NEW_SMS_STATUS_REPORT = 10;
 
+    /** Retry Sending RP-SMMA Notification */
+    protected static final int EVENT_RETRY_SMMA = 11;
     // other
     protected static final int EVENT_NEW_ICC_SMS = 14;
     protected static final int EVENT_ICC_CHANGED = 15;
@@ -186,6 +189,14 @@ public abstract class SMSDispatcher extends Handler {
 
     /** Maximum number of times to retry sending a failed SMS. */
     protected static final int MAX_SEND_RETRIES = 3;
+
+    /** Retransmitted Flag as specified in section 6.3.1.2 in TS 124011
+     * true:  RP-SMMA Retried once and no more transmissions are permitted
+     * false: not retried at all and at least another transmission of the RP-SMMA message
+     * is currently permitted
+     */
+    protected boolean mRPSmmaRetried = false;
+
     /** Delay before next send attempt on a failed SMS, in milliseconds. */
     @VisibleForTesting
     public static final int SEND_RETRY_DELAY = 2000;
@@ -503,15 +514,40 @@ public abstract class SMSDispatcher extends Handler {
     }
 
     /**
-     *  Returns the next TP message Reference value incremented by 1 for every sms sent .
-     *  once a max of 255 is reached TP message Reference is reset to 0.
+     * Returns the next TP message Reference value incremented by 1 for every sms sent .
+     * once a max of 255 is reached TP message Reference is reset to 0.
      *
-     *  @return messageRef TP message Reference value
+     * @return messageRef TP message Reference value
      */
     public int nextMessageRef() {
+        if (!isMessageRefIncrementViaTelephony()) {
+            return 0;
+        }
+
         mMessageRef = (mMessageRef + 1) % 256;
         updateTPMessageReference();
         return mMessageRef;
+    }
+
+    /**
+     * As modem is using the last used TP-MR value present in SIM card, increment of
+     * messageRef(TP-MR) value should be prevented (config_stk_sms_send_support set to false)
+     * at telephony framework. In future, config_stk_sms_send_support flag will be enabled
+     * so that messageRef(TP-MR) increment will be done at framework side only.
+     *
+     * TODO:- Need to have new flag to control writing TP-MR value to SIM or shared prefrence.
+     */
+    public boolean isMessageRefIncrementViaTelephony() {
+        boolean isMessageRefIncrementEnabled = false;
+        try {
+            isMessageRefIncrementEnabled = mContext.getResources().getBoolean(
+                    com.android.internal.R.bool.config_stk_sms_send_support);
+        } catch (NotFoundException e) {
+            Rlog.e(TAG, "isMessageRefIncrementViaTelephony NotFoundException Exception");
+        }
+
+        Rlog.i(TAG, "bool.config_stk_sms_send_support= " + isMessageRefIncrementEnabled);
+        return isMessageRefIncrementEnabled;
     }
 
     /**

@@ -22,7 +22,6 @@ import android.annotation.NonNull;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.res.Resources;
 import android.os.AsyncResult;
 import android.os.Environment;
@@ -161,10 +160,6 @@ public class EmergencyNumberTracker extends Handler {
         @Override
         public void onReceive(Context context, Intent intent) {
             if (intent.getAction().equals(
-                    CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED)) {
-                onCarrierConfigChanged();
-                return;
-            } else if (intent.getAction().equals(
                     TelephonyManager.ACTION_NETWORK_COUNTRY_CHANGED)) {
                 int phoneId = intent.getIntExtra(PhoneConstants.PHONE_KEY, -1);
                 if (phoneId == mPhone.getPhoneId()) {
@@ -191,22 +186,22 @@ public class EmergencyNumberTracker extends Handler {
             CarrierConfigManager configMgr = (CarrierConfigManager)
                     mPhone.getContext().getSystemService(Context.CARRIER_CONFIG_SERVICE);
             if (configMgr != null) {
-                PersistableBundle b = configMgr.getConfigForSubId(mPhone.getSubId());
-                if (b != null) {
+                PersistableBundle b = CarrierConfigManager.getCarrierConfigSubset(
+                        mPhone.getContext(),
+                        mPhoneId,
+                        CarrierConfigManager.KEY_EMERGENCY_NUMBER_PREFIX_STRING_ARRAY);
+                if (!b.isEmpty()) {
                     mEmergencyNumberPrefix = b.getStringArray(
                             CarrierConfigManager.KEY_EMERGENCY_NUMBER_PREFIX_STRING_ARRAY);
                 }
+
+                // Callback which directly handle config change should be executed on handler thread
+                configMgr.registerCarrierConfigChangeListener(this::post,
+                        (slotIndex, subId, carrierId, specificCarrierId) ->
+                                onCarrierConfigUpdated(slotIndex));
             } else {
                 loge("CarrierConfigManager is null.");
             }
-
-            // Receive Carrier Config Changes
-            IntentFilter filter = new IntentFilter(
-                    CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED);
-            // Receive Telephony Network Country Changes
-            filter.addAction(TelephonyManager.ACTION_NETWORK_COUNTRY_CHANGED);
-
-            mPhone.getContext().registerReceiver(mIntentReceiver, filter);
 
             mIsHalVersionLessThan1Dot4 = mPhone.getHalVersion(HAL_SERVICE_VOICE)
                                                  .lessOrEqual(new HalVersion(1, 3));
@@ -357,23 +352,26 @@ public class EmergencyNumberTracker extends Handler {
         }
     }
 
-    private void onCarrierConfigChanged() {
+    private void onCarrierConfigUpdated(int slotIndex) {
         if (mPhone != null) {
-            CarrierConfigManager configMgr = (CarrierConfigManager)
-                    mPhone.getContext().getSystemService(Context.CARRIER_CONFIG_SERVICE);
-            if (configMgr != null) {
-                PersistableBundle b = configMgr.getConfigForSubId(mPhone.getSubId());
-                if (b != null) {
-                    String[] emergencyNumberPrefix = b.getStringArray(
+            if (slotIndex != mPhone.getPhoneId()) return;
+
+            PersistableBundle b =
+                    CarrierConfigManager.getCarrierConfigSubset(
+                            mPhone.getContext(),
+                            mPhone.getPhoneId(),
                             CarrierConfigManager.KEY_EMERGENCY_NUMBER_PREFIX_STRING_ARRAY);
-                    if (!Arrays.equals(mEmergencyNumberPrefix, emergencyNumberPrefix)) {
-                        this.obtainMessage(EVENT_UPDATE_EMERGENCY_NUMBER_PREFIX,
-                                emergencyNumberPrefix).sendToTarget();
-                    }
+            if (!b.isEmpty()) {
+                String[] emergencyNumberPrefix =
+                        b.getStringArray(
+                                CarrierConfigManager.KEY_EMERGENCY_NUMBER_PREFIX_STRING_ARRAY);
+                if (!Arrays.equals(mEmergencyNumberPrefix, emergencyNumberPrefix)) {
+                    this.obtainMessage(EVENT_UPDATE_EMERGENCY_NUMBER_PREFIX, emergencyNumberPrefix)
+                            .sendToTarget();
                 }
             }
         } else {
-            loge("onCarrierConfigChanged mPhone is null.");
+            loge("onCarrierConfigurationChanged mPhone is null.");
         }
     }
 
@@ -510,7 +508,7 @@ public class EmergencyNumberTracker extends Handler {
 
             if (((eccInfo.normalRoutingMncs).length != 0)
                     && (eccInfo.normalRoutingMncs[0].length() > 0)) {
-                emergencyCallRouting = EmergencyNumber.EMERGENCY_CALL_ROUTING_EMERGENCY;
+                emergencyCallRouting = EmergencyNumber.EMERGENCY_CALL_ROUTING_UNKNOWN;
 
                 for (String routingMnc : eccInfo.normalRoutingMncs) {
                     boolean mncExist = normalRoutedNumbers.containsKey(routingMnc);
@@ -785,7 +783,11 @@ public class EmergencyNumberTracker extends Handler {
         }
         mergedEmergencyNumberList.addAll(mEmergencyNumberListWithPrefix);
         mergedEmergencyNumberList.addAll(mEmergencyNumberListFromTestMode);
-        EmergencyNumber.mergeSameNumbersInEmergencyNumberList(mergedEmergencyNumberList);
+        if (shouldDeterminingOfUrnsAndCategoriesWhileMergingIgnored()) {
+            EmergencyNumber.mergeSameNumbersInEmergencyNumberList(mergedEmergencyNumberList);
+        } else {
+            EmergencyNumber.mergeSameNumbersInEmergencyNumberList(mergedEmergencyNumberList, true);
+        }
         mEmergencyNumberList = mergedEmergencyNumberList;
     }
 
@@ -815,16 +817,7 @@ public class EmergencyNumberTracker extends Handler {
      */
     private boolean shouldAdjustForRouting() {
         if (!shouldEmergencyNumberRoutingFromDbBeIgnored() && !mNormalRoutedNumbers.isEmpty()) {
-            CellIdentity cellIdentity = mPhone.getCurrentCellIdentity();
-            if (cellIdentity != null) {
-                String networkMnc = cellIdentity.getMncString();
-                if (mNormalRoutedNumbers.containsKey(networkMnc)) {
-                    Set<String> phoneNumbers = mNormalRoutedNumbers.get(networkMnc);
-                    if (phoneNumbers != null && !phoneNumbers.isEmpty()) {
-                        return true;
-                    }
-                }
-            }
+            return true;
         }
         return false;
     }
@@ -837,16 +830,15 @@ public class EmergencyNumberTracker extends Handler {
         CellIdentity cellIdentity = mPhone.getCurrentCellIdentity();
         if (cellIdentity != null) {
             String networkMnc = cellIdentity.getMncString();
-
             Set<String> normalRoutedPhoneNumbers = mNormalRoutedNumbers.get(networkMnc);
-            if (normalRoutedPhoneNumbers == null || normalRoutedPhoneNumbers.isEmpty()) {
-                return emergencyNumbers;
-            }
             Set<String> normalRoutedPhoneNumbersWithPrefix = new ArraySet<String>();
-            for (String num : normalRoutedPhoneNumbers) {
-                Set<String> phoneNumbersWithPrefix = addPrefixToEmergencyNumber(num);
-                if (phoneNumbersWithPrefix != null && !phoneNumbersWithPrefix.isEmpty()) {
-                    normalRoutedPhoneNumbersWithPrefix.addAll(phoneNumbersWithPrefix);
+
+            if (normalRoutedPhoneNumbers != null && !normalRoutedPhoneNumbers.isEmpty()) {
+                for (String num : normalRoutedPhoneNumbers) {
+                    Set<String> phoneNumbersWithPrefix = addPrefixToEmergencyNumber(num);
+                    if (phoneNumbersWithPrefix != null && !phoneNumbersWithPrefix.isEmpty()) {
+                        normalRoutedPhoneNumbersWithPrefix.addAll(phoneNumbersWithPrefix);
+                    }
                 }
             }
             List<EmergencyNumber> adjustedEmergencyNumberList = new ArrayList<>();
@@ -855,12 +847,16 @@ public class EmergencyNumberTracker extends Handler {
             for (EmergencyNumber num : emergencyNumbers) {
                 routing = num.getEmergencyCallRouting();
                 mnc = num.getMnc();
-                if (num.isFromSources(EmergencyNumber.EMERGENCY_NUMBER_SOURCE_DATABASE)
-                        && (normalRoutedPhoneNumbers.contains(num.getNumber())
-                        || (normalRoutedPhoneNumbersWithPrefix.contains(num.getNumber())))) {
-                    routing = EmergencyNumber.EMERGENCY_CALL_ROUTING_NORMAL;
-                    mnc = networkMnc;
-                    logd("adjustRoutingForEmergencyNumbers for number" + num.getNumber());
+                if (num.isFromSources(EmergencyNumber.EMERGENCY_NUMBER_SOURCE_DATABASE)) {
+                    if ((normalRoutedPhoneNumbers != null
+                            && normalRoutedPhoneNumbers.contains(num.getNumber()))
+                            || normalRoutedPhoneNumbersWithPrefix.contains(num.getNumber())) {
+                        routing = EmergencyNumber.EMERGENCY_CALL_ROUTING_NORMAL;
+                        mnc = networkMnc;
+                        logd("adjustRoutingForEmergencyNumbers for number" + num.getNumber());
+                    } else if (routing == EmergencyNumber.EMERGENCY_CALL_ROUTING_UNKNOWN) {
+                        routing = EmergencyNumber.EMERGENCY_CALL_ROUTING_EMERGENCY;
+                    }
                 }
                 adjustedEmergencyNumberList.add(new EmergencyNumber(num.getNumber(),
                         num.getCountryIso(), mnc,
@@ -1278,7 +1274,12 @@ public class EmergencyNumberTracker extends Handler {
                     mEmergencyNumberListFromDatabase));
         }
         mergedEmergencyNumberList.addAll(getEmergencyNumberListTestMode());
-        EmergencyNumber.mergeSameNumbersInEmergencyNumberList(mergedEmergencyNumberList);
+
+        if (shouldDeterminingOfUrnsAndCategoriesWhileMergingIgnored()) {
+            EmergencyNumber.mergeSameNumbersInEmergencyNumberList(mergedEmergencyNumberList);
+        } else {
+            EmergencyNumber.mergeSameNumbersInEmergencyNumberList(mergedEmergencyNumberList, true);
+        }
         return mergedEmergencyNumberList;
     }
 
@@ -1337,6 +1338,19 @@ public class EmergencyNumberTracker extends Handler {
     public boolean shouldEmergencyNumberRoutingFromDbBeIgnored() {
         return mResources.getBoolean(com.android.internal.R.bool
                 .ignore_emergency_number_routing_from_db);
+    }
+
+
+    /**
+     * @return {@code true} if determining of Urns & Service Categories while merging duplicate
+     * numbers should be ignored.
+     * {@code false} if determining of Urns & Service Categories while merging duplicate
+     * numbers should not be ignored.
+     */
+    @VisibleForTesting
+    public boolean shouldDeterminingOfUrnsAndCategoriesWhileMergingIgnored() {
+        // TODO: Device config
+        return false;
     }
 
     /**
