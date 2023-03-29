@@ -38,6 +38,7 @@ public class DatagramController {
     @NonNull private final DatagramDispatcher mDatagramDispatcher;
     @NonNull private final DatagramReceiver mDatagramReceiver;
     public static final long MAX_DATAGRAM_ID = (long) Math.pow(2, 16);
+    public static final int ROUNDING_UNIT = 10;
 
     /** Variables used to update onSendDatagramStateChanged(). */
     private int mSendSubId;
@@ -186,7 +187,6 @@ public class DatagramController {
         mSendErrorCode = errorCode;
         mPointingAppController.updateSendDatagramTransferState(subId, datagramTransferState,
                 sendPendingCount, errorCode);
-        notifyDatagramTransferStateChangedToSessionController();
     }
 
     /**
@@ -211,7 +211,6 @@ public class DatagramController {
         mReceiveErrorCode = errorCode;
         mPointingAppController.updateReceiveDatagramTransferState(subId, datagramTransferState,
                 receivePendingCount, errorCode);
-        notifyDatagramTransferStateChangedToSessionController();
     }
 
     /**
@@ -220,17 +219,6 @@ public class DatagramController {
      */
     public int getReceivePendingCount() {
         return mReceivePendingCount;
-    }
-
-    private void notifyDatagramTransferStateChangedToSessionController() {
-        SatelliteSessionController sessionController = SatelliteSessionController.getInstance();
-        if (sessionController == null) {
-            loge("notifyDatagramTransferStateChangeToSessionController: SatelliteSessionController"
-                    + " is not initialized yet");
-        } else {
-            sessionController.onDatagramTransferStateChanged(
-                    mSendDatagramTransferState, mReceiveDatagramTransferState);
-        }
     }
 
     private static void logd(@NonNull String log) {
