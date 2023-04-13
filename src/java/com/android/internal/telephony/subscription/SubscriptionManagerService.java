@@ -933,10 +933,8 @@ public class SubscriptionManagerService extends ISub.Stub {
                 .forEach(subInfo -> {
                     mSubscriptionDatabaseManager.setSimSlotIndex(subInfo.getSubscriptionId(),
                             SubscriptionManager.INVALID_SIM_SLOT_INDEX);
-                    // Sometime even though slot-port is inactive, proper iccid will be present,
-                    // hence retry the port index from UiccSlot. (Pre-U behavior)
                     mSubscriptionDatabaseManager.setPortIndex(subInfo.getSubscriptionId(),
-                            getPortIndex(subInfo.getIccId()));
+                            TelephonyManager.INVALID_PORT_INDEX);
                 });
         updateGroupDisabled();
         logl("markSubscriptionsInactive: current mapping " + slotMappingToString());
@@ -3815,12 +3813,11 @@ public class SubscriptionManagerService extends ISub.Stub {
     }
 
     /**
-     * Called when SIM becomes inactive.
+     * Called when eSIM becomes inactive.
      *
      * @param slotIndex The logical SIM slot index.
-     * @param iccId iccId of the SIM in inactivate slot
      */
-    public void updateSimStateForInactivePort(int slotIndex, String iccId) {
+    public void updateSimStateForInactivePort(int slotIndex) {
         mHandler.post(() -> {
             logl("updateSimStateForInactivePort: slotIndex=" + slotIndex);
             if (mSlotIndexToSubId.containsKey(slotIndex)) {
@@ -3830,17 +3827,6 @@ public class SubscriptionManagerService extends ISub.Stub {
                         mSlotIndexToSubId.get(slotIndex), true);
                 updateSubscription(slotIndex);
             }
-            if (!TextUtils.isEmpty(iccId)) {
-                // When port is inactive, sometimes valid iccid is present in the slot status,
-                // hence update the portIndex. (Pre-U behavior)
-                SubscriptionInfoInternal subInfo = mSubscriptionDatabaseManager
-                        .getSubscriptionInfoInternalByIccId(IccUtils.stripTrailingFs(iccId));
-                if (subInfo != null) {
-                    mSubscriptionDatabaseManager.setPortIndex(subInfo.getSubscriptionId(),
-                            getPortIndex(iccId));
-                }
-            }
-
         });
     }
 
