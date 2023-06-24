@@ -181,11 +181,6 @@ public class GsmCdmaPhone extends Phone {
 
     //CDMA
     private static final String VM_NUMBER_CDMA = "vm_number_key_cdma";
-    private static final String PREFIX_WPS = "*272";
-    // WPS prefix when CLIR is being deactivated for the call.
-    private static final String PREFIX_WPS_CLIR_DEACTIVATE = "#31#*272";
-    // WPS prefix when CLIS is being activated for the call.
-    private static final String PREFIX_WPS_CLIR_ACTIVATE = "*31#*272";
     private CdmaSubscriptionSourceManager mCdmaSSM;
     public int mCdmaSubscriptionSource = CdmaSubscriptionSourceManager.SUBSCRIPTION_SOURCE_UNKNOWN;
     private PowerManager.WakeLock mWakeLock;
@@ -1443,9 +1438,7 @@ public class GsmCdmaPhone extends Phone {
         }
 
         /** Check if the call is Wireless Priority Service call */
-        boolean isWpsCall = dialString != null ? (dialString.startsWith(PREFIX_WPS)
-                || dialString.startsWith(PREFIX_WPS_CLIR_ACTIVATE)
-                || dialString.startsWith(PREFIX_WPS_CLIR_DEACTIVATE)) : false;
+        boolean isWpsCall = PhoneNumberUtils.isWpsCallNumber(dialString);
 
         ImsPhone.ImsDialArgs.Builder imsDialArgsBuilder;
         imsDialArgsBuilder = ImsPhone.ImsDialArgs.Builder.from(dialArgs)
@@ -3088,7 +3081,6 @@ public class GsmCdmaPhone extends Phone {
         mCi.areUiccApplicationsEnabled(obtainMessage(EVENT_GET_UICC_APPS_ENABLEMENT_DONE));
 
         handleNullCipherEnabledChange();
-        startLceAfterRadioIsAvailable();
         mCi.setSuppServiceNotifications(true, null);
     }
 
@@ -4329,7 +4321,6 @@ public class GsmCdmaPhone extends Phone {
         } else {
             loge("deleteAndCreatePhone: newVoiceRadioTech=" + newVoiceRadioTech +
                     " is not CDMA or GSM (error) - aborting!");
-            return;
         }
     }
 
