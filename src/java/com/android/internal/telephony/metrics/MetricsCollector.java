@@ -97,6 +97,8 @@ import com.android.internal.telephony.nano.PersistAtomsProto.SipTransportSession
 import com.android.internal.telephony.nano.PersistAtomsProto.UceEventStats;
 import com.android.internal.telephony.nano.PersistAtomsProto.VoiceCallRatUsage;
 import com.android.internal.telephony.nano.PersistAtomsProto.VoiceCallSession;
+import com.android.internal.telephony.uicc.UiccController;
+import com.android.internal.telephony.uicc.UiccSlot;
 import com.android.internal.util.ConcurrentUtils;
 import com.android.telephony.Rlog;
 
@@ -193,13 +195,13 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
             registerAtom(GBA_EVENT);
             registerAtom(PER_SIM_STATUS);
             registerAtom(OUTGOING_SHORT_CODE_SMS);
+            registerAtom(EMERGENCY_NUMBERS_INFO);
             registerAtom(SATELLITE_CONTROLLER);
             registerAtom(SATELLITE_SESSION);
             registerAtom(SATELLITE_INCOMING_DATAGRAM);
             registerAtom(SATELLITE_OUTGOING_DATAGRAM);
             registerAtom(SATELLITE_PROVISION);
             registerAtom(SATELLITE_SOS_MESSAGE_RECOMMENDER);
-            registerAtom(EMERGENCY_NUMBERS_INFO);
             Rlog.d(TAG, "registered");
         } else {
             Rlog.e(TAG, "could not get StatsManager, atoms not registered");
@@ -276,6 +278,8 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 return pullPerSimStatus(data);
             case OUTGOING_SHORT_CODE_SMS:
                 return pullOutgoingShortCodeSms(data);
+            case EMERGENCY_NUMBERS_INFO:
+                return pullEmergencyNumbersInfo(data);
             case SATELLITE_CONTROLLER:
                 return pullSatelliteController(data);
             case SATELLITE_SESSION:
@@ -288,8 +292,6 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 return pullSatelliteProvision(data);
             case SATELLITE_SOS_MESSAGE_RECOMMENDER:
                 return pullSatelliteSosMessageRecommender(data);
-            case EMERGENCY_NUMBERS_INFO:
-                return pullEmergencyNumbersInfo(data);
             default:
                 Rlog.e(TAG, String.format("unexpected atom ID %d", atomTag));
                 return StatsManager.PULL_SKIP;
@@ -383,7 +385,9 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                         SIM_SLOT_STATE,
                         state.numActiveSlots,
                         state.numActiveSims,
-                        state.numActiveEsims));
+                        state.numActiveEsims,
+                        state.numActiveEsimSlots,
+                        state.numActiveMepSlots));
         return StatsManager.PULL_SUCCESS;
     }
 
@@ -572,9 +576,14 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
         boolean hasDedicatedManagedProfileSub = Arrays.stream(phones)
                 .anyMatch(Phone::isManagedProfile);
 
+        UiccSlot[] slots = UiccController.getInstance().getUiccSlots();
+        int mepSupportedSlotCount = (int) Arrays.stream(slots)
+                .filter(UiccSlot::isMultipleEnabledProfileSupported)
+                .count();
+
         data.add(TelephonyStatsLog.buildStatsEvent(DEVICE_TELEPHONY_PROPERTIES, true,
                 isAutoDataSwitchOn, mStorage.getAutoDataSwitchToggleCount(),
-                hasDedicatedManagedProfileSub));
+                hasDedicatedManagedProfileSub, mepSupportedSlotCount));
         return StatsManager.PULL_SUCCESS;
     }
 
@@ -797,6 +806,21 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
         }
     }
 
+    private int pullEmergencyNumbersInfo(List<StatsEvent> data) {
+        boolean isDataLogged = false;
+        for (Phone phone : getPhonesIfAny()) {
+            if (phone != null) {
+                EmergencyNumberTracker tracker = phone.getEmergencyNumberTracker();
+                if (tracker != null) {
+                    EmergencyNumbersInfo[] numList = tracker.getEmergencyNumbersProtoArray();
+                    Arrays.stream(numList).forEach(number -> data.add(buildStatsEvent(number)));
+                    isDataLogged = true;
+                }
+            }
+        }
+        return isDataLogged ? StatsManager.PULL_SUCCESS : StatsManager.PULL_SKIP;
+    }
+
     private int pullSatelliteController(List<StatsEvent> data) {
         SatelliteController[] controllerAtoms =
                 mStorage.getSatelliteControllerStats(MIN_COOLDOWN_MILLIS);
@@ -875,21 +899,6 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
             Rlog.w(TAG, "SATELLITE_SOS_MESSAGE_RECOMMENDER pull too frequent, skipping");
             return StatsManager.PULL_SKIP;
         }
-    }
-
-    private int pullEmergencyNumbersInfo(List<StatsEvent> data) {
-        boolean isDataLogged = false;
-        for (Phone phone : getPhonesIfAny()) {
-            if (phone != null) {
-                EmergencyNumberTracker tracker = phone.getEmergencyNumberTracker();
-                if (tracker != null) {
-                    EmergencyNumbersInfo[] numList = tracker.getEmergencyNumbersProtoArray();
-                    Arrays.stream(numList).forEach(number -> data.add(buildStatsEvent(number)));
-                    isDataLogged = true;
-                }
-            }
-        }
-        return isDataLogged ? StatsManager.PULL_SUCCESS : StatsManager.PULL_SKIP;
     }
 
     /** Registers a pulled atom ID {@code atomId}. */
@@ -1243,6 +1252,21 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 shortCodeSms.shortCodeSmsCount);
     }
 
+    private static StatsEvent buildStatsEvent(EmergencyNumbersInfo emergencyNumber) {
+        return TelephonyStatsLog.buildStatsEvent(
+                EMERGENCY_NUMBERS_INFO,
+                emergencyNumber.isDbVersionIgnored,
+                emergencyNumber.assetVersion,
+                emergencyNumber.otaVersion,
+                emergencyNumber.number,
+                emergencyNumber.countryIso,
+                emergencyNumber.mnc,
+                emergencyNumber.route,
+                emergencyNumber.urns,
+                emergencyNumber.serviceCategories,
+                emergencyNumber.sources);
+    }
+
     private static StatsEvent buildStatsEvent(SatelliteController satelliteController) {
         return TelephonyStatsLog.buildStatsEvent(
                 SATELLITE_CONTROLLER,
@@ -1307,21 +1331,6 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 stats.isImsRegistered,
                 stats.cellularServiceState,
                 stats.count);
-    }
-
-    private static StatsEvent buildStatsEvent(EmergencyNumbersInfo emergencyNumber) {
-        return TelephonyStatsLog.buildStatsEvent(
-                EMERGENCY_NUMBERS_INFO,
-                emergencyNumber.isDbVersionIgnored,
-                emergencyNumber.assetVersion,
-                emergencyNumber.otaVersion,
-                emergencyNumber.number,
-                emergencyNumber.countryIso,
-                emergencyNumber.mnc,
-                emergencyNumber.route,
-                emergencyNumber.urns,
-                emergencyNumber.serviceCategories,
-                emergencyNumber.sources);
     }
 
     /** Returns all phones in {@link PhoneFactory}, or an empty array if phones not made yet. */

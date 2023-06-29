@@ -74,6 +74,7 @@ import android.telephony.data.DataProfile;
 import android.telephony.data.DataService;
 import android.telephony.data.DataServiceCallback;
 import android.telephony.data.NetworkSliceInfo;
+import android.telephony.data.Qos;
 import android.telephony.data.QosBearerSession;
 import android.telephony.data.TrafficDescriptor;
 import android.telephony.data.TrafficDescriptor.OsAppId;
@@ -677,6 +678,9 @@ public class DataNetwork extends StateMachine {
     /** The QOS bearer sessions. */
     private final @NonNull List<QosBearerSession> mQosBearerSessions = new ArrayList<>();
 
+    /** The QOS for the Default Bearer, should be non-null on LTE and NR */
+    private @Nullable Qos mDefaultQos;
+
     /**
      * The UIDs of packages that have carrier privilege.
      */
@@ -807,6 +811,12 @@ public class DataNetwork extends StateMachine {
          */
         public abstract void onDisconnected(@NonNull DataNetwork dataNetwork,
                 @DataFailureCause int cause, @TearDownReason int tearDownReason);
+
+        /**
+         * Called when handover between IWLAN and cellular network started.
+         * @param dataNetwork The data network.
+         */
+        public abstract void onHandoverStarted(@NonNull DataNetwork dataNetwork);
 
         /**
          * Called when handover between IWLAN and cellular network succeeded.
@@ -1434,6 +1444,8 @@ public class DataNetwork extends StateMachine {
             sendMessageDelayed(EVENT_STUCK_IN_TRANSIENT_STATE,
                     mDataConfigManager.getNetworkHandoverTimeoutMs());
             notifyPreciseDataConnectionState();
+            mDataNetworkCallback.invokeFromExecutor(
+                    () -> mDataNetworkCallback.onHandoverStarted(DataNetwork.this));
         }
 
         @Override
@@ -2404,6 +2416,8 @@ public class DataNetwork extends StateMachine {
         mTrafficDescriptors.clear();
         mTrafficDescriptors.addAll(response.getTrafficDescriptors());
 
+        mDefaultQos = response.getDefaultQos();
+
         updateQosBearerSessions(response.getQosBearerSessions());
 
         if (!linkProperties.equals(mLinkProperties)) {
@@ -3183,6 +3197,7 @@ public class DataNetwork extends StateMachine {
                 .setLinkProperties(mLinkProperties)
                 .setNetworkType(getDataNetworkType())
                 .setFailCause(mFailCause)
+                .setDefaultQos(mDefaultQos)
                 .build();
     }
 
