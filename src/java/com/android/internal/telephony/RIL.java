@@ -1707,7 +1707,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
         RILRequest rr = obtainRequest(RIL_REQUEST_GET_IMSI, result, mRILDefaultWorkSource);
 
         if (RILJ_LOGD) {
-            riljLog(rr.serialString() + ">" + RILUtils.requestToString(rr.mRequest)
+            riljLog(rr.serialString() + "> " + RILUtils.requestToString(rr.mRequest)
                     + " aid = " + aid);
         }
         radioServiceInvokeHelper(HAL_SERVICE_SIM, rr, "getIMSIForApp", () -> {

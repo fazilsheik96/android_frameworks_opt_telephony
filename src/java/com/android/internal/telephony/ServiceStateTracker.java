@@ -411,6 +411,11 @@ public class ServiceStateTracker extends Handler {
                     // state in case our service state was never broadcasted (we don't notify
                     // service states when the subId is invalid)
                     mPhone.notifyServiceStateChanged(mPhone.getServiceState());
+                    // On SubscriptionId changed from invalid  to valid sub id, create
+                    // ServiceStateProvider with valid sub id entry. Note: PollStateDone can update
+                    // the DB again,for the SubID with any change detected at poll state request
+                    log("Update SS information on moving from invalid to valid sub id");
+                    updateServiceStateToDb(mPhone.getServiceState());
                 }
 
                 boolean restoreSelection = !context.getResources().getBoolean(
@@ -3851,10 +3856,7 @@ public class ServiceStateTracker extends Handler {
                 mPhone.notifyServiceStateChanged(mPhone.getServiceState());
             }
 
-            // insert into ServiceStateProvider. This will trigger apps to wake through JobScheduler
-            mPhone.getContext().getContentResolver()
-                    .insert(getUriForSubscriptionId(mPhone.getSubId()),
-                            getContentValuesForServiceState(mSS));
+            updateServiceStateToDb(mPhone.getServiceState());
 
             TelephonyMetrics.getInstance().writeServiceStateChanged(mPhone.getPhoneId(), mSS);
             mPhone.getVoiceCallSessionStats().onServiceStateChanged(mSS);
@@ -3982,6 +3984,16 @@ public class ServiceStateTracker extends Handler {
                 mReportedGprsNoReg = false;
             }
         }
+    }
+
+    /**
+     * Insert SS information into ServiceStateProvider DB table for a sub id.
+     * This will trigger apps to wake through JobScheduler
+     */
+    private void updateServiceStateToDb(ServiceState serviceState) {
+        mPhone.getContext().getContentResolver()
+                .insert(getUriForSubscriptionId(mPhone.getSubId()),
+                        getContentValuesForServiceState(serviceState));
     }
 
     private String getOperatorNameFromEri() {
