@@ -985,7 +985,9 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 session.isMultiparty,
                 session.callDuration,
                 session.lastKnownRat,
-                session.foldState);
+                session.foldState,
+                session.ratSwitchCountAfterConnected,
+                session.handoverInProgress);
     }
 
     private static StatsEvent buildStatsEvent(IncomingSms sms) {
