@@ -455,6 +455,9 @@ public class SimPhonebookRecordCache extends Handler {
                 mIsCacheInvalidated.set(false);
                 notifyAdnLoadingWaiters();
                 tryFireUpdatePendingList();
+            } else if (!newCapacity.isSimValid()) {
+                mIsCacheInvalidated.set(false);
+                notifyAdnLoadingWaiters();
             } else if (!mIsUpdateDone && !newCapacity.isSimEmpty()) {
                 invalidateSimPbCache();
                 fillCacheWithoutWaiting();
