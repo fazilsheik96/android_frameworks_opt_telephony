@@ -84,6 +84,7 @@ import com.android.ims.ImsException;
 import com.android.ims.ImsManager;
 import com.android.internal.R;
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.telephony.analytics.TelephonyAnalytics;
 import com.android.internal.telephony.data.AccessNetworksManager;
 import com.android.internal.telephony.data.DataNetworkController;
 import com.android.internal.telephony.data.DataSettingsManager;
@@ -476,6 +477,7 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
 
     protected VoiceCallSessionStats mVoiceCallSessionStats;
     protected SmsStats mSmsStats;
+    protected TelephonyAnalytics mTelephonyAnalytics;
 
     protected LinkBandwidthEstimator mLinkBandwidthEstimator;
 
@@ -644,6 +646,10 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
                 .makeSimActivationTracker(this);
         if (getPhoneType() != PhoneConstants.PHONE_TYPE_SIP) {
             mCi.registerForSrvccStateChanged(this, EVENT_SRVCC_STATE_CHANGED, null);
+        }
+        //Initialize Telephony Analytics
+        if (isTelephonyAnalyticsEnabled()) {
+            mTelephonyAnalytics = new TelephonyAnalytics(this);
         }
     }
 
@@ -4735,6 +4741,16 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         mSmsStats = smsStats;
     }
 
+    /** Getter for Telephony Analytics */
+    public TelephonyAnalytics getTelephonyAnalytics() {
+        return mTelephonyAnalytics;
+    }
+
+    public boolean isTelephonyAnalyticsEnabled() {
+        return mContext.getResources().getBoolean(
+                com.android.internal.R.bool.telephony_analytics_switch);
+    }
+
     /** @hide */
     public CarrierPrivilegesTracker getCarrierPrivilegesTracker() {
         return null;
@@ -5649,6 +5665,13 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
             }
             pw.flush();
             pw.println("++++++++++++++++++++++++++++++++");
+        }
+        if (mTelephonyAnalytics != null) {
+            try {
+                mTelephonyAnalytics.dump(fd, pw, args);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
         }
     }
 
