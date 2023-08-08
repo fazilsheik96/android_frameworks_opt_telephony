@@ -29,6 +29,7 @@ import android.provider.Settings;
 import android.sysprop.TelephonyProperties;
 import android.telephony.CarrierConfigManager;
 import android.telephony.SubscriptionInfo;
+import android.telephony.SubscriptionManager;
 import android.telephony.SubscriptionManager.OnSubscriptionsChangedListener;
 import android.telephony.TelephonyManager;
 import android.telephony.TelephonyManager.MobileDataPolicy;
@@ -134,8 +135,9 @@ public class DataSettingsManager extends Handler {
          * Called when user data enabled state changed.
          *
          * @param enabled {@code true} indicates user mobile data is enabled.
+         * @param callingPackage The package that changed the data enabled state.
          */
-        public void onUserDataEnabledChanged(boolean enabled) {}
+        public void onUserDataEnabledChanged(boolean enabled, @NonNull String callingPackage) {}
 
         /**
          * Called when overall data enabled state changed.
@@ -208,7 +210,9 @@ public class DataSettingsManager extends Handler {
             case EVENT_SUBSCRIPTIONS_CHANGED: {
                 mSubId = (int) msg.obj;
                 refreshEnabledMobileDataPolicy();
-                updateDataEnabledAndNotify(TelephonyManager.DATA_ENABLED_REASON_USER);
+                updateDataEnabledAndNotify(TelephonyManager.DATA_ENABLED_REASON_USER,
+                        mPhone.getContext().getOpPackageName(),
+                        SubscriptionManager.isValidSubscriptionId(mSubId));
                 mPhone.notifyUserMobileDataStateChanged(isUserDataEnabled());
                 break;
             }
@@ -303,9 +307,11 @@ public class DataSettingsManager extends Handler {
                 phone.getDataSettingsManager().registerCallback(new DataSettingsManagerCallback(
                         this::post) {
                     @Override
-                    public void onUserDataEnabledChanged(boolean enabled) {
+                    public void onUserDataEnabledChanged(boolean enabled,
+                            @NonNull String callingPackage) {
                         log("phone" + phone.getPhoneId() + " onUserDataEnabledChanged "
-                                + enabled + ", reevaluating mobile data policies");
+                                + enabled + " by " + callingPackage
+                                + ", reevaluating mobile data policies");
                         DataSettingsManager.this.updateDataEnabledAndNotify(
                                 TelephonyManager.DATA_ENABLED_REASON_OVERRIDE);
                     }
@@ -339,17 +345,16 @@ public class DataSettingsManager extends Handler {
         }
     }
 
-    protected void updateDataEnabledAndNotify(
-            @TelephonyManager.DataEnabledChangedReason int reason) {
-        updateDataEnabledAndNotify(reason, mPhone.getContext().getOpPackageName());
+    protected void updateDataEnabledAndNotify(@TelephonyManager.DataEnabledChangedReason int reason) {
+        updateDataEnabledAndNotify(reason, mPhone.getContext().getOpPackageName(), false);
     }
 
     private void updateDataEnabledAndNotify(@TelephonyManager.DataEnabledChangedReason int reason,
-            @NonNull String callingPackage) {
+            @NonNull String callingPackage, boolean shouldNotify) {
         boolean prevDataEnabled = mIsDataEnabled;
         mIsDataEnabled = isDataEnabled(ApnSetting.TYPE_ALL);
         log("mIsDataEnabled=" + mIsDataEnabled + ", prevDataEnabled=" + prevDataEnabled);
-        if (!mInitialized || prevDataEnabled != mIsDataEnabled) {
+        if (!mInitialized || shouldNotify || prevDataEnabled != mIsDataEnabled) {
             if (!mInitialized) mInitialized = true;
             notifyDataEnabledChanged(mIsDataEnabled, reason, callingPackage);
         }
@@ -465,8 +470,9 @@ public class DataSettingsManager extends Handler {
             logl("UserDataEnabled changed to " + enabled);
             mPhone.notifyUserMobileDataStateChanged(enabled);
             mDataSettingsManagerCallbacks.forEach(callback -> callback.invokeFromExecutor(
-                    () -> callback.onUserDataEnabledChanged(enabled)));
-            updateDataEnabledAndNotify(TelephonyManager.DATA_ENABLED_REASON_USER, callingPackage);
+                    () -> callback.onUserDataEnabledChanged(enabled, callingPackage)));
+            updateDataEnabledAndNotify(TelephonyManager.DATA_ENABLED_REASON_USER,
+                    callingPackage, false);
         }
     }
 
@@ -497,7 +503,8 @@ public class DataSettingsManager extends Handler {
         if (mDataEnabledSettings.get(TelephonyManager.DATA_ENABLED_REASON_POLICY) != enabled) {
             logl("PolicyDataEnabled changed to " + enabled + ", callingPackage=" + callingPackage);
             mDataEnabledSettings.put(TelephonyManager.DATA_ENABLED_REASON_POLICY, enabled);
-            updateDataEnabledAndNotify(TelephonyManager.DATA_ENABLED_REASON_POLICY, callingPackage);
+            updateDataEnabledAndNotify(TelephonyManager.DATA_ENABLED_REASON_POLICY,
+                    callingPackage, false);
         }
     }
 
@@ -511,7 +518,7 @@ public class DataSettingsManager extends Handler {
             logl("CarrierDataEnabled changed to " + enabled + ", callingPackage=" + callingPackage);
             mDataEnabledSettings.put(TelephonyManager.DATA_ENABLED_REASON_CARRIER, enabled);
             updateDataEnabledAndNotify(TelephonyManager.DATA_ENABLED_REASON_CARRIER,
-                    callingPackage);
+                    callingPackage, false);
         }
     }
 
@@ -525,7 +532,7 @@ public class DataSettingsManager extends Handler {
             logl("ThermalDataEnabled changed to " + enabled + ", callingPackage=" + callingPackage);
             mDataEnabledSettings.put(TelephonyManager.DATA_ENABLED_REASON_THERMAL, enabled);
             updateDataEnabledAndNotify(TelephonyManager.DATA_ENABLED_REASON_THERMAL,
-                    callingPackage);
+                    callingPackage, false);
         }
     }
 
