@@ -290,7 +290,8 @@ public class PhoneSwitcher extends Handler {
     // ECBM, which is detected by EVENT_EMERGENCY_TOGGLE.
     public static final int EVENT_PRECISE_CALL_STATE_CHANGED     = 109;
     private static final int EVENT_NETWORK_VALIDATION_DONE        = 110;
-
+    // TODO: To be removed : only for fixing LKG compilation
+    protected static final int EVENT_EVALUATE_AUTO_SWITCH         = 111;
     protected static final int EVENT_MODEM_COMMAND_DONE             = 112;
     protected static final int EVENT_MODEM_COMMAND_RETRY            = 113;
 
@@ -2043,6 +2044,19 @@ public class PhoneSwitcher extends Handler {
         // Notify all registrants
         mActivePhoneRegistrants.notifyRegistrants();
         notifyPreferredDataSubIdChanged();
+    }
+
+    // TODO: To be removed : only for fixing LKG compilation
+    protected void displayAutoDataSwitchNotification() {
+        mAutoDataSwitchController.displayAutoDataSwitchNotification(mPreferredDataPhoneId,
+                mLastSwitchPreferredDataReason == DataSwitch.Reason.DATA_SWITCH_REASON_AUTO);
+    }
+
+    protected boolean isAutoDataSwitchEnabledOnPhone(Phone secondaryDataPhone) {
+        if (secondaryDataPhone != null && secondaryDataPhone.isDataAllowed()) {
+            return true;
+        }
+        return false;
     }
 
     private boolean isPhoneIdValidForRetry(int phoneId) {
