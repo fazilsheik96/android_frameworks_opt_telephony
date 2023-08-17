@@ -60,7 +60,6 @@ import com.android.internal.telephony.imsphone.ImsNrSaModeHandler;
 import com.android.internal.telephony.imsphone.ImsPhone;
 import com.android.internal.telephony.imsphone.ImsPhoneCallTracker;
 import com.android.internal.telephony.nitz.NitzStateMachineImpl;
-import com.android.internal.telephony.SubscriptionController;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.uicc.IccCardStatus;
 import com.android.internal.telephony.uicc.UiccCard;
@@ -479,11 +478,6 @@ public class TelephonyComponentFactory {
                 telephonyComponentFactory, featureFlags);
     }
 
-    public SubscriptionController initSubscriptionController(Context c) {
-        Rlog.i(TAG, "initSubscriptionController");
-        return SubscriptionController.init(c);
-    }
-
     public PhoneSwitcher makePhoneSwitcher(int maxDataAttachModemCount, Context context,
             Looper looper) {
         Rlog.i(TAG, "makePhoneSwitcher");
@@ -497,10 +491,15 @@ public class TelephonyComponentFactory {
         return new DisplayInfoController(phone);
     }
 
-    public MultiSimSettingController initMultiSimSettingController(Context c,
-            SubscriptionController sc) {
+    /**
+     * Initialize multi sim settings controller.
+     *
+     * @param c The context.
+     * @return The multi sim settings controller instance.
+     */
+    public MultiSimSettingController initMultiSimSettingController(Context c) {
         Rlog.i(TAG, " initMultiSimSettingController ");
-        return MultiSimSettingController.init(c, sc);
+        return MultiSimSettingController.init(c);
     }
 
     /**
@@ -508,12 +507,6 @@ public class TelephonyComponentFactory {
      */
     public SignalStrengthController makeSignalStrengthController(GsmCdmaPhone phone) {
         return new SignalStrengthController(phone);
-    }
-
-    public SubscriptionInfoUpdater makeSubscriptionInfoUpdater(Looper looper, Context context,
-            SubscriptionController sc) {
-        Rlog.i(TAG, "makeSubscriptionInfoUpdater");
-        return new SubscriptionInfoUpdater(looper, context, sc);
     }
 
     /**

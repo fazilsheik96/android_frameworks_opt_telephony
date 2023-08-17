@@ -20,7 +20,6 @@ import static com.google.common.truth.Truth.assertThat;
 
 import static org.junit.Assert.assertNotNull;
 import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyInt;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
@@ -110,14 +109,10 @@ public class DataStallRecoveryManagerTest extends TelephonyTest {
                 .getDataStallRecoveryShouldSkipArray();
         doReturn(true).when(mDataNetworkController).isInternetDataAllowed();
 
-        doAnswer(
-                invocation -> {
-                    ((Runnable) invocation.getArguments()[0]).run();
-                    return null;
-                })
-                .when(mDataStallRecoveryManagerCallback)
-                .invokeFromExecutor(any(Runnable.class));
-        doReturn("").when(mSubscriptionController).getEnabledMobileDataPolicies(anyInt());
+        doAnswer(invocation -> {
+            ((Runnable) invocation.getArguments()[0]).run();
+            return null;
+        }).when(mDataStallRecoveryManagerCallback).invokeFromExecutor(any(Runnable.class));
 
         mDataStallRecoveryManager =
                 new DataStallRecoveryManager(
