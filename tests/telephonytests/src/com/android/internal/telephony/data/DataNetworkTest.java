@@ -79,6 +79,7 @@ import com.android.internal.telephony.data.DataConfigManager.DataConfigManagerCa
 import com.android.internal.telephony.data.DataEvaluation.DataAllowedReason;
 import com.android.internal.telephony.data.DataNetwork.DataNetworkCallback;
 import com.android.internal.telephony.data.DataNetworkController.NetworkRequestList;
+import com.android.internal.telephony.data.DataSettingsManager.DataSettingsManagerCallback;
 import com.android.internal.telephony.data.LinkBandwidthEstimator.LinkBandwidthEstimatorCallback;
 import com.android.internal.telephony.metrics.DataCallSessionStats;
 
@@ -1265,6 +1266,88 @@ public class DataNetworkTest extends TelephonyTest {
     }
 
     @Test
+    public void testRestrictedNetworkDataEnabled() throws Exception {
+        NetworkRequestList networkRequestList = new NetworkRequestList();
+        // Restricted network request
+        networkRequestList.add(new TelephonyNetworkRequest(new NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
+                .build(), mPhone));
+
+        // Data disabled
+        doReturn(false).when(mDataSettingsManager).isDataEnabled();
+        setSuccessfulSetupDataResponse(mMockedWwanDataServiceManager, 123);
+
+        mDataNetworkUT = new DataNetwork(mPhone, Looper.myLooper(), mDataServiceManagers,
+                mInternetDataProfile, networkRequestList,
+                AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
+                DataAllowedReason.RESTRICTED_REQUEST, mDataNetworkCallback);
+        replaceInstance(DataNetwork.class, "mDataCallSessionStats",
+                mDataNetworkUT, mDataCallSessionStats);
+        mDataNetworkUT.sendMessage(18/*EVENT_CARRIER_PRIVILEGED_UIDS_CHANGED*/,
+                new AsyncResult(null, new int[]{ADMIN_UID1, ADMIN_UID2}, null));
+        processAllMessages();
+
+        assertThat(mDataNetworkUT.getNetworkCapabilities()
+                .hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)).isFalse();
+
+        ArgumentCaptor<DataSettingsManagerCallback> dataSettingsManagerCallbackCaptor =
+                ArgumentCaptor.forClass(DataSettingsManagerCallback.class);
+        verify(mDataSettingsManager).registerCallback(dataSettingsManagerCallbackCaptor.capture());
+
+        // Data enabled
+        doReturn(true).when(mDataSettingsManager).isDataEnabled();
+        dataSettingsManagerCallbackCaptor.getValue().onDataEnabledChanged(true,
+                TelephonyManager.DATA_ENABLED_REASON_USER, "");
+
+        // Network should become unrestricted.
+        assertThat(mDataNetworkUT.getNetworkCapabilities()
+                .hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)).isTrue();
+    }
+
+    @Test
+    public void testRestrictedNetworkDataRoamingEnabled() throws Exception {
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING);
+
+        NetworkRequestList networkRequestList = new NetworkRequestList();
+        // Restricted network request
+        networkRequestList.add(new TelephonyNetworkRequest(new NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
+                .build(), mPhone));
+
+        // Data roaming disabled
+        doReturn(false).when(mDataSettingsManager).isDataRoamingEnabled();
+        setSuccessfulSetupDataResponse(mMockedWwanDataServiceManager, 123);
+
+        mDataNetworkUT = new DataNetwork(mPhone, Looper.myLooper(), mDataServiceManagers,
+                mInternetDataProfile, networkRequestList,
+                AccessNetworkConstants.TRANSPORT_TYPE_WWAN,
+                DataAllowedReason.RESTRICTED_REQUEST, mDataNetworkCallback);
+        replaceInstance(DataNetwork.class, "mDataCallSessionStats",
+                mDataNetworkUT, mDataCallSessionStats);
+        mDataNetworkUT.sendMessage(18/*EVENT_CARRIER_PRIVILEGED_UIDS_CHANGED*/,
+                new AsyncResult(null, new int[]{ADMIN_UID1, ADMIN_UID2}, null));
+        processAllMessages();
+
+        assertThat(mDataNetworkUT.getNetworkCapabilities()
+                .hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)).isFalse();
+
+        ArgumentCaptor<DataSettingsManagerCallback> dataSettingsManagerCallbackCaptor =
+                ArgumentCaptor.forClass(DataSettingsManagerCallback.class);
+        verify(mDataSettingsManager).registerCallback(dataSettingsManagerCallbackCaptor.capture());
+
+        // Data roaming enabled
+        doReturn(true).when(mDataSettingsManager).isDataRoamingEnabled();
+        dataSettingsManagerCallbackCaptor.getValue().onDataRoamingEnabledChanged(true);
+
+        // Network should become unrestricted.
+        assertThat(mDataNetworkUT.getNetworkCapabilities()
+                .hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)).isTrue();
+    }
+
+    @Test
     public void testVcnPolicyUpdated() throws Exception {
         setupDataNetwork();
 
@@ -1290,8 +1373,25 @@ public class DataNetworkTest extends TelephonyTest {
 
     @Test
     public void testVcnPolicyTeardownRequested() throws Exception {
-        setupDataNetwork();
+        // 1. Tear down in Connecting state
+        doAnswer(invocation -> {
+            NetworkCapabilities nc = invocation.getArgument(0);
 
+            return new VcnNetworkPolicyResult(
+                    true /* isTearDownRequested */, nc);
+        }).when(mVcnManager).applyVcnNetworkPolicy(any(), any());
+        setupDataNetwork();
+        verify(mMockedWwanDataServiceManager).deactivateDataCall(anyInt(),
+                eq(DataService.REQUEST_REASON_NORMAL), any(Message.class));
+
+        // 2. Tear down in Connected state
+        doAnswer(invocation -> {
+            NetworkCapabilities nc = invocation.getArgument(0);
+
+            return new VcnNetworkPolicyResult(
+                    false /* isTearDownRequested */, nc);
+        }).when(mVcnManager).applyVcnNetworkPolicy(any(), any());
+        setupDataNetwork();
         doAnswer(invocation -> {
             NetworkCapabilities nc = invocation.getArgument(0);
 
