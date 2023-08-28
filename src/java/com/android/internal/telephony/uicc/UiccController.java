@@ -845,13 +845,15 @@ public class UiccController extends Handler {
             UiccSlot slot = UiccController.getInstance().getUiccSlotForPhone(phoneId);
             int slotId = UiccController.getInstance().getSlotIdFromPhoneId(phoneId);
             intent.putExtra(PhoneConstants.SLOT_KEY, slotId);
+            int portIndex = -1;
             if (slot != null) {
-                intent.putExtra(PhoneConstants.PORT_KEY, slot.getPortIndexFromPhoneId(phoneId));
+                portIndex = slot.getPortIndexFromPhoneId(phoneId);
+                intent.putExtra(PhoneConstants.PORT_KEY, portIndex);
             }
             Rlog.d(LOG_TAG, "Broadcasting intent ACTION_SIM_CARD_STATE_CHANGED "
                     + TelephonyManager.simStateToString(state) + " for phone: " + phoneId
                     + " slot: " + slotId + " port: "
-                    + (slot != null ? slot.getPortIndexFromPhoneId(phoneId) : null));
+                    + (slot != null ? portIndex : null));
             mContext.sendBroadcast(intent, Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
             TelephonyMetrics.getInstance().updateSimState(phoneId, state);
         }

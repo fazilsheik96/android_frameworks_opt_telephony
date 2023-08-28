@@ -1608,6 +1608,11 @@ public class DataNetworkController extends Handler {
             evaluation.addDataDisallowedReason(DataDisallowedReason.CDMA_EMERGENCY_CALLBACK_MODE);
         }
 
+        // Check whether data is disallowed while using satellite
+        if (isDataDisallowedDueToSatellite(networkRequest.getCapabilities())) {
+            evaluation.addDataDisallowedReason(DataDisallowedReason.SERVICE_OPTION_NOT_SUPPORTED);
+        }
+
         // Check if only one data network is allowed.
         if (isOnlySingleDataNetworkAllowed(transport)
                 && !hasCapabilityExemptsFromSinglePdnRule(networkRequest.getCapabilities())) {
@@ -1826,6 +1831,12 @@ public class DataNetworkController extends Handler {
         // Check if device is in CDMA ECBM
         if (mPhone.isInCdmaEcm()) {
             evaluation.addDataDisallowedReason(DataDisallowedReason.CDMA_EMERGENCY_CALLBACK_MODE);
+        }
+
+        // Check whether data is disallowed while using satellite
+        if (isDataDisallowedDueToSatellite(dataNetwork.getNetworkCapabilities()
+                .getCapabilities())) {
+            evaluation.addDataDisallowedReason(DataDisallowedReason.SERVICE_OPTION_NOT_SUPPORTED);
         }
 
         // Check if there are other network that has higher priority, and only single data network
@@ -2179,6 +2190,8 @@ public class DataNetworkController extends Handler {
                     return DataNetwork.TEAR_DOWN_REASON_SIM_REMOVAL;
                 case CONCURRENT_VOICE_DATA_NOT_ALLOWED:
                     return DataNetwork.TEAR_DOWN_REASON_CONCURRENT_VOICE_DATA_NOT_ALLOWED;
+                case SERVICE_OPTION_NOT_SUPPORTED:
+                    return DataNetwork.TEAR_DOWN_REASON_SERVICE_OPTION_NOT_SUPPORTED;
                 case RADIO_POWER_OFF:
                     return DataNetwork.TEAR_DOWN_REASON_AIRPLANE_MODE_ON;
                 case PENDING_TEAR_DOWN_ALL:
@@ -3511,6 +3524,10 @@ public class DataNetworkController extends Handler {
             return true;
         }
 
+        if (!oldNri.isNonTerrestrialNetwork() && newNri.isNonTerrestrialNetwork()) {
+            return true;
+        }
+
         DataSpecificRegistrationInfo oldDsri = oldNri.getDataSpecificInfo();
         DataSpecificRegistrationInfo newDsri = newNri.getDataSpecificInfo();
 
@@ -3563,6 +3580,10 @@ public class DataNetworkController extends Handler {
             return true;
         }
 
+        if (oldSS.isUsingNonTerrestrialNetwork() && !newSS.isUsingNonTerrestrialNetwork()) {
+            return true;
+        }
+
         DataSpecificRegistrationInfo oldDsri = oldPsNri.getDataSpecificInfo();
         DataSpecificRegistrationInfo newDsri = newPsNri.getDataSpecificInfo();
 
@@ -3611,7 +3632,12 @@ public class DataNetworkController extends Handler {
                                 oldNri.getRegistrationState()) : null);
                 debugMessage.append("->").append(newNri != null
                         ? NetworkRegistrationInfo.registrationStateToString(
-                        newNri.getRegistrationState()) : null).append("] ");
+                        newNri.getRegistrationState()) : null).append(", ");
+                debugMessage.append(oldNri != null ? NetworkRegistrationInfo
+                        .isNonTerrestrialNetworkToString(oldNri.isNonTerrestrialNetwork()) : null);
+                debugMessage.append("->").append(newNri != null ? NetworkRegistrationInfo
+                        .isNonTerrestrialNetworkToString(newNri.isNonTerrestrialNetwork()) : null)
+                        .append("] ");
                 if (shouldReevaluateDataNetworks(oldNri, newNri)) {
                     if (!hasMessages(EVENT_REEVALUATE_EXISTING_DATA_NETWORKS)) {
                         sendMessage(obtainMessage(EVENT_REEVALUATE_EXISTING_DATA_NETWORKS,
@@ -3955,6 +3981,37 @@ public class DataNetworkController extends Handler {
             packages.add(mDataServiceManagers.valueAt(i).getDataServicePackageName());
         }
         return packages;
+    }
+
+    /**
+     * Check whether data is disallowed while using satellite
+     * @param capabilities An array of the NetworkCapabilities to be checked
+     * @return {@code true} if the capabilities contain any capability that are restricted
+     * while using satellite else {@code false}
+     */
+    private boolean isDataDisallowedDueToSatellite(@NetCapability int[] capabilities) {
+        if (!mServiceState.isUsingNonTerrestrialNetwork()) {
+            // Device is not connected to satellite
+            return false;
+        }
+
+        Set<Integer> restrictedCapabilities = Set.of(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        if (Arrays.stream(capabilities).noneMatch(restrictedCapabilities::contains)) {
+            // Only internet data disallowed while using satellite
+            return false;
+        }
+
+        for (NetworkRegistrationInfo nri : mServiceState.getNetworkRegistrationInfoList()) {
+            if (nri.isNonTerrestrialNetwork()
+                    && nri.getAvailableServices().contains(
+                            NetworkRegistrationInfo.SERVICE_TYPE_DATA)) {
+                // Data is supported while using satellite
+                return false;
+            }
+        }
+
+        // Data is disallowed while using satellite
+        return true;
     }
 
     /**

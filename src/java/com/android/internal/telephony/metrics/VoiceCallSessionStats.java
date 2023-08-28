@@ -47,8 +47,10 @@ import android.telephony.Annotation.NetworkType;
 import android.telephony.AnomalyReporter;
 import android.telephony.DisconnectCause;
 import android.telephony.NetworkRegistrationInfo;
+import android.telephony.PreciseDataConnectionState;
 import android.telephony.ServiceState;
 import android.telephony.TelephonyManager;
+import android.telephony.data.ApnSetting;
 import android.telephony.ims.ImsReasonInfo;
 import android.telephony.ims.ImsStreamMediaProfile;
 import android.util.LongSparseArray;
@@ -64,6 +66,8 @@ import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.ServiceStateTracker;
+import com.android.internal.telephony.analytics.TelephonyAnalytics;
+import com.android.internal.telephony.analytics.TelephonyAnalytics.CallAnalytics;
 import com.android.internal.telephony.imsphone.ImsPhone;
 import com.android.internal.telephony.imsphone.ImsPhoneConnection;
 import com.android.internal.telephony.nano.PersistAtomsProto.VoiceCallSession;
@@ -163,6 +167,8 @@ public class VoiceCallSessionStats {
     public VoiceCallSessionStats(int phoneId, Phone phone) {
         mPhoneId = phoneId;
         mPhone = phone;
+
+        DataConnectionStateTracker.getInstance(phoneId).start(phone);
     }
 
     /* CS calls */
@@ -207,6 +213,19 @@ public class VoiceCallSessionStats {
                     proto.disconnectExtraCode = conn.getPreciseDisconnectCause();
                     proto.disconnectExtraMessage = conn.getVendorDisconnectCause();
                     proto.callDuration = classifyCallDuration(conn.getDurationMillis());
+                    if (mPhone != null) {
+                        TelephonyAnalytics telephonyAnalytics = mPhone.getTelephonyAnalytics();
+                        if (telephonyAnalytics != null) {
+                            CallAnalytics callAnalytics = telephonyAnalytics.getCallAnalytics();
+                            if (callAnalytics != null) {
+                                callAnalytics.onCallTerminated(proto.isEmergency,
+                                        false /* isOverIms */,
+                                        getVoiceRatWithVoNRFix(mPhone, mPhone.getServiceState(),
+                                                proto.bearerAtEnd),
+                                        proto.simSlotIndex, proto.disconnectReasonCode);
+                            }
+                        }
+                    }
                     finishCall(id);
                 }
             }
@@ -395,6 +414,14 @@ public class VoiceCallSessionStats {
         }
     }
 
+    /** Updates internal states when IMS/Emergency PDN/PDU state changes */
+    public synchronized void onPreciseDataConnectionStateChanged(
+            PreciseDataConnectionState connectionState) {
+        if (hasCalls()) {
+            updateVoiceCallSessionBearerState(connectionState);
+        }
+    }
+
     /* internal */
 
     /** Handles ringing MT call getting accepted. */
@@ -440,6 +467,7 @@ public class VoiceCallSessionStats {
         proto.ratAtConnected = TelephonyManager.NETWORK_TYPE_UNKNOWN;
         proto.ratAtEnd = rat;
         proto.ratSwitchCount = 0L;
+        proto.ratSwitchCountAfterConnected = 0L;
         proto.codecBitmask = 0L;
         proto.simSlotIndex = mPhoneId;
         proto.isMultiSim = SimSlotState.isMultiSim();
@@ -454,6 +482,7 @@ public class VoiceCallSessionStats {
         proto.isMultiparty = conn.isMultiparty();
         proto.lastKnownRat = rat;
         proto.videoEnabled = videoState != VideoProfile.STATE_AUDIO_ONLY ? true : false;
+        proto.handoverInProgress = isHandoverInProgress(bearer, proto.isEmergency);
 
         // internal fields for tracking
         if (getDirection(conn) == VOICE_CALL_SESSION__DIRECTION__CALL_DIRECTION_MT) {
@@ -609,6 +638,9 @@ public class VoiceCallSessionStats {
     private void updateRatAtEnd(VoiceCallSession proto, @NetworkType int rat) {
         if (proto.ratAtEnd != rat) {
             proto.ratSwitchCount++;
+            if (!proto.setupFailed) {
+                proto.ratSwitchCountAfterConnected++;
+            }
             proto.ratAtEnd = rat;
             if (rat != TelephonyManager.NETWORK_TYPE_UNKNOWN) {
                 proto.lastKnownRat = rat;
@@ -623,6 +655,18 @@ public class VoiceCallSessionStats {
         proto.disconnectExtraCode = reasonInfo.mExtraCode;
         proto.disconnectExtraMessage = ImsStats.filterExtraMessage(reasonInfo.mExtraMessage);
         proto.callDuration = classifyCallDuration(durationMillis);
+        if (mPhone != null) {
+            TelephonyAnalytics telephonyAnalytics = mPhone.getTelephonyAnalytics();
+            if (telephonyAnalytics != null) {
+                CallAnalytics callAnalytics = telephonyAnalytics.getCallAnalytics();
+                if (callAnalytics != null) {
+                    callAnalytics.onCallTerminated(proto.isEmergency, true /* isOverIms */ ,
+                            getVoiceRatWithVoNRFix(
+                                    mPhone, mPhone.getServiceState(), proto.bearerAtEnd),
+                            proto.simSlotIndex, proto.disconnectReasonCode);
+                }
+            }
+        }
         finishCall(id);
     }
 
@@ -680,6 +724,17 @@ public class VoiceCallSessionStats {
     /** Returns the signal strength of cellular RAT. */
     private int getSignalStrengthCellular() {
         return mPhone.getSignalStrength().getLevel();
+    }
+
+    private boolean isHandoverInProgress(int bearer, boolean isEmergency) {
+        // If the call is not IMS, the bearer will not be able to handover
+        if (bearer != VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_IMS) {
+            return false;
+        }
+
+        int apnType = isEmergency ? ApnSetting.TYPE_EMERGENCY : ApnSetting.TYPE_IMS;
+        int dataState = DataConnectionStateTracker.getInstance(mPhoneId).getDataState(apnType);
+        return dataState == TelephonyManager.DATA_HANDOVER_IN_PROGRESS;
     }
 
     /**
@@ -923,5 +978,41 @@ public class VoiceCallSessionStats {
         // anything above would be MORE_THAN_ONE_HOUR
 
         return map;
+    }
+
+    private void updateVoiceCallSessionBearerState(PreciseDataConnectionState connectionState) {
+        ApnSetting apnSetting = connectionState.getApnSetting();
+        if (apnSetting == null) {
+            return;
+        }
+
+        int apnTypes = apnSetting.getApnTypeBitmask();
+        if ((apnTypes & ApnSetting.TYPE_IMS) == 0
+                && (apnTypes & ApnSetting.TYPE_EMERGENCY) == 0) {
+            return;
+        }
+
+        for (int i = 0; i < mCallProtos.size(); i++) {
+            VoiceCallSession proto = mCallProtos.valueAt(i);
+            if (proto.bearerAtEnd == VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_IMS) {
+                if (!proto.isEmergency && (apnTypes & ApnSetting.TYPE_IMS) != 0) {
+                    updateHandoverState(proto, connectionState.getState());
+                }
+                if (proto.isEmergency && (apnTypes & ApnSetting.TYPE_EMERGENCY) != 0) {
+                    updateHandoverState(proto, connectionState.getState());
+                }
+            }
+        }
+    }
+
+    private void updateHandoverState(VoiceCallSession proto, int dataState) {
+        switch (dataState) {
+            case TelephonyManager.DATA_HANDOVER_IN_PROGRESS:
+                proto.handoverInProgress = true;
+                break;
+            default:
+                // All other states are considered as not in handover
+                proto.handoverInProgress = false;
+        }
     }
 }

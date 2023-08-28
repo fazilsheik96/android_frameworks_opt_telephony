@@ -94,6 +94,7 @@ import com.android.ims.ImsException;
 import com.android.ims.ImsManager;
 import com.android.internal.R;
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.telephony.analytics.TelephonyAnalytics;
 import com.android.internal.telephony.data.AccessNetworksManager;
 import com.android.internal.telephony.data.DataNetworkController;
 import com.android.internal.telephony.data.DataSettingsManager;
@@ -499,6 +500,7 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
 
     protected VoiceCallSessionStats mVoiceCallSessionStats;
     protected SmsStats mSmsStats;
+    protected TelephonyAnalytics mTelephonyAnalytics;
 
     protected LinkBandwidthEstimator mLinkBandwidthEstimator;
 
@@ -674,6 +676,10 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
                 .makeSimActivationTracker(this);
         if (getPhoneType() != PhoneConstants.PHONE_TYPE_SIP) {
             mCi.registerForSrvccStateChanged(this, EVENT_SRVCC_STATE_CHANGED, null);
+        }
+        //Initialize Telephony Analytics
+        if (isTelephonyAnalyticsEnabled()) {
+            mTelephonyAnalytics = new TelephonyAnalytics(this);
         }
     }
 
@@ -4483,9 +4489,12 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
             subInfo = SubscriptionController.getInstance().getSubscriptionInfo(subId);
         }
 
-        if (subInfo == null
-                || subInfo.getUsageSetting() == SubscriptionManager.USAGE_SETTING_UNKNOWN) {
+        if (subInfo == null) {
             loge("Failed to get SubscriptionInfo for subId=" + subId);
+            return SubscriptionManager.USAGE_SETTING_UNKNOWN;
+        }
+
+        if (subInfo.getUsageSetting() == SubscriptionManager.USAGE_SETTING_UNKNOWN) {
             return SubscriptionManager.USAGE_SETTING_UNKNOWN;
         }
 
@@ -4877,6 +4886,16 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     @VisibleForTesting
     public void setSmsStats(SmsStats smsStats) {
         mSmsStats = smsStats;
+    }
+
+    /** Getter for Telephony Analytics */
+    public TelephonyAnalytics getTelephonyAnalytics() {
+        return mTelephonyAnalytics;
+    }
+
+    public boolean isTelephonyAnalyticsEnabled() {
+        return mContext.getResources().getBoolean(
+                com.android.internal.R.bool.telephony_analytics_switch);
     }
 
     /** @hide */
@@ -5571,6 +5590,21 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     }
 
     /**
+     * Set the non-terrestrial PLMN with lower priority than terrestrial networks.
+     * MCC/MNC broadcast by the non-terrestrial networks may not be included in OPLMNwACT file on
+     * SIM profile. Acquisition of satellite based system is lower priority to terrestrial
+     * networks. UE shall make all attempts to acquire terrestrial service prior to camping on
+     * satellite LTE service.
+     *
+     * @param result The result receiver that returns whether the modem has
+     *               successfully set the satellite PLMN
+     * @param plmnList The list of roaming PLMN used for connecting to satellite networks.
+     */
+    public void setSatellitePlmn(@NonNull Message result, @NonNull List<String> plmnList) {
+        mCi.setSatellitePlmn(result, plmnList);
+    }
+
+    /**
      * Start callback mode
      * @param type for callback mode entry.
      */
@@ -5796,6 +5830,13 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
             }
             pw.flush();
             pw.println("++++++++++++++++++++++++++++++++");
+        }
+        if (mTelephonyAnalytics != null) {
+            try {
+                mTelephonyAnalytics.dump(fd, pw, args);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
         }
     }
 

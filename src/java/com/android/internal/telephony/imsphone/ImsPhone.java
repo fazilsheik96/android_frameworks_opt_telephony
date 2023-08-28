@@ -2614,6 +2614,10 @@ public class ImsPhone extends ImsPhoneBase {
             }
             updateImsRegistrationInfo(REGISTRATION_STATE_NOT_REGISTERED,
                     imsRadioTech, suggestedModemAction);
+
+            // Clear the phone number from P-Associated-Uri
+            setCurrentSubscriberUris(null);
+            clearPhoneNumberForSourceIms();
         }
 
         @Override
@@ -2626,6 +2630,18 @@ public class ImsPhone extends ImsPhoneBase {
             setPhoneNumberForSourceIms(uris);
         }
     };
+
+    /** Clear the IMS phone number from IMS associated Uris when IMS registration is lost. */
+    @VisibleForTesting
+    public void clearPhoneNumberForSourceIms() {
+        int subId = getSubId();
+        if (!SubscriptionManager.isValidSubscriptionId(subId)) {
+            return;
+        }
+
+        if (DBG) logd("clearPhoneNumberForSourceIms");
+        mSubscriptionManagerService.setNumberFromIms(subId, new String(""));
+    }
 
     /** Sets the IMS phone number from IMS associated URIs, if any found. */
     @VisibleForTesting

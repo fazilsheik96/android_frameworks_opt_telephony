@@ -94,6 +94,7 @@ import android.util.Singleton;
 import com.android.ims.ImsCall;
 import com.android.ims.ImsEcbm;
 import com.android.ims.ImsManager;
+import com.android.internal.telephony.analytics.TelephonyAnalytics;
 import com.android.internal.telephony.cdma.CdmaSubscriptionSourceManager;
 import com.android.internal.telephony.cdma.EriManager;
 import com.android.internal.telephony.data.AccessNetworksManager;
@@ -262,6 +263,7 @@ public abstract class TelephonyTest {
     protected PersistAtomsStorage mPersistAtomsStorage;
     protected MetricsCollector mMetricsCollector;
     protected SmsStats mSmsStats;
+    protected TelephonyAnalytics mTelephonyAnalytics;
     protected SignalStrength mSignalStrength;
     protected WifiManager mWifiManager;
     protected WifiInfo mWifiInfo;
@@ -501,6 +503,7 @@ public abstract class TelephonyTest {
         mPersistAtomsStorage = Mockito.mock(PersistAtomsStorage.class);
         mMetricsCollector = Mockito.mock(MetricsCollector.class);
         mSmsStats = Mockito.mock(SmsStats.class);
+        mTelephonyAnalytics = Mockito.mock(TelephonyAnalytics.class);
         mSignalStrength = Mockito.mock(SignalStrength.class);
         mWifiManager = Mockito.mock(WifiManager.class);
         mWifiInfo = Mockito.mock(WifiInfo.class);
@@ -656,6 +659,7 @@ public abstract class TelephonyTest {
         doReturn(mVoiceCallSessionStats).when(mPhone).getVoiceCallSessionStats();
         doReturn(mVoiceCallSessionStats).when(mImsPhone).getVoiceCallSessionStats();
         doReturn(mSmsStats).when(mPhone).getSmsStats();
+        doReturn(mTelephonyAnalytics).when(mPhone).getTelephonyAnalytics();
         doReturn(mImsStats).when(mImsPhone).getImsStats();
         mIccSmsInterfaceManager.mDispatchersController = mSmsDispatchersController;
         doReturn(mLinkBandwidthEstimator).when(mPhone).getLinkBandwidthEstimator();

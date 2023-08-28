@@ -99,6 +99,7 @@ import com.android.internal.telephony.imsphone.ImsPhone;
 import com.android.internal.telephony.metrics.RadioPowerStateStats;
 import com.android.internal.telephony.metrics.ServiceStateStats;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
+import com.android.internal.telephony.satellite.NtnCapabilityResolver;
 import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.uicc.IccCardApplicationStatus.AppState;
@@ -2981,8 +2982,8 @@ public class ServiceStateTracker extends Handler {
 
                 // Force display no service
                 final boolean forceDisplayNoService = shouldForceDisplayNoService() && !mIsSimReady;
-                if (!forceDisplayNoService && Phone.isEmergencyCallOnly()) {
-                    // No service but emergency call allowed
+                if (!forceDisplayNoService && (mEmergencyOnly || Phone.isEmergencyCallOnly())) {
+                    // The slot is emc only or the slot is masked as oos due to device is emc only
                     plmn = Resources.getSystem()
                             .getText(com.android.internal.R.string.emergency_calls_only).toString();
                 } else {
@@ -3472,6 +3473,7 @@ public class ServiceStateTracker extends Handler {
 
         updateNrFrequencyRangeFromPhysicalChannelConfigs(mLastPhysicalChannelConfigList, mNewSS);
         updateNrStateFromPhysicalChannelConfigs(mLastPhysicalChannelConfigList, mNewSS);
+        updateNtnCapability();
 
         if (TelephonyUtils.IS_DEBUGGABLE && mPhone.getTelephonyTester() != null) {
             mPhone.getTelephonyTester().overrideServiceState(mNewSS);
@@ -5654,6 +5656,17 @@ public class ServiceStateTracker extends Handler {
                         .setAvailableServices(wwanNri.getAvailableServices())
                         .build();
                 mNewSS.addNetworkRegistrationInfo(wlanNri);
+            }
+        }
+    }
+
+    private void updateNtnCapability() {
+        for (NetworkRegistrationInfo nri : mNewSS.getNetworkRegistrationInfoListForTransportType(
+                AccessNetworkConstants.TRANSPORT_TYPE_WWAN)) {
+            NtnCapabilityResolver.resolveNtnCapability(nri, mSubId);
+            if (nri.isNonTerrestrialNetwork()) {
+                // Replace the existing NRI with the updated NRI.
+                mNewSS.addNetworkRegistrationInfo(nri);
             }
         }
     }

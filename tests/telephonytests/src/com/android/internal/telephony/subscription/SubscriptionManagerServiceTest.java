@@ -69,8 +69,10 @@ import android.annotation.NonNull;
 import android.app.AppOpsManager;
 import android.app.PropertyInvalidatedCache;
 import android.compat.testing.PlatformCompatChangeRule;
+import android.content.ContentValues;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -166,6 +168,7 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         // Dual-SIM configuration
         mPhones = new Phone[] {mPhone, mPhone2};
         replaceInstance(PhoneFactory.class, "sPhones", null, mPhones);
+        doReturn(FAKE_PHONE_NUMBER1).when(mPhone).getLine1Number();
         doReturn(2).when(mTelephonyManager).getActiveModemCount();
         doReturn(2).when(mTelephonyManager).getSupportedModemCount();
         doReturn(mUiccProfile).when(mPhone2).getIccCard();
@@ -174,6 +177,8 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         mContextFixture.putBooleanResource(com.android.internal.R.bool
                 .config_subscription_database_async_update, true);
         mContextFixture.putIntArrayResource(com.android.internal.R.array.sim_colors, new int[0]);
+        mContextFixture.putResource(com.android.internal.R.string.default_card_name,
+                FAKE_DEFAULT_CARD_NAME);
 
         mContextFixture.addSystemFeature(PackageManager.FEATURE_TELEPHONY_EUICC);
         setupMocksForTelephonyPermissions(Build.VERSION_CODES.UPSIDE_DOWN_CAKE);
@@ -644,6 +649,7 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
 
         mSubscriptionManagerServiceUT.setDefaultDataSubId(1);
         assertThat(mSubscriptionManagerServiceUT.getDefaultDataSubId()).isEqualTo(1);
+        verify(mProxyController).setRadioCapability(any());
 
         assertThat(Settings.Global.getInt(mContext.getContentResolver(),
                         Settings.Global.MULTI_SIM_DATA_CALL_SUBSCRIPTION)).isEqualTo(1);
@@ -1060,6 +1066,19 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
 
         assertThat(mSubscriptionManagerServiceUT.getSubscriptionUserHandle(1))
                 .isEqualTo(FAKE_USER_HANDLE);
+    }
+
+    @Test
+    public void testGetSubscriptionUserHandleUnknownSubscription() {
+        mContextFixture.addCallingOrSelfPermission(
+                Manifest.permission.MANAGE_SUBSCRIPTION_USER_ASSOCIATION);
+
+        // getSubscriptionUserHandle() returns null when subscription is not available on the device
+        assertThat(mSubscriptionManagerServiceUT.getSubscriptionUserHandle(10))
+                .isEqualTo(null);
+
+        mContextFixture.removeCallingOrSelfPermission(
+                Manifest.permission.MANAGE_SUBSCRIPTION_USER_ASSOCIATION);
     }
 
     @Test
@@ -1852,7 +1871,6 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
 
         doReturn(FAKE_IMSI1).when(mTelephonyManager).getSubscriberId();
         doReturn(FAKE_MCC1 + FAKE_MNC1).when(mTelephonyManager).getSimOperatorNumeric(anyInt());
-        doReturn(FAKE_PHONE_NUMBER1).when(mTelephonyManager).getLine1Number(anyInt());
         doReturn(FAKE_EHPLMNS1.split(",")).when(mSimRecords).getEhplmns();
         doReturn(FAKE_HPLMNS1.split(",")).when(mSimRecords).getPlmnsFromHplmnActRecord();
         doReturn(0).when(mUiccSlot).getPortIndexFromIccId(anyString());
@@ -1871,12 +1889,16 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         assertThat(mSubscriptionManagerServiceUT.getSlotIndex(1)).isEqualTo(0);
         assertThat(mSubscriptionManagerServiceUT.getPhoneId(1)).isEqualTo(0);
 
+        SubscriptionInfoInternal subInfo = mSubscriptionManagerServiceUT
+                .getSubscriptionInfoInternal(1);
+        assertThat(subInfo.getDisplayName()).isEqualTo("CARD 1");
+
         mSubscriptionManagerServiceUT.setCarrierId(1, FAKE_CARRIER_ID1);
         mSubscriptionManagerServiceUT.setDisplayNameUsingSrc(FAKE_CARRIER_NAME1, 1,
                 SubscriptionManager.NAME_SOURCE_SIM_SPN);
         mSubscriptionManagerServiceUT.setCarrierName(1, FAKE_CARRIER_NAME1);
 
-        SubscriptionInfoInternal subInfo = mSubscriptionManagerServiceUT
+        subInfo = mSubscriptionManagerServiceUT
                 .getSubscriptionInfoInternal(1);
         assertThat(subInfo.getSubscriptionId()).isEqualTo(1);
         assertThat(subInfo.getSimSlotIndex()).isEqualTo(0);
@@ -1924,6 +1946,24 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
                 SubscriptionManager.INVALID_SUBSCRIPTION_ID,
                 SubscriptionManager.PHONE_NUMBER_SOURCE_CARRIER, CALLING_PACKAGE, CALLING_FEATURE))
                 .isEmpty();
+    }
+
+    @Test
+    public void testGetPhoneNumberFromInactiveSubscription() {
+        mContextFixture.addCallingOrSelfPermission(Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
+        testInactiveSimRemoval();
+
+        int subId = insertSubscription(FAKE_SUBSCRIPTION_INFO1);
+        assertThat(subId).isEqualTo(2);
+        assertThat(mSubscriptionManagerServiceUT.getActiveSubIdList(false)).hasLength(1);
+        assertThat(mSubscriptionManagerServiceUT.getAllSubInfoList(CALLING_PACKAGE,
+                CALLING_FEATURE)).hasSize(2);
+
+        assertThat(mSubscriptionManagerServiceUT.getPhoneNumberFromFirstAvailableSource(1,
+                CALLING_PACKAGE, CALLING_FEATURE)).isEqualTo(FAKE_PHONE_NUMBER2);
+        assertThat(mSubscriptionManagerServiceUT.getPhoneNumber(1,
+                SubscriptionManager.PHONE_NUMBER_SOURCE_UICC, CALLING_PACKAGE, CALLING_FEATURE))
+                .isEqualTo(FAKE_PHONE_NUMBER2);
     }
 
     @Test
@@ -2014,6 +2054,7 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
                 0, TelephonyManager.SIM_STATE_READY, null, null);
         processAllMessages();
 
+        mContextFixture.addCallingOrSelfPermission(Manifest.permission.MODIFY_PHONE_STATE);
         mSubscriptionManagerServiceUT.updateSimState(
                 0, TelephonyManager.SIM_STATE_LOADED, null, null);
         processAllMessages();
@@ -2194,9 +2235,6 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
 
     @Test
     public void testInactiveSimInserted() {
-        mContextFixture.putResource(com.android.internal.R.string.default_card_name,
-                FAKE_DEFAULT_CARD_NAME);
-
         doReturn(0).when(mUiccSlot).getPortIndexFromIccId(eq(FAKE_ICCID1));
 
         mContextFixture.addCallingOrSelfPermission(Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
@@ -2213,16 +2251,40 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
     }
 
     @Test
-    public void testRestoreAllSimSpecificSettingsFromBackup() {
+    public void testRestoreAllSimSpecificSettingsFromBackup() throws Exception {
         assertThrows(SecurityException.class, ()
                 -> mSubscriptionManagerServiceUT.restoreAllSimSpecificSettingsFromBackup(
                         new byte[0]));
+        insertSubscription(FAKE_SUBSCRIPTION_INFO1);
         mContextFixture.addCallingOrSelfPermission(Manifest.permission.MODIFY_PHONE_STATE);
 
-        // TODO: Briefly copy the logic from TelephonyProvider to
-        //  SubscriptionDatabaseManagerTest.SubscriptionProvider
+
+        // getSubscriptionDatabaseManager().setWifiCallingEnabled(1, 0);
+
+        // Simulate restoration altered the database directly.
+        ContentValues cvs = new ContentValues();
+        cvs.put(SimInfo.COLUMN_WFC_IMS_ENABLED, 0);
+        mSubscriptionProvider.update(Uri.withAppendedPath(SimInfo.CONTENT_URI, "1"), cvs, null,
+                null);
+
+        // Setting this to false to prevent database reload.
+        mSubscriptionProvider.setRestoreDatabaseChanged(false);
         mSubscriptionManagerServiceUT.restoreAllSimSpecificSettingsFromBackup(
                 new byte[0]);
+
+        SubscriptionInfoInternal subInfo = mSubscriptionManagerServiceUT
+                .getSubscriptionInfoInternal(1);
+        // Since reload didn't happen, WFC should remains enabled.
+        assertThat(subInfo.getWifiCallingEnabled()).isEqualTo(1);
+
+        // Now the database reload should happen
+        mSubscriptionProvider.setRestoreDatabaseChanged(true);
+        mSubscriptionManagerServiceUT.restoreAllSimSpecificSettingsFromBackup(
+                new byte[0]);
+
+        subInfo = mSubscriptionManagerServiceUT.getSubscriptionInfoInternal(1);
+        // Since reload didn't happen, WFC should remains enabled.
+        assertThat(subInfo.getWifiCallingEnabled()).isEqualTo(0);
     }
 
     @Test
@@ -2374,7 +2436,7 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
                 .getSubscriptionInfoInternal(1);
         assertThat(subInfo.getSubscriptionId()).isEqualTo(1);
         assertThat(subInfo.getIccId()).isEqualTo(FAKE_ICCID1);
-        assertThat(subInfo.getDisplayName()).isEqualTo("");
+        assertThat(subInfo.getDisplayName()).isEqualTo("CARD 1");
         assertThat(subInfo.getDisplayNameSource()).isEqualTo(
                 SubscriptionManager.NAME_SOURCE_UNKNOWN);
         assertThat(subInfo.getMcc()).isEqualTo("");
@@ -2386,7 +2448,7 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         subInfo = mSubscriptionManagerServiceUT.getSubscriptionInfoInternal(2);
         assertThat(subInfo.getSubscriptionId()).isEqualTo(2);
         assertThat(subInfo.getIccId()).isEqualTo(FAKE_ICCID2);
-        assertThat(subInfo.getDisplayName()).isEqualTo("");
+        assertThat(subInfo.getDisplayName()).isEqualTo("CARD 2");
         assertThat(subInfo.getDisplayNameSource()).isEqualTo(
                 SubscriptionManager.NAME_SOURCE_UNKNOWN);
         assertThat(subInfo.getMcc()).isEqualTo(FAKE_MCC2);

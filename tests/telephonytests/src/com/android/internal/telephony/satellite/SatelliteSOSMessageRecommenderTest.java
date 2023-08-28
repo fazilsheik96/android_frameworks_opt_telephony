@@ -26,6 +26,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.annotation.NonNull;
+import android.app.ActivityManager;
 import android.content.Context;
 import android.content.res.Resources;
 import android.os.AsyncResult;
@@ -36,6 +37,7 @@ import android.os.ResultReceiver;
 import android.telecom.Call;
 import android.telecom.Connection;
 import android.telephony.BinderCacheManager;
+import android.telephony.CarrierConfigManager;
 import android.telephony.ServiceState;
 import android.telephony.SubscriptionManager;
 import android.telephony.ims.RegistrationManager;
@@ -96,6 +98,18 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
         when(mMockContext.getResources()).thenReturn(mResources);
         when(mResources.getString(com.android.internal.R.string.config_satellite_service_package))
                 .thenReturn("");
+        when(mMockContext.getSystemServiceName(CarrierConfigManager.class))
+                .thenReturn("CarrierConfigManager");
+        when(mMockContext.getSystemService(CarrierConfigManager.class))
+                .thenReturn(mCarrierConfigManager);
+        when(mMockContext.getSystemServiceName(SubscriptionManager.class))
+                .thenReturn("SubscriptionManager");
+        when(mMockContext.getSystemService(SubscriptionManager.class))
+                .thenReturn(mSubscriptionManager);
+        when(mMockContext.getSystemServiceName(ActivityManager.class))
+                .thenReturn("ActivityManager");
+        when(mMockContext.getSystemService(ActivityManager.class))
+                .thenReturn(mActivityManager);
         mTestSatelliteController = new TestSatelliteController(mMockContext,
                 Looper.myLooper());
         mTestImsManager = new TestImsManager(
