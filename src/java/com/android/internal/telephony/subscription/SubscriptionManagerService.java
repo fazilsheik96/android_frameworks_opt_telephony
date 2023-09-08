@@ -174,7 +174,8 @@ public class SubscriptionManagerService extends ISub.Stub {
             SimInfo.COLUMN_VOIMS_OPT_IN_STATUS,
             SimInfo.COLUMN_D2D_STATUS_SHARING_SELECTED_CONTACTS,
             SimInfo.COLUMN_NR_ADVANCED_CALLING_ENABLED,
-            SimInfo.COLUMN_SATELLITE_ENABLED
+            SimInfo.COLUMN_SATELLITE_ENABLED,
+            SimInfo.COLUMN_SATELLITE_ATTACH_ENABLED_FOR_CARRIER
     );
 
     /**
@@ -2842,7 +2843,8 @@ public class SubscriptionManagerService extends ISub.Stub {
         ProxyController proxyController = ProxyController.getInstance();
         RadioAccessFamily[] rafs = new RadioAccessFamily[mTelephonyManager.getActiveModemCount()];
         for (int phoneId = 0; phoneId < rafs.length; phoneId++) {
-            int raf = mSlotIndexToSubId.get(phoneId) == getDefaultDataSubId()
+            int raf = mSlotIndexToSubId.getOrDefault(phoneId,
+                    SubscriptionManager.INVALID_SUBSCRIPTION_ID) == getDefaultDataSubId()
                     ? proxyController.getMaxRafSupported() : proxyController.getMinRafSupported();
             rafs[phoneId] = new RadioAccessFamily(phoneId, raf);
         }
@@ -3911,10 +3913,13 @@ public class SubscriptionManagerService extends ISub.Stub {
                 case TelephonyManager.SIM_STATE_PUK_REQUIRED:
                 case TelephonyManager.SIM_STATE_NETWORK_LOCKED:
                 case TelephonyManager.SIM_STATE_PERM_DISABLED:
-                case TelephonyManager.SIM_STATE_READY:
                 case TelephonyManager.SIM_STATE_CARD_IO_ERROR:
                 case TelephonyManager.SIM_STATE_LOADED:
+                    updateSubscription(slotIndex);
+                    break;
                 case TelephonyManager.SIM_STATE_NOT_READY:
+                case TelephonyManager.SIM_STATE_READY:
+                    updateEmbeddedSubscriptions();
                     updateSubscription(slotIndex);
                     break;
                 case TelephonyManager.SIM_STATE_CARD_RESTRICTED:
