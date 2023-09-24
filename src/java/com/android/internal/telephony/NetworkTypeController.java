@@ -1058,24 +1058,34 @@ public class NetworkTypeController extends StateMachine {
                 mPhone.getServiceStateTracker().getPhysicalChannelConfigList();
 
         int anchorNrCellId = PhysicalChannelConfig.PHYSICAL_CELL_ID_UNKNOWN;
-        boolean anchorNrCellFound = false;
+        int anchorLteCellId = PhysicalChannelConfig.PHYSICAL_CELL_ID_UNKNOWN;
         int nrBandwidths = 0;
         Set<Integer> nrBands = new HashSet<>();
         if (physicalChannelConfigs != null) {
             for (PhysicalChannelConfig config : physicalChannelConfigs) {
                 if (config.getNetworkType() == TelephonyManager.NETWORK_TYPE_NR) {
-                    if (!anchorNrCellFound && config.getConnectionStatus()
-                            == CellInfo.CONNECTION_PRIMARY_SERVING) {
-                        // Make sure the anchor NR cell is the first one we find in the list
+                    if (config.getConnectionStatus() == CellInfo.CONNECTION_PRIMARY_SERVING
+                            && anchorNrCellId == PhysicalChannelConfig.PHYSICAL_CELL_ID_UNKNOWN) {
                         anchorNrCellId = config.getPhysicalCellId();
-                        anchorNrCellFound = true;
                     }
                     nrBandwidths += config.getCellBandwidthDownlinkKhz();
                     nrBands.add(config.getBand());
-                } else if (mIncludeLteForNrAdvancedThresholdBandwidth) {
-                    nrBandwidths += config.getCellBandwidthDownlinkKhz();
+                } else if (config.getNetworkType() == TelephonyManager.NETWORK_TYPE_LTE) {
+                    if (config.getConnectionStatus() == CellInfo.CONNECTION_PRIMARY_SERVING
+                            && anchorLteCellId == PhysicalChannelConfig.PHYSICAL_CELL_ID_UNKNOWN) {
+                        anchorLteCellId = config.getPhysicalCellId();
+                    }
+                    if (mIncludeLteForNrAdvancedThresholdBandwidth) {
+                        nrBandwidths += config.getCellBandwidthDownlinkKhz();
+                    }
                 }
             }
+        }
+
+        // Update anchor NR cell from anchor LTE cell for NR NSA
+        if (anchorNrCellId == PhysicalChannelConfig.PHYSICAL_CELL_ID_UNKNOWN
+                && anchorLteCellId != PhysicalChannelConfig.PHYSICAL_CELL_ID_UNKNOWN) {
+            anchorNrCellId = anchorLteCellId;
         }
 
         boolean wasLastAnchorNrCellIdValid =
@@ -1355,7 +1365,7 @@ public class NetworkTypeController extends StateMachine {
         // Check if meeting minimum bandwidth requirement. For most carriers, there is no minimum
         // bandwidth requirement and mNrAdvancedThresholdBandwidth is 0.
         if (mNrAdvancedThresholdBandwidth > 0
-                && mRatchetedNrBandwidths <= mNrAdvancedThresholdBandwidth) {
+                && mRatchetedNrBandwidths < mNrAdvancedThresholdBandwidth) {
             if (DBG) {
                 log("isNrAdvanced: false because bandwidths=" + mRatchetedNrBandwidths
                         + " does not meet the threshold=" + mNrAdvancedThresholdBandwidth);

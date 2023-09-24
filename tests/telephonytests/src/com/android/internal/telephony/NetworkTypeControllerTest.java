@@ -403,6 +403,36 @@ public class NetworkTypeControllerTest extends TelephonyTest {
     }
 
     @Test
+    public void testTransitionToCurrentStateNrConnectedMmwaveWithAdditionalBandAndNoMmwaveNrNsa()
+            throws Exception {
+        assertEquals("DefaultState", getCurrentState().getName());
+        doReturn(NetworkRegistrationInfo.NR_STATE_CONNECTED).when(mServiceState).getNrState();
+        doReturn(ServiceState.FREQUENCY_RANGE_HIGH).when(mServiceState).getNrFrequencyRange();
+        mBundle.putIntArray(CarrierConfigManager.KEY_ADDITIONAL_NR_ADVANCED_BANDS_INT_ARRAY,
+                new int[]{41});
+        PhysicalChannelConfig ltePhysicalChannelConfig = new PhysicalChannelConfig.Builder()
+                .setPhysicalCellId(1)
+                .setNetworkType(TelephonyManager.NETWORK_TYPE_LTE)
+                .setCellConnectionStatus(CellInfo.CONNECTION_PRIMARY_SERVING)
+                .build();
+        PhysicalChannelConfig nrPhysicalChannelConfig = new PhysicalChannelConfig.Builder()
+                .setPhysicalCellId(2)
+                .setNetworkType(TelephonyManager.NETWORK_TYPE_NR)
+                .setCellConnectionStatus(CellInfo.CONNECTION_SECONDARY_SERVING)
+                .setBand(41)
+                .build();
+        List<PhysicalChannelConfig> lastPhysicalChannelConfigList = new ArrayList<>();
+        lastPhysicalChannelConfigList.add(ltePhysicalChannelConfig);
+        lastPhysicalChannelConfigList.add(nrPhysicalChannelConfig);
+        doReturn(lastPhysicalChannelConfigList).when(mSST).getPhysicalChannelConfigList();
+        sendCarrierConfigChanged();
+
+        mNetworkTypeController.sendMessage(3 /* EVENT_SERVICE_STATE_CHANGED */);
+        processAllMessages();
+        assertEquals("connected_mmwave", getCurrentState().getName());
+    }
+
+    @Test
     public void testTransitionToCurrentStateNrConnectedWithNoAdditionalBandAndNoMmwave()
             throws Exception {
         assertEquals("DefaultState", getCurrentState().getName());
@@ -548,7 +578,7 @@ public class NetworkTypeControllerTest extends TelephonyTest {
                 .setNetworkType(TelephonyManager.NETWORK_TYPE_NR)
                 .setPhysicalCellId(1)
                 .setCellConnectionStatus(CellInfo.CONNECTION_PRIMARY_SERVING)
-                .setCellBandwidthDownlinkKhz(20000)
+                .setCellBandwidthDownlinkKhz(19999)
                 .build();
         // Secondary serving NR PCC with cell ID = 2, band = 41, bandwidth = 10000
         PhysicalChannelConfig pcc2 = new PhysicalChannelConfig.Builder()
@@ -1346,7 +1376,7 @@ public class NetworkTypeControllerTest extends TelephonyTest {
                 .setNetworkType(TelephonyManager.NETWORK_TYPE_NR)
                 .setCellConnectionStatus(CellInfo.CONNECTION_PRIMARY_SERVING)
                 .setPhysicalCellId(1)
-                .setCellBandwidthDownlinkKhz(20000)
+                .setCellBandwidthDownlinkKhz(19999)
                 .build());
         lastPhysicalChannelConfigList.add(new PhysicalChannelConfig.Builder()
                 .setNetworkType(TelephonyManager.NETWORK_TYPE_LTE)
