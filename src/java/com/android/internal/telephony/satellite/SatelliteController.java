@@ -79,6 +79,7 @@ import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.util.FunctionalUtils;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -223,11 +224,10 @@ public class SatelliteController extends Handler {
      * {@link android.telephony.NetworkRegistrationInfo.ServiceType})
      */
     @GuardedBy("mSupportedSatelliteServicesLock")
-    @NonNull private final Map<Integer, Map<String, Set<Integer>>> mSupportedSatelliteServices =
-            new HashMap<>();
+    @NonNull private final Map<Integer, Map<String, Set<Integer>>>
+            mSatelliteServicesSupportedByCarriers = new HashMap<>();
     @NonNull private final Object mSupportedSatelliteServicesLock = new Object();
-    /** Key: PLMN, value: set of {@link android.telephony.NetworkRegistrationInfo.ServiceType} */
-    @NonNull private final Map<String, Set<Integer>> mSatelliteServicesSupportedByProviders;
+    @NonNull private final List<String> mSatellitePlmnListFromOverlayConfig;
     @NonNull private final CarrierConfigManager mCarrierConfigManager;
     @NonNull private final CarrierConfigManager.CarrierConfigChangeListener
             mCarrierConfigChangeListener;
@@ -331,7 +331,7 @@ public class SatelliteController extends Handler {
                     false, satelliteModeRadiosContentObserver);
         }
 
-        mSatelliteServicesSupportedByProviders = readSupportedSatelliteServicesFromOverlayConfig();
+        mSatellitePlmnListFromOverlayConfig = readSatellitePlmnsFromOverlayConfig();
         updateSupportedSatelliteServicesForActiveSubscriptions();
         mCarrierConfigChangeListener =
                 (slotIndex, subId, carrierId, specificCarrierId) ->
@@ -1038,29 +1038,7 @@ public class SatelliteController extends Handler {
             }
 
             case EVENT_RADIO_STATE_CHANGED: {
-                if (mCi.getRadioState() == TelephonyManager.RADIO_POWER_OFF
-                        || mCi.getRadioState() == TelephonyManager.RADIO_POWER_UNAVAILABLE) {
-                    mIsRadioOn = false;
-                    logd("Radio State Changed to " + mCi.getRadioState());
-                    if (isSatelliteEnabled()) {
-                        IIntegerConsumer errorCallback = new IIntegerConsumer.Stub() {
-                            @Override
-                            public void accept(int result) {
-                                logd("RequestSatelliteEnabled: result=" + result);
-                            }
-                        };
-                        Phone phone = SatelliteServiceUtils.getPhone();
-                        Consumer<Integer> result = FunctionalUtils
-                                .ignoreRemoteException(errorCallback::accept);
-                        RequestSatelliteEnabledArgument message =
-                                new RequestSatelliteEnabledArgument(false, false, result);
-                        request = new SatelliteControllerHandlerRequest(message, phone);
-                        handleSatelliteEnabled(request);
-                    } else {
-                        logd("EVENT_RADIO_STATE_CHANGED: Satellite modem is currently disabled."
-                                + " Ignored the event");
-                    }
-                } else {
+                if (mCi.getRadioState() == TelephonyManager.RADIO_POWER_ON) {
                     mIsRadioOn = true;
                     if (!mSatelliteModemInterface.isSatelliteServiceSupported()) {
                         synchronized (mIsSatelliteSupportedLock) {
@@ -1899,6 +1877,10 @@ public class SatelliteController extends Handler {
             @NonNull IIntegerConsumer callback) {
         if (DBG) logd("addSatelliteAttachRestrictionForCarrier(" + subId + ", " + reason + ")");
         Consumer<Integer> result = FunctionalUtils.ignoreRemoteException(callback::accept);
+        if (!mFeatureFlags.carrierEnabledSatelliteFlag()) {
+            result.accept(SatelliteManager.SATELLITE_RESULT_REQUEST_NOT_SUPPORTED);
+            return;
+        }
 
         synchronized (mIsSatelliteEnabledLock) {
             if (mSatelliteAttachRestrictionForCarrierArray.getOrDefault(
@@ -1930,8 +1912,13 @@ public class SatelliteController extends Handler {
     public void removeSatelliteAttachRestrictionForCarrier(int subId,
             @SatelliteManager.SatelliteCommunicationRestrictionReason int reason,
             @NonNull IIntegerConsumer callback) {
-        Consumer<Integer> result = FunctionalUtils.ignoreRemoteException(callback::accept);
         if (DBG) logd("removeSatelliteAttachRestrictionForCarrier(" + subId + ", " + reason + ")");
+        Consumer<Integer> result = FunctionalUtils.ignoreRemoteException(callback::accept);
+        if (!mFeatureFlags.carrierEnabledSatelliteFlag()) {
+            result.accept(SatelliteManager.SATELLITE_RESULT_REQUEST_NOT_SUPPORTED);
+            return;
+        }
+
         synchronized (mIsSatelliteEnabledLock) {
             if (mSatelliteAttachRestrictionForCarrierArray.getOrDefault(
                     subId, Collections.emptySet()).isEmpty()
@@ -1956,7 +1943,10 @@ public class SatelliteController extends Handler {
      *
      * @return Set of reasons for disallowing satellite attach for carrier.
      */
-    public @NonNull Set<Integer> getSatelliteAttachRestrictionReasonsForCarrier(int subId) {
+    @NonNull public Set<Integer> getSatelliteAttachRestrictionReasonsForCarrier(int subId) {
+        if (!mFeatureFlags.carrierEnabledSatelliteFlag()) {
+            return new HashSet<>();
+        }
         synchronized (mIsSatelliteEnabledLock) {
             Set<Integer> resultSet =
                     mSatelliteAttachRestrictionForCarrierArray.get(subId);
@@ -2086,6 +2076,27 @@ public class SatelliteController extends Handler {
     }
 
     /**
+     * This function is used by {@link com.android.internal.telephony.ServiceStateTracker} to notify
+     * {@link SatelliteController} that it has received a request to power off the cellular radio
+     * modem. {@link SatelliteController} will then power off the satellite modem.
+     */
+    public void onCellularRadioPowerOffRequested() {
+        if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
+            return;
+        }
+
+        mIsRadioOn = false;
+        requestSatelliteEnabled(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
+                false /* enableSatellite */, false /* enableDemoMode */,
+                new IIntegerConsumer.Stub() {
+                    @Override
+                    public void accept(int result) {
+                        logd("onRadioPowerOffRequested: requestSatelliteEnabled result=" + result);
+                    }
+                });
+    }
+
+    /**
      * @return {@code true} is satellite is supported on the device, {@code  false} otherwise.
      */
     public boolean isSatelliteSupported() {
@@ -2100,8 +2111,8 @@ public class SatelliteController extends Handler {
     @NonNull
     public List<String> getSatellitePlmnList(int subId) {
         synchronized (mSupportedSatelliteServicesLock) {
-            if (mSupportedSatelliteServices.containsKey(subId)) {
-                return new ArrayList<>(mSupportedSatelliteServices.get(subId).keySet());
+            if (mSatelliteServicesSupportedByCarriers.containsKey(subId)) {
+                return new ArrayList<>(mSatelliteServicesSupportedByCarriers.get(subId).keySet());
             } else {
                 return new ArrayList<>();
             }
@@ -2117,9 +2128,9 @@ public class SatelliteController extends Handler {
     @NonNull
     public List<Integer> getSupportedSatelliteServices(int subId, String plmn) {
         synchronized (mSupportedSatelliteServicesLock) {
-            if (mSupportedSatelliteServices.containsKey(subId)) {
+            if (mSatelliteServicesSupportedByCarriers.containsKey(subId)) {
                 Map<String, Set<Integer>> supportedServices =
-                        mSupportedSatelliteServices.get(subId);
+                        mSatelliteServicesSupportedByCarriers.get(subId);
                 if (supportedServices != null && supportedServices.containsKey(plmn)) {
                     return new ArrayList<>(supportedServices.get(plmn));
                 } else {
@@ -2127,8 +2138,8 @@ public class SatelliteController extends Handler {
                             + "does not contain key plmn=" + plmn);
                 }
             } else {
-                loge("getSupportedSatelliteServices: mSupportedSatelliteServices does contain key"
-                        + " subId=" + subId);
+                loge("getSupportedSatelliteServices: mSatelliteServicesSupportedByCarriers does "
+                        + "not contain key subId=" + subId);
             }
             return new ArrayList<>();
         }
@@ -2590,11 +2601,22 @@ public class SatelliteController extends Handler {
     }
 
     private void configureSatellitePlmnForCarrier(int subId) {
-        logd("configureSatellitePlmnForCarrier()");
-        List<String> satellitePlmnList = getSatellitePlmnList(subId);
-        if (!satellitePlmnList.isEmpty()) {
+        logd("configureSatellitePlmnForCarrier");
+        if (!mFeatureFlags.carrierEnabledSatelliteFlag()) {
+            return;
+        }
+        synchronized (mSupportedSatelliteServicesLock) {
+            List<String> carrierPlmnList;
+            if (mSatelliteServicesSupportedByCarriers.containsKey(subId)) {
+                carrierPlmnList =
+                        mSatelliteServicesSupportedByCarriers.get(subId).keySet().stream().toList();
+            } else {
+                carrierPlmnList = new ArrayList<>();
+            }
             int slotId = SubscriptionManager.getSlotIndex(subId);
-            mSatelliteModemInterface.setSatellitePlmn(slotId, satellitePlmnList,
+            mSatelliteModemInterface.setSatellitePlmn(slotId, carrierPlmnList,
+                    SatelliteServiceUtils.mergeStrLists(
+                            carrierPlmnList, mSatellitePlmnListFromOverlayConfig),
                     obtainMessage(EVENT_SET_SATELLITE_PLMN_INFO_DONE));
         }
     }
@@ -2605,8 +2627,12 @@ public class SatelliteController extends Handler {
     }
 
     private void updateSupportedSatelliteServicesForActiveSubscriptions() {
+        if (!mFeatureFlags.carrierEnabledSatelliteFlag()) {
+            return;
+        }
+
         synchronized (mSupportedSatelliteServicesLock) {
-            mSupportedSatelliteServices.clear();
+            mSatelliteServicesSupportedByCarriers.clear();
             int[] activeSubIds = mSubscriptionManagerService.getActiveSubIdList(true);
             if (activeSubIds != null) {
                 for (int subId : activeSubIds) {
@@ -2620,21 +2646,21 @@ public class SatelliteController extends Handler {
     }
 
     private void updateSupportedSatelliteServices(int subId) {
-        Map<String, Set<Integer>> carrierSupportedSatelliteServicesPerPlmn =
-                readSupportedSatelliteServicesFromCarrierConfig(subId);
         synchronized (mSupportedSatelliteServicesLock) {
-            mSupportedSatelliteServices.put(subId,
-                    SatelliteServiceUtils.mergeSupportedSatelliteServices(
-                            mSatelliteServicesSupportedByProviders,
-                            carrierSupportedSatelliteServicesPerPlmn));
+            mSatelliteServicesSupportedByCarriers.put(
+                    subId, readSupportedSatelliteServicesFromCarrierConfig(subId));
         }
     }
 
     @NonNull
-    private Map<String, Set<Integer>> readSupportedSatelliteServicesFromOverlayConfig() {
-        String[] supportedServices = readStringArrayFromOverlayConfig(
-                R.array.config_satellite_services_supported_by_providers);
-        return SatelliteServiceUtils.parseSupportedSatelliteServices(supportedServices);
+    private List<String> readSatellitePlmnsFromOverlayConfig() {
+        if (!mFeatureFlags.carrierEnabledSatelliteFlag()) {
+            return new ArrayList<>();
+        }
+
+        String[] devicePlmns = readStringArrayFromOverlayConfig(
+                R.array.config_satellite_providers);
+        return Arrays.stream(devicePlmns).toList();
     }
 
     @NonNull

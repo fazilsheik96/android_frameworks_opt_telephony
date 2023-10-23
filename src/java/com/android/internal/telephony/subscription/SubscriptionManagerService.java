@@ -847,7 +847,7 @@ public class SubscriptionManagerService extends ISub.Stub {
         try {
             mSubscriptionDatabaseManager.setNtn(subId, (isNtn ? 1 : 0));
         } catch (IllegalArgumentException e) {
-            loge("setNtn: invalid subId=" + subId);
+            loge("setOnlyNonTerrestrialNetwork: invalid subId=" + subId);
         }
     }
 
@@ -1147,7 +1147,8 @@ public class SubscriptionManagerService extends ISub.Stub {
                         builder.setMcc(mcc);
                         builder.setMnc(mnc);
                         if (mFeatureFlags.oemEnabledSatelliteFlag()) {
-                            builder.setNtn(isSatellitePlmn(mcc + mnc) ? 1 : 0);
+                            builder.setOnlyNonTerrestrialNetwork(
+                                    isSatellitePlmn(mcc + mnc) ? 1 : 0);
                         }
                     }
                     // If cardId = unsupported or un-initialized, we have no reason to update DB.
@@ -3666,7 +3667,7 @@ public class SubscriptionManagerService extends ISub.Stub {
      * else {@code false} if subscription is not associated with user.
      *
      * @throws SecurityException if the caller doesn't have permissions required.
-     *
+     * @throws IllegalArgumentException if the subscription has no records on device.
      */
     @Override
     public boolean isSubscriptionAssociatedWithUser(int subscriptionId,
@@ -3676,18 +3677,11 @@ public class SubscriptionManagerService extends ISub.Stub {
 
         long token = Binder.clearCallingIdentity();
         try {
-            // Return true if there are no subscriptions on the device.
-            List<SubscriptionInfo> subInfoList = getAllSubInfoList(
-                    mContext.getOpPackageName(), mContext.getAttributionTag());
-            if (subInfoList == null || subInfoList.isEmpty()) {
-                return true;
-            }
-
-            List<Integer> subIdList = subInfoList.stream().map(SubscriptionInfo::getSubscriptionId)
-                    .collect(Collectors.toList());
-            if (!subIdList.contains(subscriptionId)) {
-                // Return true as this subscription is not available on the device.
-                return true;
+            // Throw IAE if no record of the sub's association state.
+            if (mSubscriptionDatabaseManager.getSubscriptionInfoInternal(subscriptionId) == null) {
+                throw new IllegalArgumentException(
+                        "[isSubscriptionAssociatedWithUser]: Subscription doesn't exist: "
+                                + subscriptionId);
             }
 
             // Get list of subscriptions associated with this user.
@@ -3729,23 +3723,21 @@ public class SubscriptionManagerService extends ISub.Stub {
 
         long token = Binder.clearCallingIdentity();
         try {
-            List<SubscriptionInfo> subInfoList =  getAllSubInfoList(
-                    mContext.getOpPackageName(), mContext.getAttributionTag());
-            if (subInfoList == null || subInfoList.isEmpty()) {
+            List<SubscriptionInfoInternal> subInfoList =  mSubscriptionDatabaseManager
+                    .getAllSubscriptions();
+            if (subInfoList.isEmpty()) {
                 return new ArrayList<>();
             }
 
             List<SubscriptionInfo> subscriptionsAssociatedWithUser = new ArrayList<>();
             List<SubscriptionInfo> subscriptionsWithNoAssociation = new ArrayList<>();
-            for (SubscriptionInfo subInfo : subInfoList) {
-                int subId = subInfo.getSubscriptionId();
-                UserHandle subIdUserHandle = getSubscriptionUserHandle(subId);
-                if (userHandle.equals(subIdUserHandle)) {
+            for (SubscriptionInfoInternal subInfo : subInfoList) {
+                if (subInfo.getUserId() == userHandle.getIdentifier()) {
                     // Store subscriptions whose user handle matches with required user handle.
-                    subscriptionsAssociatedWithUser.add(subInfo);
-                } else if (subIdUserHandle == null) {
+                    subscriptionsAssociatedWithUser.add(subInfo.toSubscriptionInfo());
+                } else if (subInfo.getUserId() == UserHandle.USER_NULL) {
                     // Store subscriptions whose user handle is set to null.
-                    subscriptionsWithNoAssociation.add(subInfo);
+                    subscriptionsWithNoAssociation.add(subInfo.toSubscriptionInfo());
                 }
             }
 
@@ -4030,7 +4022,7 @@ public class SubscriptionManagerService extends ISub.Stub {
             return false;
         }
 
-        final int id = R.string.config_satellite_esim_identifier;
+        final int id = R.string.config_satellite_sim_identifier;
         String overlayMccMnc = null;
         try {
             overlayMccMnc = mContext.getResources().getString(id);

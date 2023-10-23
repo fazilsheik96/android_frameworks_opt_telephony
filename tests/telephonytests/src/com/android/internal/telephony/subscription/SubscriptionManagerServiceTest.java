@@ -1114,8 +1114,6 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
 
     @Test
     public void testIsSubscriptionAssociatedWithUser() {
-        insertSubscription(FAKE_SUBSCRIPTION_INFO1);
-
         // Should fail without MANAGE_SUBSCRIPTION_USER_ASSOCIATION
         assertThrows(SecurityException.class, () -> mSubscriptionManagerServiceUT
                 .isSubscriptionAssociatedWithUser(1, FAKE_USER_HANDLE));
@@ -1125,6 +1123,12 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         mContextFixture.addCallingOrSelfPermission(
                 Manifest.permission.MANAGE_SUBSCRIPTION_USER_ASSOCIATION);
         mContextFixture.addCallingOrSelfPermission(Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
+
+        // Should fail for non-existent sub Id
+        assertThrows(IllegalArgumentException.class, () -> mSubscriptionManagerServiceUT
+                .isSubscriptionAssociatedWithUser(1, FAKE_USER_HANDLE));
+
+        insertSubscription(FAKE_SUBSCRIPTION_INFO1);
 
         mSubscriptionManagerServiceUT.setSubscriptionUserHandle(FAKE_USER_HANDLE, 1);
         processAllMessages();

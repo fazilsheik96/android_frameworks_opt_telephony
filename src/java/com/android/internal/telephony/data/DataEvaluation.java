@@ -145,13 +145,23 @@ public class DataEvaluation {
     }
 
     /**
-     * Check if only the given reasons present in the disallowed reasons if there are any.
+     * Check if only one disallowed reason prevent data connection.
      *
-     * @param reasons The given reasons to check
-     * @return {@code true} if the disallowed reasons contain no disallowed reasons other than the
-     * given reasons.
+     * @param reason The given reason to check
+     * @return {@code true} if the given reason is the only one that prevents data connection
      */
-    public boolean containsOnly(DataDisallowedReason... reasons) {
+    public boolean containsOnly(DataDisallowedReason reason) {
+        return mDataDisallowedReasons.size() == 1 && contains(reason);
+    }
+
+    /**
+     * Check if all the disallowed reasons are a subset of the given reason.
+     *
+     * @param reasons The given reason to check
+     * @return {@code true} if it doesn't contain any disallowed reasons other than the given
+     * reasons.
+     */
+    public boolean isSubsetOf(DataDisallowedReason... reasons) {
         int matched = 0;
         for (DataDisallowedReason requestedReason : reasons) {
             if (mDataDisallowedReasons.contains(requestedReason)) matched++;

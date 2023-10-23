@@ -282,7 +282,7 @@ public class SubscriptionDatabaseManager extends Handler {
                     SubscriptionInfoInternal::getSatelliteAttachEnabledForCarrier),
             new AbstractMap.SimpleImmutableEntry<>(
                     SimInfo.COLUMN_IS_NTN,
-                    SubscriptionInfoInternal::getNtn)
+                    SubscriptionInfoInternal::getOnlyNonTerrestrialNetwork)
     );
 
     /**
@@ -2041,7 +2041,7 @@ public class SubscriptionDatabaseManager extends Handler {
             return;
         }
         writeDatabaseAndCacheHelper(subId, SimInfo.COLUMN_IS_NTN, isNtn,
-                SubscriptionInfoInternal.Builder::setNtn);
+                SubscriptionInfoInternal.Builder::setOnlyNonTerrestrialNetwork);
     }
 
     /**
@@ -2305,7 +2305,7 @@ public class SubscriptionDatabaseManager extends Handler {
                         cursor.getColumnIndexOrThrow(
                                 SimInfo.COLUMN_SATELLITE_ATTACH_ENABLED_FOR_CARRIER)));
         if (mFeatureFlags.oemEnabledSatelliteFlag()) {
-            builder.setNtn(cursor.getInt(cursor.getColumnIndexOrThrow(
+            builder.setOnlyNonTerrestrialNetwork(cursor.getInt(cursor.getColumnIndexOrThrow(
                     SimInfo.COLUMN_IS_NTN)));
         }
         return builder.build();

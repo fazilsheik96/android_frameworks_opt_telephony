@@ -2472,6 +2472,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
                         "source=IWLAN, target=EUTRAN, type=disallowed, capabilities=MMS"});
         // Force data config manager to reload the carrier config.
         carrierConfigChanged();
+        processAllMessages();
 
         testSetupImsDataNetwork();
 
@@ -2512,6 +2513,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
 
     @Test
     public void testHandoverDataNetworkNotAllowedByPolicyDelayDueToVoiceCall() throws Exception {
+        doReturn(true).when(mFeatureFlags).relaxHoTeardown();
         // Config delay IMS tear down enabled
         mCarrierConfig.putBoolean(CarrierConfigManager.KEY_DELAY_IMS_TEAR_DOWN_UNTIL_CALL_END_BOOL,
                 true);
