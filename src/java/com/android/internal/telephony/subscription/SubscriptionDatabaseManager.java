@@ -48,6 +48,7 @@ import android.util.LocalLog;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.uicc.UiccController;
 import com.android.internal.util.function.TriConsumer;
 import com.android.telephony.Rlog;
@@ -278,8 +279,10 @@ public class SubscriptionDatabaseManager extends Handler {
                     SubscriptionInfoInternal::getSatelliteEnabled),
             new AbstractMap.SimpleImmutableEntry<>(
                     SimInfo.COLUMN_SATELLITE_ATTACH_ENABLED_FOR_CARRIER,
-                    SubscriptionInfoInternal::getSatelliteAttachEnabledForCarrier)
-
+                    SubscriptionInfoInternal::getSatelliteAttachEnabledForCarrier),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_IS_NTN,
+                    SubscriptionInfoInternal::getOnlyNonTerrestrialNetwork)
     );
 
     /**
@@ -407,7 +410,10 @@ public class SubscriptionDatabaseManager extends Handler {
                     SubscriptionDatabaseManager::setSatelliteEnabled),
             new AbstractMap.SimpleImmutableEntry<>(
                     SimInfo.COLUMN_SATELLITE_ATTACH_ENABLED_FOR_CARRIER,
-                    SubscriptionDatabaseManager::setSatelliteAttachEnabledForCarrier)
+                    SubscriptionDatabaseManager::setSatelliteAttachEnabledForCarrier),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_IS_NTN,
+                    SubscriptionDatabaseManager::setNtn)
     );
 
     /**
@@ -539,6 +545,10 @@ public class SubscriptionDatabaseManager extends Handler {
     @NonNull
     private final Context mContext;
 
+    /** The feature flags */
+    @NonNull
+    private final FeatureFlags mFeatureFlags;
+
     /** The callback used for passing events back to {@link SubscriptionManagerService}. */
     @NonNull
     private final SubscriptionDatabaseManagerCallback mCallback;
@@ -629,9 +639,11 @@ public class SubscriptionDatabaseManager extends Handler {
      *
      * @param context The context.
      * @param looper Looper for the handler.
+     * @param featureFlags The feature flags.
      * @param callback Subscription database callback.
      */
     public SubscriptionDatabaseManager(@NonNull Context context, @NonNull Looper looper,
+            @NonNull FeatureFlags featureFlags,
             @NonNull SubscriptionDatabaseManagerCallback callback) {
         super(looper);
         log("Created SubscriptionDatabaseManager.");
@@ -640,6 +652,7 @@ public class SubscriptionDatabaseManager extends Handler {
         mUiccController = UiccController.getInstance();
         mAsyncMode = mContext.getResources().getBoolean(
                 com.android.internal.R.bool.config_subscription_database_async_update);
+        mFeatureFlags = featureFlags;
         initializeDatabase();
     }
 
@@ -2015,6 +2028,23 @@ public class SubscriptionDatabaseManager extends Handler {
     }
 
     /**
+     * Set whether the subscription is exclusively used for non-terrestrial networks or not.
+     *
+     * @param subId Subscription ID.
+     * @param isNtn {@code 1} if it is a non-terrestrial network subscription.
+     * {@code 0} otherwise.
+     *
+     * @throws IllegalArgumentException if the subscription does not exist.
+     */
+    public void setNtn(int subId, int isNtn) {
+        if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
+            return;
+        }
+        writeDatabaseAndCacheHelper(subId, SimInfo.COLUMN_IS_NTN, isNtn,
+                SubscriptionInfoInternal.Builder::setOnlyNonTerrestrialNetwork);
+    }
+
+    /**
      * Set whether group of the subscription is disabled. This is only useful if it's a grouped
      * opportunistic subscription. In this case, if all primary (non-opportunistic)
      * subscriptions in the group are deactivated (unplugged pSIM or deactivated eSIM profile),
@@ -2273,7 +2303,11 @@ public class SubscriptionDatabaseManager extends Handler {
                         SimInfo.COLUMN_SATELLITE_ENABLED)))
                 .setSatelliteAttachEnabledForCarrier(cursor.getInt(
                         cursor.getColumnIndexOrThrow(
-                        SimInfo.COLUMN_SATELLITE_ATTACH_ENABLED_FOR_CARRIER)));
+                                SimInfo.COLUMN_SATELLITE_ATTACH_ENABLED_FOR_CARRIER)));
+        if (mFeatureFlags.oemEnabledSatelliteFlag()) {
+            builder.setOnlyNonTerrestrialNetwork(cursor.getInt(cursor.getColumnIndexOrThrow(
+                    SimInfo.COLUMN_IS_NTN)));
+        }
         return builder.build();
     }
 

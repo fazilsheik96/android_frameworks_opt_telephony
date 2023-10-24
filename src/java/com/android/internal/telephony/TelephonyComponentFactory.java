@@ -53,6 +53,8 @@ import com.android.internal.telephony.data.TelephonyNetworkAgent;
 import com.android.internal.telephony.data.TelephonyNetworkAgent.TelephonyNetworkAgentCallback;
 import com.android.internal.telephony.data.TelephonyNetworkFactory;
 import com.android.internal.telephony.emergency.EmergencyNumberTracker;
+import com.android.internal.telephony.flags.FeatureFlagsImpl;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.imsphone.ImsExternalCallTracker;
 import com.android.internal.telephony.imsphone.ImsNrSaModeHandler;
 import com.android.internal.telephony.imsphone.ImsPhone;
@@ -466,10 +468,11 @@ public class TelephonyComponentFactory {
 
     public Phone makePhone(Context context, CommandsInterface ci, PhoneNotifier notifier,
             int phoneId, int precisePhoneType,
-            TelephonyComponentFactory telephonyComponentFactory) {
+            TelephonyComponentFactory telephonyComponentFactory,
+            @NonNull FeatureFlags featureFlags) {
         Rlog.i(TAG, "makePhone");
         return new GsmCdmaPhone(context, ci, notifier, phoneId, precisePhoneType,
-                telephonyComponentFactory);
+                telephonyComponentFactory, featureFlags);
     }
 
     public SubscriptionController initSubscriptionController(Context c) {
@@ -538,10 +541,12 @@ public class TelephonyComponentFactory {
      *
      * @param phone The phone object
      * @param looper The looper for event handling
+     * @param featureFlags The feature flag.
      * @return The data network controller instance
      */
-    public DataNetworkController makeDataNetworkController(Phone phone, Looper looper) {
-        return new DataNetworkController(phone, looper);
+    public DataNetworkController makeDataNetworkController(Phone phone, Looper looper,
+            @NonNull FeatureFlags featureFlags) {
+        return new DataNetworkController(phone, looper, featureFlags);
     }
 
     /**
@@ -624,6 +629,6 @@ public class TelephonyComponentFactory {
     public SubscriptionManagerService makeSubscriptionManagerService(
             @NonNull Context context, @NonNull Looper looper) {
         Rlog.i(TAG, "make SubscriptionManagerService");
-        return new SubscriptionManagerService(context, looper);
+        return new SubscriptionManagerService(context, looper, new FeatureFlagsImpl());
     }
 }

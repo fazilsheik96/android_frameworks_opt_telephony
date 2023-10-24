@@ -115,6 +115,7 @@ import com.android.internal.telephony.data.DataEvaluation.DataDisallowedReason;
 import com.android.internal.telephony.data.DataNetworkController.HandoverRule;
 import com.android.internal.telephony.data.DataRetryManager.DataRetryManagerCallback;
 import com.android.internal.telephony.data.LinkBandwidthEstimator.LinkBandwidthEstimatorCallback;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.ims.ImsResolver;
 import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
 
@@ -181,6 +182,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
 
     private boolean mIsNonTerrestrialNetwork = false;
     private ArrayList<Integer> mCarrierSupportedSatelliteServices = new ArrayList<>();
+    private FeatureFlags mFeatureFlags;
 
     private final DataProfile mGeneralPurposeDataProfile = new DataProfile.Builder()
             .setApnSetting(new ApnSetting.Builder()
@@ -775,6 +777,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
         mMockedDataNetworkControllerCallback = Mockito.mock(DataNetworkControllerCallback.class);
         mMockedDataRetryManagerCallback = Mockito.mock(DataRetryManagerCallback.class);
         mMockSubInfo = Mockito.mock(SubscriptionInfo.class);
+        mFeatureFlags = Mockito.mock(FeatureFlags.class);
         when(mTelephonyComponentFactory.makeDataSettingsManager(any(Phone.class),
                 any(DataNetworkController.class), any(Looper.class),
                 any(DataSettingsManager.DataSettingsManagerCallback.class))).thenCallRealMethod();
@@ -864,7 +867,8 @@ public class DataNetworkControllerTest extends TelephonyTest {
         // to test, in this case, DataNetworkController. But since there are too many interactions
         // between DataNetworkController and its sub-modules, we intend to make those modules "real"
         // as well, except some modules below we replaced with mocks.
-        mDataNetworkControllerUT = new DataNetworkController(mPhone, Looper.myLooper());
+        mDataNetworkControllerUT = new DataNetworkController(mPhone, Looper.myLooper(),
+                mFeatureFlags);
         // First two come from DataServiceManager and the third comes from DataConfigManager which
         // is what we want to capture and assign to mCarrierConfigChangeListener
         verify(mCarrierConfigManager, times(3)).registerCarrierConfigChangeListener(any(),
@@ -1593,6 +1597,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
 
     @Test
     public void testNonTerrestrialNetworkChangedWithoutDataSupport() throws Exception {
+        when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(true);
         mIsNonTerrestrialNetwork = true;
         // Data is not supported while using satellite
         mCarrierSupportedSatelliteServices.add(NetworkRegistrationInfo.SERVICE_TYPE_VOICE);
@@ -1618,6 +1623,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
 
     @Test
     public void testNonTerrestrialNetworkWithDataSupport() throws Exception {
+        when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(true);
         mIsNonTerrestrialNetwork = true;
         // Data is supported while using satellite
         mCarrierSupportedSatelliteServices.add(NetworkRegistrationInfo.SERVICE_TYPE_DATA);
@@ -1634,6 +1640,28 @@ public class DataNetworkControllerTest extends TelephonyTest {
         mIsNonTerrestrialNetwork = false;
         mCarrierSupportedSatelliteServices.clear();
     }
+
+    @Test
+    public void testNonTerrestrialNetworkWithFlagDisabled() throws Exception {
+        when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(false);
+
+        mIsNonTerrestrialNetwork = true;
+        // Data is not supported while using satellite
+        mCarrierSupportedSatelliteServices.add(NetworkRegistrationInfo.SERVICE_TYPE_VOICE);
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_HOME);
+
+        mDataNetworkControllerUT.addNetworkRequest(
+                createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_INTERNET));
+        processAllMessages();
+
+        // As feature is disabled, data is connected.
+        verifyInternetConnected();
+
+        mIsNonTerrestrialNetwork = false;
+        mCarrierSupportedSatelliteServices.clear();
+    }
+
 
     @Test
     public void testRoamingDataChanged() throws Exception {
@@ -2443,8 +2471,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 new String[]{"source=EUTRAN, target=IWLAN, type=disallowed, capabilities=MMS|IMS",
                         "source=IWLAN, target=EUTRAN, type=disallowed, capabilities=MMS"});
         // Force data config manager to reload the carrier config.
-        mDataNetworkControllerUT.getDataConfigManager().obtainMessage(
-                1/*EVENT_CARRIER_CONFIG_CHANGED*/).sendToTarget();
+        carrierConfigChanged();
         processAllMessages();
 
         testSetupImsDataNetwork();
@@ -2482,6 +2509,36 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 anyInt(), any(), anyBoolean(), anyBoolean(),
                 eq(DataService.REQUEST_REASON_HANDOVER), any(), anyInt(), any(), any(), eq(true),
                 any());
+    }
+
+    @Test
+    public void testHandoverDataNetworkNotAllowedByPolicyDelayDueToVoiceCall() throws Exception {
+        doReturn(true).when(mFeatureFlags).relaxHoTeardown();
+        // Config delay IMS tear down enabled
+        mCarrierConfig.putBoolean(CarrierConfigManager.KEY_DELAY_IMS_TEAR_DOWN_UNTIL_CALL_END_BOOL,
+                true);
+        mCarrierConfig.putStringArray(CarrierConfigManager.KEY_IWLAN_HANDOVER_POLICY_STRING_ARRAY,
+                new String[]{"source=EUTRAN, target=IWLAN, type=disallowed, capabilities=MMS|IMS"});
+        carrierConfigChanged();
+
+        testSetupImsDataNetwork();
+
+        // Ringing an active call, should delay handover tear down
+        doReturn(PhoneConstants.State.RINGING).when(mCT).getState();
+        updateTransport(NetworkCapabilities.NET_CAPABILITY_IMS,
+                AccessNetworkConstants.TRANSPORT_TYPE_WLAN);
+
+        // Verify network is still connected due to active voice call
+        verify(mMockedWwanDataServiceManager, never()).deactivateDataCall(anyInt(),
+                eq(DataService.REQUEST_REASON_NORMAL), any(Message.class));
+
+        // Verify tear down after call ends
+        doReturn(PhoneConstants.State.IDLE).when(mCT).getState();
+        mDataNetworkControllerUT.obtainMessage(EVENT_VOICE_CALL_ENDED).sendToTarget();
+        processAllFutureMessages();
+
+        verify(mMockedWwanDataServiceManager).deactivateDataCall(anyInt(),
+                eq(DataService.REQUEST_REASON_NORMAL), any(Message.class));
     }
 
     @Test

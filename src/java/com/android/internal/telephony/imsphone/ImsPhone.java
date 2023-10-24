@@ -130,6 +130,7 @@ import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.telephony.domainselection.DomainSelectionResolver;
 import com.android.internal.telephony.emergency.EmergencyNumberTracker;
 import com.android.internal.telephony.emergency.EmergencyStateTracker;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.gsm.SuppServiceNotification;
 import com.android.internal.telephony.metrics.ImsStats;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
@@ -466,14 +467,15 @@ public class ImsPhone extends ImsPhoneBase {
     }
 
     // Constructors
-    public ImsPhone(Context context, PhoneNotifier notifier, Phone defaultPhone) {
-        this(context, notifier, defaultPhone, ImsManager::getInstance, false);
+    public ImsPhone(Context context, PhoneNotifier notifier,
+            Phone defaultPhone, FeatureFlags featureFlags) {
+        this(context, notifier, defaultPhone, ImsManager::getInstance, false, featureFlags);
     }
 
     @VisibleForTesting
     public ImsPhone(Context context, PhoneNotifier notifier, Phone defaultPhone,
-            ImsManagerFactory imsManagerFactory, boolean unitTestMode) {
-        super("ImsPhone", context, notifier, unitTestMode);
+            ImsManagerFactory imsManagerFactory, boolean unitTestMode, FeatureFlags featureFlags) {
+        super("ImsPhone", context, notifier, unitTestMode, featureFlags);
 
         mDefaultPhone = defaultPhone;
         mImsManagerFactory = imsManagerFactory;
@@ -2834,9 +2836,13 @@ public class ImsPhone extends ImsPhoneBase {
             @RegistrationManager.SuggestedAction int suggestedAction) {
 
         if (regState == mImsRegistrationState) {
+            // In NOT_REGISTERED state, the current PLMN can be blocked with a suggested action.
+            // But in this case, the same behavior is able to occur in different PLMNs with
+            // same radio tech and suggested action.
             if ((regState == REGISTRATION_STATE_REGISTERED && imsRadioTech == mImsRegistrationTech)
                     || (regState == REGISTRATION_STATE_NOT_REGISTERED
-                            && suggestedAction == mImsRegistrationSuggestedAction
+                            && suggestedAction == SUGGESTED_ACTION_NONE
+                            && mImsRegistrationSuggestedAction == SUGGESTED_ACTION_NONE
                             && imsRadioTech == mImsDeregistrationTech)) {
                 // Filter duplicate notification.
                 return;

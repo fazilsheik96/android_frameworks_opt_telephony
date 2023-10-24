@@ -99,6 +99,7 @@ import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.telephony.TelephonyTest;
 import com.android.internal.telephony.domainselection.DomainSelectionResolver;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.gsm.SuppServiceNotification;
 import com.android.internal.telephony.imsphone.ImsPhone.SS;
 import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
@@ -127,6 +128,7 @@ public class ImsPhoneTest extends TelephonyTest {
     private DomainSelectionResolver mDomainSelectionResolver;
     Connection mConnection;
     ImsUtInterface mImsUtInterface;
+    private FeatureFlags mFeatureFlags;
     EcbmHandler mEcbmHandler;
 
     private final Executor mExecutor = Runnable::run;
@@ -152,6 +154,7 @@ public class ImsPhoneTest extends TelephonyTest {
         mConnection = mock(Connection.class);
         mImsUtInterface = mock(ImsUtInterface.class);
         mDomainSelectionResolver = mock(DomainSelectionResolver.class);
+        mFeatureFlags = mock(FeatureFlags.class);
         doReturn(false).when(mDomainSelectionResolver).isDomainSelectionSupported();
         DomainSelectionResolver.setDomainSelectionResolver(mDomainSelectionResolver);
         mEcbmHandler = mock(EcbmHandler.class);
@@ -166,7 +169,8 @@ public class ImsPhoneTest extends TelephonyTest {
 
         doReturn(true).when(mTelephonyManager).isVoiceCapable();
 
-        mImsPhoneUT = new ImsPhone(mContext, mNotifier, mPhone, (c, p) -> mImsManager, true);
+        mImsPhoneUT = new ImsPhone(mContext, mNotifier, mPhone, (c, p) -> mImsManager, true,
+                mFeatureFlags);
 
         mDoesRilSendMultipleCallRing = TelephonyProperties.ril_sends_multiple_call_ring()
                 .orElse(true);
@@ -1503,13 +1507,14 @@ public class ImsPhoneTest extends TelephonyTest {
 
         assertTrue(regInfo[0] == 0 && regInfo[1] == 0 && regInfo[2] == 0);
 
-        // duplicated notification with the same suggested action
+        // verifies that duplicated notification with the same suggested action is invoked
         registrationCallback.onUnregistered(reasonInfo,
                 SUGGESTED_ACTION_TRIGGER_PLMN_BLOCK, REGISTRATION_TECH_LTE);
         regInfo = mSimulatedCommands.getImsRegistrationInfo();
 
-        // verify that there is no update in the SimulatedCommands
-        assertTrue(regInfo[0] == 0 && regInfo[1] == 0 && regInfo[2] == 0);
+        assertTrue(regInfo[0] == RegistrationManager.REGISTRATION_STATE_NOT_REGISTERED
+                && regInfo[1] == REGISTRATION_TECH_LTE
+                && regInfo[2] == SUGGESTED_ACTION_TRIGGER_PLMN_BLOCK);
 
         // unregistered with repeated error
         registrationCallback.onUnregistered(reasonInfo,
@@ -1527,14 +1532,15 @@ public class ImsPhoneTest extends TelephonyTest {
 
         assertTrue(regInfo[0] == 0 && regInfo[1] == 0 && regInfo[2] == 0);
 
-        // duplicated notification with the same suggested action
+        // verfies that duplicated notification with the same suggested action is invoked
         registrationCallback.onUnregistered(reasonInfo,
                 SUGGESTED_ACTION_TRIGGER_PLMN_BLOCK_WITH_TIMEOUT,
                 REGISTRATION_TECH_LTE);
         regInfo = mSimulatedCommands.getImsRegistrationInfo();
 
-        // verify that there is no update in the SimulatedCommands
-        assertTrue(regInfo[0] == 0 && regInfo[1] == 0 && regInfo[2] == 0);
+        assertTrue(regInfo[0] == RegistrationManager.REGISTRATION_STATE_NOT_REGISTERED
+                && regInfo[1] == REGISTRATION_TECH_LTE
+                && regInfo[2] == SUGGESTED_ACTION_TRIGGER_PLMN_BLOCK_WITH_TIMEOUT);
 
         // unregistered with temporary error
         registrationCallback.onUnregistered(reasonInfo,
@@ -1544,6 +1550,19 @@ public class ImsPhoneTest extends TelephonyTest {
         assertTrue(regInfo[0] == RegistrationManager.REGISTRATION_STATE_NOT_REGISTERED
                 && regInfo[1] == REGISTRATION_TECH_LTE
                 && regInfo[2] == SUGGESTED_ACTION_NONE);
+
+        // reset the registration info saved in the SimulatedCommands
+        mSimulatedCommands.updateImsRegistrationInfo(0, 0, 0, 0, null);
+        regInfo = mSimulatedCommands.getImsRegistrationInfo();
+
+        assertTrue(regInfo[0] == 0 && regInfo[1] == 0 && regInfo[2] == 0);
+
+        // verfies that duplicated notification with temporary error is discarded
+        registrationCallback.onUnregistered(reasonInfo,
+                SUGGESTED_ACTION_NONE, REGISTRATION_TECH_LTE);
+        regInfo = mSimulatedCommands.getImsRegistrationInfo();
+
+        assertTrue(regInfo[0] == 0 && regInfo[1] == 0 && regInfo[2] == 0);
 
         // verifies that reason codes except ImsReasonInfo.CODE_REGISTRATION_ERROR are discarded.
         reasonInfo = new ImsReasonInfo(ImsReasonInfo.CODE_LOCAL_NETWORK_NO_SERVICE,
@@ -1562,7 +1581,7 @@ public class ImsPhoneTest extends TelephonyTest {
 
         assertTrue(regInfo[0] == 1 && regInfo[1] == 1 && regInfo[2] == 1);
 
-        // duplicated notification with the same suggested action
+        // verifies that duplicated notification with temporary error is discarded
         registrationCallback.onUnregistered(reasonInfo,
                 SUGGESTED_ACTION_NONE, REGISTRATION_TECH_NR);
         regInfo = mSimulatedCommands.getImsRegistrationInfo();

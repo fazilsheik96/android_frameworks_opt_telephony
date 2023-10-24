@@ -96,6 +96,7 @@ import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.telephony.TelephonyPermissions;
 import com.android.internal.telephony.data.PhoneSwitcher;
 import com.android.internal.telephony.euicc.EuiccController;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.subscription.SubscriptionDatabaseManager.SubscriptionDatabaseManagerCallback;
 import com.android.internal.telephony.uicc.IccRecords;
 import com.android.internal.telephony.uicc.IccUtils;
@@ -175,7 +176,8 @@ public class SubscriptionManagerService extends ISub.Stub {
             SimInfo.COLUMN_D2D_STATUS_SHARING_SELECTED_CONTACTS,
             SimInfo.COLUMN_NR_ADVANCED_CALLING_ENABLED,
             SimInfo.COLUMN_SATELLITE_ENABLED,
-            SimInfo.COLUMN_SATELLITE_ATTACH_ENABLED_FOR_CARRIER
+            SimInfo.COLUMN_SATELLITE_ATTACH_ENABLED_FOR_CARRIER,
+            SimInfo.COLUMN_IS_NTN
     );
 
     /**
@@ -194,6 +196,10 @@ public class SubscriptionManagerService extends ISub.Stub {
     /** The context */
     @NonNull
     private final Context mContext;
+
+    /** Feature flags */
+    @NonNull
+    private final FeatureFlags mFeatureFlags;
 
     /** App Ops manager instance. */
     @NonNull
@@ -407,10 +413,12 @@ public class SubscriptionManagerService extends ISub.Stub {
      * @param context The context
      * @param looper The looper for the handler.
      */
-    public SubscriptionManagerService(@NonNull Context context, @NonNull Looper looper) {
+    public SubscriptionManagerService(@NonNull Context context, @NonNull Looper looper,
+            @NonNull FeatureFlags featureFlags) {
         logl("Created SubscriptionManagerService");
         sInstance = this;
         mContext = context;
+        mFeatureFlags = featureFlags;
         mTelephonyManager = context.getSystemService(TelephonyManager.class);
         mSubscriptionManager = context.getSystemService(SubscriptionManager.class);
         mEuiccManager = context.getSystemService(EuiccManager.class);
@@ -482,14 +490,15 @@ public class SubscriptionManagerService extends ISub.Stub {
         HandlerThread handlerThread = new HandlerThread(LOG_TAG);
         handlerThread.start();
         mSubscriptionDatabaseManager = new SubscriptionDatabaseManager(context,
-                handlerThread.getLooper(), new SubscriptionDatabaseManagerCallback(mHandler::post) {
+                handlerThread.getLooper(), mFeatureFlags,
+                new SubscriptionDatabaseManagerCallback(mHandler::post) {
                     /**
                      * Called when database has been loaded into the cache.
                      */
                     @Override
                     public void onInitialized() {
                         log("Subscription database has been initialized.");
-                        for (int phoneId = 0; phoneId < mTelephonyManager.getActiveModemCount()
+                        for (int phoneId = 0; phoneId < mTelephonyManager.getSupportedModemCount()
                                 ; phoneId++) {
                             markSubscriptionsInactive(phoneId);
                         }
@@ -823,6 +832,26 @@ public class SubscriptionManagerService extends ISub.Stub {
     }
 
     /**
+     * Set whether the subscription ID supports oem satellite or not.
+     *
+     * @param subId The subscription ID.
+     * @param isNtn {@code true} Requested subscription ID supports oem satellite service,
+     * {@code false} otherwise.
+     */
+    public void setNtn(int subId, boolean isNtn) {
+        if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
+            return;
+        }
+
+        // This can throw IllegalArgumentException if the subscription does not exist.
+        try {
+            mSubscriptionDatabaseManager.setNtn(subId, (isNtn ? 1 : 0));
+        } catch (IllegalArgumentException e) {
+            loge("setOnlyNonTerrestrialNetwork: invalid subId=" + subId);
+        }
+    }
+
+    /**
      * Set ISO country code by subscription id.
      *
      * @param iso ISO country code associated with the subscription.
@@ -1117,12 +1146,17 @@ public class SubscriptionManagerService extends ISub.Stub {
                         String mnc = cid.getMnc();
                         builder.setMcc(mcc);
                         builder.setMnc(mnc);
+                        if (mFeatureFlags.oemEnabledSatelliteFlag()) {
+                            builder.setOnlyNonTerrestrialNetwork(
+                                    isSatellitePlmn(mcc + mnc) ? 1 : 0);
+                        }
                     }
                     // If cardId = unsupported or un-initialized, we have no reason to update DB.
                     // Additionally, if the device does not support cardId for default eUICC, the
                     // CARD_ID field should not contain the EID
                     if (cardId >= 0 && mUiccController.getCardIdForDefaultEuicc()
                             != TelephonyManager.UNSUPPORTED_CARD_ID) {
+                        builder.setCardId(cardId);
                         builder.setCardString(mUiccController.convertToCardString(cardId));
                     }
 
@@ -1389,6 +1423,7 @@ public class SubscriptionManagerService extends ISub.Stub {
                             MccTable.updateMccMncConfiguration(mContext, mccMnc);
                         }
                         setMccMnc(subId, mccMnc);
+                        setNtn(subId, isSatellitePlmn(mccMnc));
                     } else {
                         loge("updateSubscription: mcc/mnc is empty");
                     }
@@ -3613,7 +3648,6 @@ public class SubscriptionManagerService extends ISub.Stub {
             }
 
             UserHandle userHandle = UserHandle.of(subInfo.getUserId());
-            logv("getSubscriptionUserHandle subId = " + subId + " userHandle = " + userHandle);
             if (userHandle.getIdentifier() == UserHandle.USER_NULL) {
                 return null;
             }
@@ -3633,7 +3667,7 @@ public class SubscriptionManagerService extends ISub.Stub {
      * else {@code false} if subscription is not associated with user.
      *
      * @throws SecurityException if the caller doesn't have permissions required.
-     *
+     * @throws IllegalArgumentException if the subscription has no records on device.
      */
     @Override
     public boolean isSubscriptionAssociatedWithUser(int subscriptionId,
@@ -3643,18 +3677,11 @@ public class SubscriptionManagerService extends ISub.Stub {
 
         long token = Binder.clearCallingIdentity();
         try {
-            // Return true if there are no subscriptions on the device.
-            List<SubscriptionInfo> subInfoList = getAllSubInfoList(
-                    mContext.getOpPackageName(), mContext.getAttributionTag());
-            if (subInfoList == null || subInfoList.isEmpty()) {
-                return true;
-            }
-
-            List<Integer> subIdList = subInfoList.stream().map(SubscriptionInfo::getSubscriptionId)
-                    .collect(Collectors.toList());
-            if (!subIdList.contains(subscriptionId)) {
-                // Return true as this subscription is not available on the device.
-                return true;
+            // Throw IAE if no record of the sub's association state.
+            if (mSubscriptionDatabaseManager.getSubscriptionInfoInternal(subscriptionId) == null) {
+                throw new IllegalArgumentException(
+                        "[isSubscriptionAssociatedWithUser]: Subscription doesn't exist: "
+                                + subscriptionId);
             }
 
             // Get list of subscriptions associated with this user.
@@ -3696,23 +3723,21 @@ public class SubscriptionManagerService extends ISub.Stub {
 
         long token = Binder.clearCallingIdentity();
         try {
-            List<SubscriptionInfo> subInfoList =  getAllSubInfoList(
-                    mContext.getOpPackageName(), mContext.getAttributionTag());
-            if (subInfoList == null || subInfoList.isEmpty()) {
+            List<SubscriptionInfoInternal> subInfoList =  mSubscriptionDatabaseManager
+                    .getAllSubscriptions();
+            if (subInfoList.isEmpty()) {
                 return new ArrayList<>();
             }
 
             List<SubscriptionInfo> subscriptionsAssociatedWithUser = new ArrayList<>();
             List<SubscriptionInfo> subscriptionsWithNoAssociation = new ArrayList<>();
-            for (SubscriptionInfo subInfo : subInfoList) {
-                int subId = subInfo.getSubscriptionId();
-                UserHandle subIdUserHandle = getSubscriptionUserHandle(subId);
-                if (userHandle.equals(subIdUserHandle)) {
+            for (SubscriptionInfoInternal subInfo : subInfoList) {
+                if (subInfo.getUserId() == userHandle.getIdentifier()) {
                     // Store subscriptions whose user handle matches with required user handle.
-                    subscriptionsAssociatedWithUser.add(subInfo);
-                } else if (subIdUserHandle == null) {
+                    subscriptionsAssociatedWithUser.add(subInfo.toSubscriptionInfo());
+                } else if (subInfo.getUserId() == UserHandle.USER_NULL) {
                     // Store subscriptions whose user handle is set to null.
-                    subscriptionsWithNoAssociation.add(subInfo);
+                    subscriptionsWithNoAssociation.add(subInfo.toSubscriptionInfo());
                 }
             }
 
@@ -3988,6 +4013,30 @@ public class SubscriptionManagerService extends ISub.Stub {
     }
 
     /**
+     * @param mccMnc MccMnc value to check whether it supports non-terrestrial network or not.
+     * @return {@code true} if MCC/MNC is matched with in the device overlay key
+     * "config_satellite_esim_identifier", {@code false} otherwise.
+     */
+    private boolean isSatellitePlmn(@NonNull String mccMnc) {
+        if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
+            return false;
+        }
+
+        final int id = R.string.config_satellite_sim_identifier;
+        String overlayMccMnc = null;
+        try {
+            overlayMccMnc = mContext.getResources().getString(id);
+        } catch (Resources.NotFoundException ex) {
+            loge("isSatellitePlmn: id= " + id + ", ex=" + ex);
+        }
+        if (overlayMccMnc == null) {
+            return false;
+        } else {
+            return mccMnc.equals(overlayMccMnc);
+        }
+    }
+
+    /**
      * Log debug messages.
      *
      * @param s debug messages
@@ -4013,15 +4062,6 @@ public class SubscriptionManagerService extends ISub.Stub {
     private void logl(@NonNull String s) {
         log(s);
         mLocalLog.log(s);
-    }
-
-    /**
-     * Log verbose messages.
-     *
-     * @param s verbose messages
-     */
-    private void logv(@NonNull String s) {
-        Rlog.v(LOG_TAG, s);
     }
 
     /**

@@ -23,6 +23,7 @@ import static com.android.internal.telephony.PhoneConstants.PHONE_TYPE_CDMA_LTE;
 
 import static java.util.Arrays.copyOf;
 
+import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.ComponentName;
@@ -49,6 +50,8 @@ import com.android.internal.telephony.data.PhoneSwitcher;
 import com.android.internal.telephony.data.TelephonyNetworkFactory;
 import com.android.internal.telephony.euicc.EuiccCardController;
 import com.android.internal.telephony.euicc.EuiccController;
+import com.android.internal.telephony.flags.FeatureFlags;
+import com.android.internal.telephony.flags.FeatureFlagsImpl;
 import com.android.internal.telephony.imsphone.ImsPhone;
 import com.android.internal.telephony.imsphone.ImsPhoneFactory;
 import com.android.internal.telephony.metrics.MetricsCollector;
@@ -106,13 +109,19 @@ public class PhoneFactory {
     static private final HashMap<String, LocalLog>sLocalLogs = new HashMap<String, LocalLog>();
     private static MetricsCollector sMetricsCollector;
     private static RadioInterfaceCapabilityController sRadioHalCapabilities;
+    private static @NonNull FeatureFlags sFeatureFlags = new FeatureFlagsImpl();
 
     private static boolean sSubscriptionManagerServiceEnabled = false;
 
     //***** Class Methods
 
-    public static void makeDefaultPhones(Context context) {
-        makeDefaultPhone(context);
+    /**
+     * @param context The context.
+     * @param featureFlags The feature flag.
+     */
+    public static void makeDefaultPhones(Context context, @NonNull FeatureFlags featureFlags) {
+        sFeatureFlags = featureFlags;
+        makeDefaultPhone(context, featureFlags);
     }
 
     /**
@@ -120,7 +129,7 @@ public class PhoneFactory {
      * instances
      */
     @UnsupportedAppUsage
-    public static void makeDefaultPhone(Context context) {
+    public static void makeDefaultPhone(Context context, @NonNull FeatureFlags featureFlags) {
         synchronized (sLockProxyPhones) {
             if (!sMadeDefaults) {
                 sContext = context;
@@ -246,12 +255,12 @@ public class PhoneFactory {
                         phone = injectedComponentFactory.makePhone(context,
                                 sCommandsInterfaces[i], sPhoneNotifier, i,
                                 PhoneConstants.PHONE_TYPE_GSM,
-                                TelephonyComponentFactory.getInstance());
+                                TelephonyComponentFactory.getInstance(), featureFlags);
                     } else if (phoneType == PhoneConstants.PHONE_TYPE_CDMA) {
                         phone = injectedComponentFactory.makePhone(context,
                                 sCommandsInterfaces[i], sPhoneNotifier, i,
                                 PhoneConstants.PHONE_TYPE_CDMA_LTE,
-                                TelephonyComponentFactory.getInstance());
+                                TelephonyComponentFactory.getInstance(), featureFlags);
                     }
                     Rlog.i(LOG_TAG, "Creating Phone with type = " + phoneType + " sub = " + i);
 
@@ -388,7 +397,7 @@ public class PhoneFactory {
 
         return injectedComponentFactory.makePhone(context,
                 sCommandsInterfaces[phoneId], sPhoneNotifier, phoneId, phoneType,
-                TelephonyComponentFactory.getInstance());
+                TelephonyComponentFactory.getInstance(), sFeatureFlags);
     }
 
     @UnsupportedAppUsage
@@ -524,7 +533,7 @@ public class PhoneFactory {
      * @return the {@code ImsPhone} object or null if the exception occured
      */
     public static Phone makeImsPhone(PhoneNotifier phoneNotifier, Phone defaultPhone) {
-        return ImsPhoneFactory.makePhone(sContext, phoneNotifier, defaultPhone);
+        return ImsPhoneFactory.makePhone(sContext, phoneNotifier, defaultPhone, sFeatureFlags);
     }
 
     /**

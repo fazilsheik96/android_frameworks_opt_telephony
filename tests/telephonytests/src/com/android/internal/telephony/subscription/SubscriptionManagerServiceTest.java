@@ -104,6 +104,7 @@ import com.android.internal.telephony.RILConstants;
 import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.telephony.TelephonyTest;
 import com.android.internal.telephony.euicc.EuiccController;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.subscription.SubscriptionDatabaseManagerTest.SubscriptionProvider;
 import com.android.internal.telephony.subscription.SubscriptionManagerService.SubscriptionManagerServiceCallback;
 import com.android.internal.telephony.subscription.SubscriptionManagerService.SubscriptionMap;
@@ -153,7 +154,7 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
     // mocked
     private SubscriptionManagerServiceCallback mMockedSubscriptionManagerServiceCallback;
     private EuiccController mEuiccController;
-
+    private FeatureFlags mFlags;
     private Set<Integer> mActiveSubs = new ArraySet<>();
 
     @Rule
@@ -200,7 +201,9 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         ((MockContentResolver) mContext.getContentResolver()).addProvider(
                 Telephony.Carriers.CONTENT_URI.getAuthority(), mSubscriptionProvider);
 
-        mSubscriptionManagerServiceUT = new SubscriptionManagerService(mContext, Looper.myLooper());
+        mFlags = Mockito.mock(FeatureFlags.class);
+        mSubscriptionManagerServiceUT = new SubscriptionManagerService(mContext, Looper.myLooper(),
+                mFlags);
 
         monitorTestableLooper(new TestableLooper(getBackgroundHandler().getLooper()));
         monitorTestableLooper(new TestableLooper(getSubscriptionDatabaseManager().getLooper()));
@@ -834,6 +837,8 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         doReturn(result).when(mEuiccController).blockingGetEuiccProfileInfoList(eq(2));
         doReturn(TelephonyManager.INVALID_PORT_INDEX).when(mUiccSlot)
                 .getPortIndexFromIccId(anyString());
+        doReturn(FAKE_ICCID1).when(mUiccController).convertToCardString(eq(1));
+        doReturn(FAKE_ICCID2).when(mUiccController).convertToCardString(eq(2));
 
         mSubscriptionManagerServiceUT.updateEmbeddedSubscriptions(List.of(1, 2), null);
         processAllMessages();
@@ -854,6 +859,9 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         assertThat(subInfo.isEmbedded()).isTrue();
         assertThat(subInfo.isRemovableEmbedded()).isFalse();
         assertThat(subInfo.getNativeAccessRules()).isEqualTo(FAKE_NATIVE_ACCESS_RULES1);
+        // Downloaded esim profile should contain proper cardId
+        assertThat(subInfo.getCardId()).isEqualTo(1);
+        assertThat(subInfo.getCardString()).isEqualTo(FAKE_ICCID1);
 
         subInfo = mSubscriptionManagerServiceUT.getSubscriptionInfoInternal(2);
         assertThat(subInfo.getSubscriptionId()).isEqualTo(2);
@@ -870,6 +878,9 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         assertThat(subInfo.isEmbedded()).isTrue();
         assertThat(subInfo.isRemovableEmbedded()).isFalse();
         assertThat(subInfo.getNativeAccessRules()).isEqualTo(FAKE_NATIVE_ACCESS_RULES2);
+        // Downloaded esim profile should contain proper cardId
+        assertThat(subInfo.getCardId()).isEqualTo(2);
+        assertThat(subInfo.getCardString()).isEqualTo(FAKE_ICCID2);
     }
 
     @Test
@@ -1103,8 +1114,6 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
 
     @Test
     public void testIsSubscriptionAssociatedWithUser() {
-        insertSubscription(FAKE_SUBSCRIPTION_INFO1);
-
         // Should fail without MANAGE_SUBSCRIPTION_USER_ASSOCIATION
         assertThrows(SecurityException.class, () -> mSubscriptionManagerServiceUT
                 .isSubscriptionAssociatedWithUser(1, FAKE_USER_HANDLE));
@@ -1114,6 +1123,12 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         mContextFixture.addCallingOrSelfPermission(
                 Manifest.permission.MANAGE_SUBSCRIPTION_USER_ASSOCIATION);
         mContextFixture.addCallingOrSelfPermission(Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
+
+        // Should fail for non-existent sub Id
+        assertThrows(IllegalArgumentException.class, () -> mSubscriptionManagerServiceUT
+                .isSubscriptionAssociatedWithUser(1, FAKE_USER_HANDLE));
+
+        insertSubscription(FAKE_SUBSCRIPTION_INFO1);
 
         mSubscriptionManagerServiceUT.setSubscriptionUserHandle(FAKE_USER_HANDLE, 1);
         processAllMessages();
