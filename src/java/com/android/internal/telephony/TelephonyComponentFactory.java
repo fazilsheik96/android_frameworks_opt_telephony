@@ -351,15 +351,19 @@ public class TelephonyComponentFactory {
         return new IccPhoneBookInterfaceManager(phone);
     }
 
-    public IccSmsInterfaceManager makeIccSmsInterfaceManager(Phone phone) {
+    /**
+     * Returns a new {@link IccSmsInterfaceManager} instance.
+     */
+    public IccSmsInterfaceManager makeIccSmsInterfaceManager(Phone phone,
+            @NonNull FeatureFlags featureFlags) {
         Rlog.d(LOG_TAG, "makeIccSmsInterfaceManager");
-        return new IccSmsInterfaceManager(phone);
+        return new IccSmsInterfaceManager(phone, featureFlags);
     }
 
-    public SmsDispatchersController makeSmsDispatchersController(Phone phone) {
+    public SmsDispatchersController makeSmsDispatchersController(Phone phone, FeatureFlags featureFlags) {
         Rlog.d(LOG_TAG, "makeSmsDispatchersController");
         return new SmsDispatchersController(phone, phone.mSmsStorageMonitor,
-                phone.mSmsUsageMonitor);
+                phone.mSmsUsageMonitor, featureFlags);
     }
 
     /**
