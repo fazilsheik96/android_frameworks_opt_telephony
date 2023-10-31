@@ -1365,15 +1365,13 @@ public class GsmCdmaPhone extends Phone {
                 && mImsPhone.isImsAvailable();
     }
 
-    private boolean useImsForPsOnlyCall() {
+    private boolean useImsForPsAttachedCall() {
         return isImsUseEnabled()
                 && mImsPhone != null
                 && isOutgoingImsVoiceAllowed()
                 && Settings.Global.getInt(mContext.getContentResolver(),
-                        "enable_allow_PS_only_dial", 1) == 1
-                && (mImsPhone.getServiceState().getState() == ServiceState.STATE_OUT_OF_SERVICE)
-                && (mSST.mSS.getRilVoiceRadioTechnology() == ServiceState.RIL_RADIO_TECHNOLOGY_NR
-                || (mSST.mSS.getState() == ServiceState.STATE_OUT_OF_SERVICE));
+                        "enable_allow_PS_attached_dial", 1) == 1
+                && (mImsPhone.getServiceState().getState() == ServiceState.STATE_OUT_OF_SERVICE);
     }
 
     @Override
@@ -1477,7 +1475,7 @@ public class GsmCdmaPhone extends Phone {
         boolean useImsForCall = useImsForCall(dialArgs)
                 && !shallDialOnCircuitSwitch(dialArgs.intentExtras)
                 && (isWpsCall ? allowWpsOverIms : true);
-        boolean useImsForPsOnlyCall = useImsForPsOnlyCall();
+        boolean useImsForPsAttachedCall = useImsForPsAttachedCall();
 
         Bundle extras = dialArgs.intentExtras;
         if (extras != null && extras.containsKey(PhoneConstants.EXTRA_COMPARE_DOMAIN)) {
@@ -1530,7 +1528,7 @@ public class GsmCdmaPhone extends Phone {
 
         if (DBG) {
             logi("useImsForCall=" + useImsForCall
-                    + ", useImsForPsOnlyCall=" + useImsForPsOnlyCall
+                    + ", useImsForPsAttachedCall=" + useImsForPsAttachedCall
                     + ", useOnlyDialedSimEccList=" + useOnlyDialedSimEccList
                     + ", isEmergency=" + isEmergency
                     + ", useImsForEmergency=" + useImsForEmergency
@@ -1572,7 +1570,7 @@ public class GsmCdmaPhone extends Phone {
         if ((useImsForCall && (!isMmiCode || isPotentialUssdCode))
                 || (isMmiCode && useImsForUt)
                 || useImsForEmergency
-                || (useImsForPsOnlyCall && !isMmiCode && !isPotentialUssdCode
+                || (useImsForPsAttachedCall && !isMmiCode && !isPotentialUssdCode
                            && !VideoProfile.isVideo(dialArgs.videoState))) {
             try {
                 if (DBG) logd("Trying IMS PS call");

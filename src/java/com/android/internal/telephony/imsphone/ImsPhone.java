@@ -2589,14 +2589,14 @@ public class ImsPhone extends ImsPhoneBase {
             int extraCode = imsReasonInfo.getExtraCode();
             /*
              * If lower layer passes extraCode with information that UE is
-             * PS_ONLY attached or not, we update mIsOutgoingImsVoiceAllowed
+             * PS attached or not, we update mIsOutgoingImsVoiceAllowed
              * and return as we expect lower layer to invoke this function
              * again with updated ImsReasonInfo.
              */
-            if (extraCode == QtiImsUtils.CODE_IS_PS_ONLY_ATTACHED ||
-                extraCode == QtiImsUtils.CODE_IS_NOT_PS_ONLY_ATTACHED) {
+            if (extraCode == QtiImsUtils.CODE_IS_PS_ATTACHED ||
+                extraCode == QtiImsUtils.CODE_IS_NOT_PS_ATTACHED) {
                 mIsOutgoingImsVoiceAllowed =
-                        extraCode == QtiImsUtils.CODE_IS_PS_ONLY_ATTACHED;
+                        extraCode == QtiImsUtils.CODE_IS_PS_ATTACHED;
                 return;
             }
             setServiceState(ServiceState.STATE_OUT_OF_SERVICE);
