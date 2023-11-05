@@ -917,6 +917,7 @@ public class DataNetworkController extends Handler {
                 DataProfileManager.class.getName())
                 .makeDataProfileManager(mPhone, this, mDataServiceManagers
                                 .get(AccessNetworkConstants.TRANSPORT_TYPE_WWAN), looper,
+                        mFeatureFlags,
                         new DataProfileManagerCallback(this::post) {
                             @Override
                             public void onDataProfilesChanged() {
@@ -1381,6 +1382,7 @@ public class DataNetworkController extends Handler {
                 DataProfile candidate = mDataProfileManager
                         .getDataProfileForNetworkRequest(requestList.getFirst(),
                                 TelephonyManager.NETWORK_TYPE_IWLAN,
+                                mServiceState.isUsingNonTerrestrialNetwork(),
                                 false/*ignorePermanentFailure*/);
                 if (candidate != null && !dataNetwork.getDataProfile().equals(candidate)) {
                     logv("But skipped because found better data profile " + candidate
@@ -1544,7 +1546,8 @@ public class DataNetworkController extends Handler {
         if (networkRequest.hasCapability(NetworkCapabilities.NET_CAPABILITY_EIMS)) {
             evaluation.addDataAllowedReason(DataAllowedReason.EMERGENCY_REQUEST);
             evaluation.setCandidateDataProfile(mDataProfileManager.getDataProfileForNetworkRequest(
-                    networkRequest, getDataNetworkType(transport), true));
+                    networkRequest, getDataNetworkType(transport),
+                    mServiceState.isUsingNonTerrestrialNetwork(), true));
             networkRequest.setEvaluation(evaluation);
             log(evaluation.toString());
             return evaluation;
@@ -1703,6 +1706,7 @@ public class DataNetworkController extends Handler {
         }
         DataProfile dataProfile = mDataProfileManager
                 .getDataProfileForNetworkRequest(networkRequest, networkType,
+                        mServiceState.isUsingNonTerrestrialNetwork(),
                         // If the evaluation is due to environmental changes, then we should ignore
                         // the permanent failure reached earlier.
                         reason.isConditionBased());
