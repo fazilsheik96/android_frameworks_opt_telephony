@@ -31,6 +31,7 @@ import android.telephony.NetworkRegistrationInfo;
 import android.telephony.Rlog;
 import android.telephony.SubscriptionManager;
 import android.telephony.satellite.AntennaPosition;
+import android.telephony.satellite.NtnSignalStrength;
 import android.telephony.satellite.PointingInfo;
 import android.telephony.satellite.SatelliteCapabilities;
 import android.telephony.satellite.SatelliteDatagram;
@@ -39,10 +40,8 @@ import android.telephony.satellite.stub.NTRadioTechnology;
 import android.telephony.satellite.stub.SatelliteModemState;
 import android.telephony.satellite.stub.SatelliteResult;
 
-import com.android.internal.telephony.CommandException;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
-import com.android.internal.telephony.RILUtils;
 import com.android.internal.telephony.SubscriptionController;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 
@@ -215,6 +214,16 @@ public class SatelliteServiceUtils {
     }
 
     /**
+     * Convert non-terrestrial signal strength from service definition to framework definition.
+     * @param ntnSignalStrength The non-terrestrial signal strength from the satellite service.
+     * @return The converted non-terrestrial signal strength for the framework.
+     */
+    @Nullable public static NtnSignalStrength fromModemInterface(
+            android.telephony.satellite.stub.NtnSignalStrength ntnSignalStrength) {
+        return new NtnSignalStrength(ntnSignalStrength.signalStrengthLevel);
+    }
+
+    /**
      * Convert SatelliteDatagram from framework definition to service definition.
      * @param datagram The SatelliteDatagram from the framework.
      * @return The converted SatelliteDatagram for the satellite service.
@@ -242,11 +251,7 @@ public class SatelliteServiceUtils {
             errorCode = SatelliteManager.SATELLITE_RESULT_SUCCESS;
         } else {
             errorCode = SatelliteManager.SATELLITE_RESULT_ERROR;
-            if (ar.exception instanceof CommandException) {
-                CommandException.Error error = ((CommandException) ar.exception).getCommandError();
-                errorCode = RILUtils.convertToSatelliteError(error);
-                loge(caller + " CommandException: " + ar.exception);
-            } else if (ar.exception instanceof SatelliteManager.SatelliteException) {
+            if (ar.exception instanceof SatelliteManager.SatelliteException) {
                 errorCode = ((SatelliteManager.SatelliteException) ar.exception).getErrorCode();
                 loge(caller + " SatelliteException: " + ar.exception);
             } else {

@@ -209,6 +209,8 @@ public class DataNetworkControllerTest extends TelephonyTest {
                     .setMaxConns(321)
                     .setWaitTime(456)
                     .setMaxConnsTime(789)
+                    .setInfrastructureBitmask(ApnSetting.INFRASTRUCTURE_SATELLITE
+                            | ApnSetting.INFRASTRUCTURE_CELLULAR)
                     .build())
             .setPreferred(false)
             .build();
@@ -397,6 +399,17 @@ public class DataNetworkControllerTest extends TelephonyTest {
                     .setApnTypeBitmask(ApnSetting.TYPE_MMS)
                     .setCarrierEnabled(true)
                     .setNetworkTypeBitmask((int) TelephonyManager.NETWORK_TYPE_BITMASK_IWLAN)
+                    .build())
+            .setPreferred(false)
+            .build();
+
+    private final DataProfile mNtnDataProfile = new DataProfile.Builder()
+            .setApnSetting(new ApnSetting.Builder()
+                    .setEntryName("ntn")
+                    .setApnName("ntn")
+                    .setApnTypeBitmask(ApnSetting.TYPE_RCS)
+                    .setCarrierEnabled(true)
+                    .setInfrastructureBitmask(ApnSetting.INFRASTRUCTURE_SATELLITE)
                     .build())
             .setPreferred(false)
             .build();
@@ -912,7 +925,8 @@ public class DataNetworkControllerTest extends TelephonyTest {
         List<DataProfile> profiles = List.of(mGeneralPurposeDataProfile,
                 mGeneralPurposeDataProfileAlternative, mImsCellularDataProfile,
                 mImsIwlanDataProfile, mEmergencyDataProfile, mFotaDataProfile,
-                mTetheringDataProfile);
+                mTetheringDataProfile, mMmsOnWlanDataProfile, mLowLatencyDataProfile,
+                mNtnDataProfile);
 
         doAnswer(invocation -> {
             DataProfile dp = (DataProfile) invocation.getArguments()[0];
@@ -943,23 +957,30 @@ public class DataNetworkControllerTest extends TelephonyTest {
             TelephonyNetworkRequest networkRequest =
                     (TelephonyNetworkRequest) invocation.getArguments()[0];
             int networkType = (int) invocation.getArguments()[1];
-            boolean ignorePermanentFailure = (boolean) invocation.getArguments()[2];
+            boolean isNtn = (boolean) invocation.getArguments()[2];
+            boolean ignorePermanentFailure = (boolean) invocation.getArguments()[3];
 
             for (DataProfile dataProfile : profiles) {
-                if (dataProfile.canSatisfy(networkRequest.getCapabilities())
-                        && (dataProfile.getApnSetting().getNetworkTypeBitmask() == 0
-                        || (dataProfile.getApnSetting().getNetworkTypeBitmask()
+                ApnSetting apnSetting = dataProfile.getApnSetting();
+                if (apnSetting != null
+                        && dataProfile.canSatisfy(networkRequest.getCapabilities())
+                        && (apnSetting.getNetworkTypeBitmask() == 0
+                        || (apnSetting.getNetworkTypeBitmask()
                         & ServiceState.getBitmaskForTech(networkType)) != 0)
-                        && (ignorePermanentFailure || (dataProfile.getApnSetting() != null
-                        && !dataProfile.getApnSetting().getPermanentFailed()))) {
+                        && ((isNtn && apnSetting.isForInfrastructure(
+                                ApnSetting.INFRASTRUCTURE_SATELLITE))
+                        || ((!isNtn && apnSetting.isForInfrastructure(
+                                ApnSetting.INFRASTRUCTURE_CELLULAR))))
+                        && (ignorePermanentFailure || !apnSetting.getPermanentFailed())) {
                     return dataProfile;
                 }
             }
             logd("Cannot find data profile to satisfy " + networkRequest + ", network type="
-                    + TelephonyManager.getNetworkTypeName(networkType));
+                    + TelephonyManager.getNetworkTypeName(networkType) + ", ignorePermanentFailure="
+                    + ignorePermanentFailure + ", isNtn=" + isNtn);
             return null;
         }).when(mDataProfileManager).getDataProfileForNetworkRequest(
-                any(TelephonyNetworkRequest.class), anyInt(), anyBoolean());
+                any(TelephonyNetworkRequest.class), anyInt(), anyBoolean(), anyBoolean());
 
         doReturn(AccessNetworkConstants.TRANSPORT_TYPE_WWAN).when(mAccessNetworksManager)
                 .getPreferredTransportByNetworkCapability(anyInt());
@@ -1241,7 +1262,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
                     + TelephonyManager.getNetworkTypeName(networkType));
             return null;
         }).when(mDataProfileManager).getDataProfileForNetworkRequest(
-                any(TelephonyNetworkRequest.class), anyInt(), anyBoolean());
+                any(TelephonyNetworkRequest.class), anyInt(), anyBoolean(), anyBoolean());
 
         // verify the network still connects
         verify(mMockedDataNetworkControllerCallback).onConnectedInternetDataNetworksChanged(any());
@@ -1286,7 +1307,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 createDataCallResponse(1, DataCallResponse.LINK_STATUS_ACTIVE, tdList));
         doReturn(mEnterpriseDataProfile).when(mDataProfileManager)
                 .getDataProfileForNetworkRequest(any(TelephonyNetworkRequest.class), anyInt(),
-                        anyBoolean());
+                        anyBoolean(), anyBoolean());
 
         NetworkCapabilities netCaps = new NetworkCapabilities();
         netCaps.addCapability(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE);
@@ -1501,7 +1522,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
         // Now RAT changes from UMTS to GSM
         doReturn(null).when(mDataProfileManager).getDataProfileForNetworkRequest(
                 any(TelephonyNetworkRequest.class), eq(TelephonyManager.NETWORK_TYPE_GSM),
-                anyBoolean());
+                anyBoolean(), anyBoolean());
         serviceStateChanged(TelephonyManager.NETWORK_TYPE_GSM,
                 NetworkRegistrationInfo.REGISTRATION_STATE_HOME);
         verifyAllDataDisconnected();
@@ -1515,14 +1536,14 @@ public class DataNetworkControllerTest extends TelephonyTest {
         // Now RAT changes from GSM to UMTS
         doReturn(null).when(mDataProfileManager).getDataProfileForNetworkRequest(
                 any(TelephonyNetworkRequest.class), eq(TelephonyManager.NETWORK_TYPE_UMTS),
-                anyBoolean());
+                anyBoolean(), anyBoolean());
         serviceStateChanged(TelephonyManager.NETWORK_TYPE_UMTS,
                 NetworkRegistrationInfo.REGISTRATION_STATE_HOME);
         verifyNoConnectedNetworkHasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
 
         doReturn(mGeneralPurposeDataProfile).when(mDataProfileManager)
                 .getDataProfileForNetworkRequest(any(TelephonyNetworkRequest.class), anyInt(),
-                        anyBoolean());
+                        anyBoolean(), anyBoolean());
         // Now RAT changes from UMTS to LTE
         serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
                 NetworkRegistrationInfo.REGISTRATION_STATE_HOME);
@@ -3521,7 +3542,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 createDataCallResponse(1, DataCallResponse.LINK_STATUS_ACTIVE, tdList));
         doReturn(mEnterpriseDataProfile).when(mDataProfileManager)
                 .getDataProfileForNetworkRequest(any(TelephonyNetworkRequest.class), anyInt(),
-                        anyBoolean());
+                        anyBoolean(), anyBoolean());
 
         NetworkCapabilities netCaps = new NetworkCapabilities();
         netCaps.addCapability(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE);
@@ -4681,7 +4702,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 createDataCallResponse(1, DataCallResponse.LINK_STATUS_ACTIVE, tdList));
         doReturn(mEnterpriseDataProfile).when(mDataProfileManager)
                 .getDataProfileForNetworkRequest(any(TelephonyNetworkRequest.class), anyInt(),
-                        anyBoolean());
+                        anyBoolean(), anyBoolean());
         mDataNetworkControllerUT.addNetworkRequest(new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE)
@@ -4719,7 +4740,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 createDataCallResponse(2, DataCallResponse.LINK_STATUS_ACTIVE, tdList));
         doReturn(mLowLatencyDataProfile).when(mDataProfileManager)
                 .getDataProfileForNetworkRequest(any(TelephonyNetworkRequest.class), anyInt(),
-                        anyBoolean());
+                        anyBoolean(), anyBoolean());
         processAllFutureMessages();
 
         dataNetworkList = getDataNetworks();
@@ -4748,12 +4769,11 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_IMS));
         processAllMessages();
         verifyConnectedNetworkHasDataProfile(mGeneralPurposeDataProfile);
-        verifyConnectedNetworkHasDataProfile(mGeneralPurposeDataProfile);
 
         // Mock the designated MMS profile when WLAN is preferred
         doReturn(mMmsOnWlanDataProfile).when(mDataProfileManager).getDataProfileForNetworkRequest(
                 any(TelephonyNetworkRequest.class), eq(TelephonyManager.NETWORK_TYPE_IWLAN),
-                anyBoolean());
+                anyBoolean(), anyBoolean());
         setSuccessfulSetupDataResponse(mMockedWlanDataServiceManager,
                 createDataCallResponse(2, DataCallResponse.LINK_STATUS_ACTIVE));
 
@@ -4762,5 +4782,17 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_MMS));
         processAllMessages();
         verifyConnectedNetworkHasDataProfile(mMmsOnWlanDataProfile);
+    }
+
+    @Test
+    public void testNonTerrestrialNetwork() throws Exception {
+        when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(true);
+        mIsNonTerrestrialNetwork = true;
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_HOME);
+        mDataNetworkControllerUT.addNetworkRequest(
+                createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_RCS));
+        processAllMessages();
+        verifyConnectedNetworkHasDataProfile(mNtnDataProfile);
     }
 }
