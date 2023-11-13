@@ -184,6 +184,7 @@ public abstract class TelephonyTest {
     }
 
     // Mocked classes
+    protected FeatureFlags mFeatureFlags;
     protected GsmCdmaPhone mPhone;
     protected GsmCdmaPhone mPhone2;
     protected ImsPhone mImsPhone;
@@ -424,6 +425,7 @@ public abstract class TelephonyTest {
     protected void setUp(String tag) throws Exception {
         TAG = tag;
         enableStrictMode();
+        mFeatureFlags = Mockito.mock(FeatureFlags.class);
         mPhone = Mockito.mock(GsmCdmaPhone.class);
         mPhone2 = Mockito.mock(GsmCdmaPhone.class);
         mImsPhone = Mockito.mock(ImsPhone.class);
@@ -593,7 +595,7 @@ public abstract class TelephonyTest {
         doReturn(mIccPhoneBookIntManager).when(mTelephonyComponentFactory)
                 .makeIccPhoneBookInterfaceManager(nullable(Phone.class));
         doReturn(mDisplayInfoController).when(mTelephonyComponentFactory)
-                .makeDisplayInfoController(nullable(Phone.class));
+                .makeDisplayInfoController(nullable(Phone.class), any(FeatureFlags.class));
         doReturn(mWspTypeDecoder).when(mTelephonyComponentFactory)
                 .makeWspTypeDecoder(nullable(byte[].class));
         doReturn(mImsCT).when(mTelephonyComponentFactory)
@@ -613,7 +615,7 @@ public abstract class TelephonyTest {
         doReturn(mCarrierActionAgent).when(mTelephonyComponentFactory)
                 .makeCarrierActionAgent(nullable(Phone.class));
         doReturn(mDeviceStateMonitor).when(mTelephonyComponentFactory)
-                .makeDeviceStateMonitor(nullable(Phone.class));
+                .makeDeviceStateMonitor(nullable(Phone.class), any(FeatureFlags.class));
         doReturn(mAccessNetworksManager).when(mTelephonyComponentFactory)
                 .makeAccessNetworksManager(nullable(Phone.class), any(Looper.class));
         doReturn(mNitzStateMachine).when(mTelephonyComponentFactory)

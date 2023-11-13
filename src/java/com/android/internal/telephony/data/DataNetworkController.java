@@ -861,7 +861,7 @@ public class DataNetworkController extends Handler {
 
         mDataConfigManager = TelephonyComponentFactory.getInstance().inject(
                 DataConfigManager.class.getName())
-                .makeDataConfigManager(mPhone, looper);
+                .makeDataConfigManager(mPhone, looper, featureFlags);
 
         // ========== Anomaly counters ==========
         mImsThrottleCounter = new SlidingWindowEventCounter(
@@ -940,7 +940,7 @@ public class DataNetworkController extends Handler {
         mDataRetryManager = TelephonyComponentFactory.getInstance().inject(
                 DataRetryManager.class.getName())
                 .makeDataRetryManager(mPhone, this,
-                mDataServiceManagers, looper,
+                mDataServiceManagers, looper, mFeatureFlags,
                 new DataRetryManagerCallback(this::post) {
                     @Override
                     public void onDataNetworkSetupRetry(
@@ -1583,7 +1583,9 @@ public class DataNetworkController extends Handler {
             if (nri != null) {
                 DataSpecificRegistrationInfo dsri = nri.getDataSpecificInfo();
                 if (dsri != null && dsri.getVopsSupportInfo() != null
-                        && !dsri.getVopsSupportInfo().isVopsSupported()) {
+                        && !dsri.getVopsSupportInfo().isVopsSupported()
+                        && !mDataConfigManager.allowBringUpNetworkInNonVops(
+                                nri.getNetworkRegistrationState())) {
                     evaluation.addDataDisallowedReason(DataDisallowedReason.VOPS_NOT_SUPPORTED);
                 }
             }
@@ -1890,6 +1892,8 @@ public class DataNetworkController extends Handler {
             }
         }
 
+        // It's recommended for IMS service not requesting MMTEL capability, so that MMTEL
+        // capability is dynamically added when moving between vops and nonvops area.
         boolean vopsIsRequired = dataNetwork.hasNetworkCapabilityInNetworkRequests(
                 NetworkCapabilities.NET_CAPABILITY_MMTEL);
 
@@ -1912,7 +1916,8 @@ public class DataNetworkController extends Handler {
                         DataSpecificRegistrationInfo dsri = nri.getDataSpecificInfo();
                         if (dsri != null && dsri.getVopsSupportInfo() != null
                                 && !dsri.getVopsSupportInfo().isVopsSupported()
-                                && !mDataConfigManager.shouldKeepNetworkUpInNonVops()) {
+                                && !mDataConfigManager.shouldKeepNetworkUpInNonVops(
+                                        nri.getNetworkRegistrationState())) {
                             evaluation.addDataDisallowedReason(
                                     DataDisallowedReason.VOPS_NOT_SUPPORTED);
                         }
@@ -2092,6 +2097,8 @@ public class DataNetworkController extends Handler {
                 }
 
                 // Check if VoPS is required, but the target transport is non-VoPS.
+                // It's recommended for IMS service not requesting MMTEL capability, so that MMTEL
+                // capability is dynamically added when moving between vops and nonvops area.
                 NetworkRequestList networkRequestList =
                         dataNetwork.getAttachedNetworkRequestList();
                 if (networkRequestList.stream().anyMatch(request
@@ -2100,7 +2107,8 @@ public class DataNetworkController extends Handler {
                     // Check if the network is non-VoPS.
                     if (dsri != null && dsri.getVopsSupportInfo() != null
                             && !dsri.getVopsSupportInfo().isVopsSupported()
-                            && !mDataConfigManager.shouldKeepNetworkUpInNonVops()) {
+                            && !mDataConfigManager.shouldKeepNetworkUpInNonVops(
+                                    nri.getNetworkRegistrationState())) {
                         dataEvaluation.addDataDisallowedReason(
                                 DataDisallowedReason.VOPS_NOT_SUPPORTED);
                     }
@@ -2661,8 +2669,8 @@ public class DataNetworkController extends Handler {
                 + AccessNetworkConstants.transportTypeToString(transport) + " with " + dataProfile
                 + ", and attaching " + networkRequestList.size() + " network requests to it.");
 
-        mDataNetworkList.add(new DataNetwork(mPhone, getLooper(), mDataServiceManagers,
-                dataProfile, networkRequestList, transport, allowedReason,
+        mDataNetworkList.add(new DataNetwork(mPhone, mFeatureFlags, getLooper(),
+                mDataServiceManagers, dataProfile, networkRequestList, transport, allowedReason,
                 new DataNetworkCallback(this::post) {
                     @Override
                     public void onSetupDataFailed(@NonNull DataNetwork dataNetwork,
@@ -3507,7 +3515,8 @@ public class DataNetworkController extends Handler {
         }
 
         if (oldNri.getAccessNetworkTechnology() != newNri.getAccessNetworkTechnology()
-                || (!oldNri.isRoaming() && newNri.isRoaming())) {
+                // Some CarrierConfig disallows vops in nonVops area for specified home/roaming.
+                || (oldNri.isRoaming() != newNri.isRoaming())) {
             return true;
         }
 
@@ -3557,7 +3566,8 @@ public class DataNetworkController extends Handler {
         if (oldPsNri == null
                 || oldPsNri.getAccessNetworkTechnology() != newPsNri.getAccessNetworkTechnology()
                 || (!oldPsNri.isInService() && newPsNri.isInService())
-                || (oldPsNri.isRoaming() && !newPsNri.isRoaming())) {
+                // Some CarrierConfig allows vops in nonVops area for specified home/roaming.
+                || (oldPsNri.isRoaming() != newPsNri.isRoaming())) {
             return true;
         }
 
