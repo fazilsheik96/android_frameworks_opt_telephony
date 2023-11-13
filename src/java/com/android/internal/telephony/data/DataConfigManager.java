@@ -31,6 +31,7 @@ import android.telephony.Annotation.ApnType;
 import android.telephony.Annotation.NetCapability;
 import android.telephony.Annotation.NetworkType;
 import android.telephony.CarrierConfigManager;
+import android.telephony.NetworkRegistrationInfo;
 import android.telephony.ServiceState;
 import android.telephony.SignalStrength;
 import android.telephony.SubscriptionManager;
@@ -46,6 +47,7 @@ import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.data.DataNetworkController.HandoverRule;
 import com.android.internal.telephony.data.DataRetryManager.DataHandoverRetryRule;
 import com.android.internal.telephony.data.DataRetryManager.DataSetupRetryRule;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.telephony.Rlog;
 
 import java.io.FileDescriptor;
@@ -259,6 +261,7 @@ public class DataConfigManager extends Handler {
     private @NonNull final Phone mPhone;
     private @NonNull final String mLogTag;
 
+    @NonNull private final FeatureFlags mFeatureFlags;
     private @NonNull final CarrierConfigManager mCarrierConfigManager;
     protected @NonNull PersistableBundle mCarrierConfig = null;
     protected @NonNull Resources mResources = null;
@@ -295,6 +298,9 @@ public class DataConfigManager extends Handler {
     private @NonNull final List<HandoverRule> mHandoverRuleList = new ArrayList<>();
     /** {@code True} keep IMS network in case of moving to non VOPS area; {@code false} otherwise.*/
     private boolean mShouldKeepNetworkUpInNonVops = false;
+    /** The set of network types that enable VOPS even in non VOPS area. */
+    @NonNull private final @CarrierConfigManager.Ims.NetworkType List<Integer>
+            mEnabledVopsNetworkTypesInNonVops = new ArrayList<>();
     /**
      * A map of network types to the estimated downlink values by signal strength 0 - 4 for that
      * network type
@@ -309,9 +315,11 @@ public class DataConfigManager extends Handler {
      * @param looper The looper to be used by the handler. Currently the handler thread is the
      * phone process's main thread.
      */
-    public DataConfigManager(@NonNull Phone phone, @NonNull Looper looper) {
+    public DataConfigManager(@NonNull Phone phone, @NonNull Looper looper,
+            @NonNull FeatureFlags featureFlags) {
         super(looper);
         mPhone = phone;
+        mFeatureFlags = featureFlags;
         mLogTag = "DCM-" + mPhone.getPhoneId();
         log("DataConfigManager created.");
 
@@ -597,10 +605,20 @@ public class DataConfigManager extends Handler {
      */
     public @NonNull @NetCapability Set<Integer> getMeteredNetworkCapabilities(boolean isRoaming) {
         Set<Integer> meteredApnTypes = isRoaming ? mRoamingMeteredApnTypes : mMeteredApnTypes;
-        return meteredApnTypes.stream()
+        Set<Integer> meteredCapabilities = meteredApnTypes.stream()
                 .map(DataUtils::apnTypeToNetworkCapability)
                 .filter(cap -> cap >= 0)
-                .collect(Collectors.toUnmodifiableSet());
+                .collect(Collectors.toSet());
+
+        // Consumer slices are the slices that are allowed to be accessed by regular application to
+        // get better performance. They should be metered. This can be turned into configurations in
+        // the future.
+        if (mFeatureFlags.meteredEmbbUrlcc()) {
+            meteredCapabilities.add(NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_BANDWIDTH);
+            meteredCapabilities.add(NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_LATENCY);
+        }
+
+        return Collections.unmodifiableSet(meteredCapabilities);
     }
 
     /**
@@ -673,6 +691,11 @@ public class DataConfigManager extends Handler {
         synchronized (this) {
             mShouldKeepNetworkUpInNonVops = mCarrierConfig.getBoolean(CarrierConfigManager
                     .Ims.KEY_KEEP_PDN_UP_IN_NO_VOPS_BOOL);
+            int[] allowedNetworkTypes = mCarrierConfig.getIntArray(
+                    CarrierConfigManager.Ims.KEY_IMS_PDN_ENABLED_IN_NO_VOPS_SUPPORT_INT_ARRAY);
+            if (allowedNetworkTypes != null) {
+                Arrays.stream(allowedNetworkTypes).forEach(mEnabledVopsNetworkTypesInNonVops::add);
+            }
         }
     }
 
@@ -691,9 +714,29 @@ public class DataConfigManager extends Handler {
         return Collections.unmodifiableSet(mCapabilitiesExemptFromSingleDataList);
     }
 
-    /** {@code True} keep IMS network in case of moving to non VOPS area; {@code false} otherwise.*/
-    public boolean shouldKeepNetworkUpInNonVops() {
-        return mShouldKeepNetworkUpInNonVops;
+    /**
+     * @param regState The modem reported data registration state.
+     * @return {@code true} if should keep IMS network in case of moving to non VOPS area.
+     */
+    public boolean shouldKeepNetworkUpInNonVops(@NetworkRegistrationInfo.RegistrationState
+            int regState) {
+        return mShouldKeepNetworkUpInNonVops || allowBringUpNetworkInNonVops(regState);
+    }
+
+    /**
+     * @param regState The modem reported data registration state.
+     * @return {@code true} if allow bring up IMS network in case of moving to non VOPS area.
+     */
+    public boolean allowBringUpNetworkInNonVops(@NetworkRegistrationInfo.RegistrationState
+            int regState) {
+        if (!mFeatureFlags.allowMmtelInNonVops()) return false;
+        int networkType = -1;
+        if (regState == NetworkRegistrationInfo.REGISTRATION_STATE_HOME) {
+            networkType = CarrierConfigManager.Ims.NETWORK_TYPE_HOME;
+        } else if (regState == NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING) {
+            networkType = CarrierConfigManager.Ims.NETWORK_TYPE_ROAMING;
+        }
+        return mEnabledVopsNetworkTypesInNonVops.contains(networkType);
     }
 
     /** {@code True} requires ping test to pass on the target slot before switching to it.*/
@@ -1436,7 +1479,8 @@ public class DataConfigManager extends Handler {
         pw.println("Capabilities exempt from single PDN=" + mCapabilitiesExemptFromSingleDataList
                 .stream().map(DataUtils::networkCapabilityToString)
                 .collect(Collectors.joining(",")));
-        pw.println("mShouldKeepNetworkUpInNoVops=" + mShouldKeepNetworkUpInNonVops);
+        pw.println("mShouldKeepNetworkUpInNonVops=" + mShouldKeepNetworkUpInNonVops);
+        pw.println("mEnabledVopsNetworkTypesInNonVops=" + mEnabledVopsNetworkTypesInNonVops);
         pw.println("isPingTestBeforeAutoDataSwitchRequired="
                 + isPingTestBeforeAutoDataSwitchRequired());
         pw.println("Unmetered network types=" + String.join(",", mUnmeteredNetworkTypes));

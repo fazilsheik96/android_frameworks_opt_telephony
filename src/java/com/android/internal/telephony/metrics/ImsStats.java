@@ -198,7 +198,7 @@ public class ImsStats {
     @ImsRegistrationState private int mLastRegistrationState = REGISTRATION_STATE_NOT_REGISTERED;
 
     private long mLastTimestamp;
-    @Nullable private ImsRegistrationStats mLastRegistrationStats;
+    private ImsRegistrationStats mLastRegistrationStats;
     @TransportType int mLastTransportType = AccessNetworkConstants.TRANSPORT_TYPE_INVALID;
     // Available features are those reported by ImsService to be available for use.
     private MmTelCapabilities mLastAvailableFeatures = new MmTelCapabilities();
@@ -211,6 +211,10 @@ public class ImsStats {
     public ImsStats(ImsPhone phone) {
         mPhone = phone;
         mStorage = PhoneFactory.getMetricsCollector().getAtomsStorage();
+
+        mLastRegistrationStats = getDefaultImsRegistrationStats();
+        updateImsRegistrationStats();
+        mLastTimestamp = getTimeMillis();
     }
 
     /**
@@ -222,40 +226,46 @@ public class ImsStats {
     public synchronized void conclude() {
         long now = getTimeMillis();
 
-        // Currently not tracking time spent on registering.
-        if (mLastRegistrationState == REGISTRATION_STATE_REGISTERED) {
-            ImsRegistrationStats stats = copyOf(mLastRegistrationStats);
-            long duration = now - mLastTimestamp;
+        long duration = now - mLastTimestamp;
+        if (duration < MIN_REGISTRATION_DURATION_MILLIS) {
+            logw("conclude: discarding transient stats, duration=%d", duration);
+        } else {
+            ImsRegistrationStats stats = copyOfDimensionsOnly(mLastRegistrationStats);
 
-            if (duration < MIN_REGISTRATION_DURATION_MILLIS) {
-                logw("conclude: discarding transient stats, duration=%d", duration);
-            } else {
-                stats.registeredMillis = duration;
+            switch (mLastRegistrationState) {
+                case REGISTRATION_STATE_REGISTERED:
+                    stats.registeredMillis = duration;
 
-                stats.voiceAvailableMillis =
-                        mLastAvailableFeatures.isCapable(CAPABILITY_TYPE_VOICE) ? duration : 0;
-                stats.videoAvailableMillis =
-                        mLastAvailableFeatures.isCapable(CAPABILITY_TYPE_VIDEO) ? duration : 0;
-                stats.utAvailableMillis =
-                        mLastAvailableFeatures.isCapable(CAPABILITY_TYPE_UT) ? duration : 0;
-                stats.smsAvailableMillis =
-                        mLastAvailableFeatures.isCapable(CAPABILITY_TYPE_SMS) ? duration : 0;
+                    stats.voiceAvailableMillis =
+                            mLastAvailableFeatures.isCapable(CAPABILITY_TYPE_VOICE) ? duration : 0;
+                    stats.videoAvailableMillis =
+                            mLastAvailableFeatures.isCapable(CAPABILITY_TYPE_VIDEO) ? duration : 0;
+                    stats.utAvailableMillis =
+                            mLastAvailableFeatures.isCapable(CAPABILITY_TYPE_UT) ? duration : 0;
+                    stats.smsAvailableMillis =
+                            mLastAvailableFeatures.isCapable(CAPABILITY_TYPE_SMS) ? duration : 0;
 
-                MmTelCapabilities lastCapableFeatures =
-                        stats.rat == TelephonyManager.NETWORK_TYPE_IWLAN
-                                ? mLastWlanCapableFeatures
-                                : mLastWwanCapableFeatures;
-                stats.voiceCapableMillis =
-                        lastCapableFeatures.isCapable(CAPABILITY_TYPE_VOICE) ? duration : 0;
-                stats.videoCapableMillis =
-                        lastCapableFeatures.isCapable(CAPABILITY_TYPE_VIDEO) ? duration : 0;
-                stats.utCapableMillis =
-                        lastCapableFeatures.isCapable(CAPABILITY_TYPE_UT) ? duration : 0;
-                stats.smsCapableMillis =
-                        lastCapableFeatures.isCapable(CAPABILITY_TYPE_SMS) ? duration : 0;
-
-                mStorage.addImsRegistrationStats(stats);
+                    MmTelCapabilities lastCapableFeatures =
+                            stats.rat == TelephonyManager.NETWORK_TYPE_IWLAN
+                                    ? mLastWlanCapableFeatures
+                                    : mLastWwanCapableFeatures;
+                    stats.voiceCapableMillis =
+                            lastCapableFeatures.isCapable(CAPABILITY_TYPE_VOICE) ? duration : 0;
+                    stats.videoCapableMillis =
+                            lastCapableFeatures.isCapable(CAPABILITY_TYPE_VIDEO) ? duration : 0;
+                    stats.utCapableMillis =
+                            lastCapableFeatures.isCapable(CAPABILITY_TYPE_UT) ? duration : 0;
+                    stats.smsCapableMillis =
+                            lastCapableFeatures.isCapable(CAPABILITY_TYPE_SMS) ? duration : 0;
+                    break;
+                case REGISTRATION_STATE_REGISTERING:
+                    stats.registeringMillis = duration;
+                    break;
+                case REGISTRATION_STATE_NOT_REGISTERED:
+                    stats.unregisteredMillis = duration;
+                    break;
             }
+            mStorage.addImsRegistrationStats(stats);
         }
 
         mLastTimestamp = now;
@@ -272,7 +282,7 @@ public class ImsStats {
                 (newRat == TelephonyManager.NETWORK_TYPE_IWLAN)
                         ? AccessNetworkConstants.TRANSPORT_TYPE_WLAN
                         : AccessNetworkConstants.TRANSPORT_TYPE_WWAN;
-        if (mLastRegistrationStats != null && mLastRegistrationStats.rat != newRat) {
+        if (mLastRegistrationStats.rat != newRat) {
             mLastRegistrationStats.rat = newRat;
             ratChanged = true;
         }
@@ -309,7 +319,7 @@ public class ImsStats {
         conclude();
 
         mLastTransportType = imsRadioTech;
-        mLastRegistrationStats = getDefaultImsRegistrationStats();
+        updateImsRegistrationStats();
         mLastRegistrationStats.rat = convertTransportTypeToNetworkType(imsRadioTech);
         mLastRegistrationState = REGISTRATION_STATE_REGISTERING;
     }
@@ -319,9 +329,9 @@ public class ImsStats {
         conclude();
 
         mLastTransportType = imsRadioTech;
-        // NOTE: mLastRegistrationStats can be null (no registering phase).
-        if (mLastRegistrationStats == null) {
-            mLastRegistrationStats = getDefaultImsRegistrationStats();
+        // NOTE: status can be unregistered (no registering phase)
+        if (mLastRegistrationState == REGISTRATION_STATE_NOT_REGISTERED) {
+            updateImsRegistrationStats();
         }
         mLastRegistrationStats.rat = convertTransportTypeToNetworkType(imsRadioTech);
         mLastRegistrationState = REGISTRATION_STATE_REGISTERED;
@@ -332,16 +342,14 @@ public class ImsStats {
         conclude();
 
         // Generate end reason atom.
-        // NOTE: mLastRegistrationStats can be null (no registering phase).
         ImsRegistrationTermination termination = new ImsRegistrationTermination();
-        if (mLastRegistrationStats != null) {
+        if (mLastRegistrationState != REGISTRATION_STATE_NOT_REGISTERED) {
             termination.carrierId = mLastRegistrationStats.carrierId;
-            termination.ratAtEnd = getRatAtEnd(mLastRegistrationStats.rat);
         } else {
+            // if the registration state is from unregistered to unregistered.
             termination.carrierId = mPhone.getDefaultPhone().getCarrierId();
-            // We cannot tell whether the registration was intended for WWAN or WLAN
-            termination.ratAtEnd = TelephonyManager.NETWORK_TYPE_UNKNOWN;
         }
+        termination.ratAtEnd = getRatAtEnd(mLastRegistrationStats.rat);
         termination.isMultiSim = SimSlotState.isMultiSim();
         termination.setupFailed = (mLastRegistrationState != REGISTRATION_STATE_REGISTERED);
         termination.reasonCode = reasonInfo.getCode();
@@ -352,14 +360,14 @@ public class ImsStats {
 
         // Reset state to unregistered.
         mLastRegistrationState = REGISTRATION_STATE_NOT_REGISTERED;
-        mLastRegistrationStats = null;
+        mLastRegistrationStats.rat = TelephonyManager.NETWORK_TYPE_UNKNOWN;
         mLastAvailableFeatures = new MmTelCapabilities();
     }
 
     /** Updates the RAT when service state changes. */
     public synchronized void onServiceStateChanged(ServiceState state) {
         if (mLastTransportType == AccessNetworkConstants.TRANSPORT_TYPE_WWAN
-                && mLastRegistrationStats != null) {
+                && mLastRegistrationState != REGISTRATION_STATE_NOT_REGISTERED) {
             mLastRegistrationStats.rat =
                     ServiceStateStats.getRat(state, NetworkRegistrationInfo.DOMAIN_PS);
         }
@@ -371,7 +379,7 @@ public class ImsStats {
      */
     @NetworkType
     public synchronized int getImsVoiceRadioTech() {
-        if (mLastRegistrationStats == null
+        if (mLastRegistrationState == REGISTRATION_STATE_NOT_REGISTERED
                 || !mLastAvailableFeatures.isCapable(CAPABILITY_TYPE_VOICE)) {
             return TelephonyManager.NETWORK_TYPE_UNKNOWN;
         }
@@ -405,9 +413,14 @@ public class ImsStats {
     private ImsRegistrationStats getDefaultImsRegistrationStats() {
         Phone phone = mPhone.getDefaultPhone();
         ImsRegistrationStats stats = new ImsRegistrationStats();
-        stats.carrierId = phone.getCarrierId();
-        stats.simSlotIndex = phone.getPhoneId();
+        stats.rat = TelephonyManager.NETWORK_TYPE_UNKNOWN;
         return stats;
+    }
+
+    private void updateImsRegistrationStats() {
+        Phone phone = mPhone.getDefaultPhone();
+        mLastRegistrationStats.carrierId = phone.getCarrierId();
+        mLastRegistrationStats.simSlotIndex = phone.getPhoneId();
     }
 
     @Nullable
@@ -441,21 +454,12 @@ public class ImsStats {
         }
     }
 
-    private static ImsRegistrationStats copyOf(ImsRegistrationStats source) {
+    private static ImsRegistrationStats copyOfDimensionsOnly(ImsRegistrationStats source) {
         ImsRegistrationStats dest = new ImsRegistrationStats();
 
         dest.carrierId = source.carrierId;
         dest.simSlotIndex = source.simSlotIndex;
         dest.rat = source.rat;
-        dest.registeredMillis = source.registeredMillis;
-        dest.voiceCapableMillis = source.voiceCapableMillis;
-        dest.voiceAvailableMillis = source.voiceAvailableMillis;
-        dest.smsCapableMillis = source.smsCapableMillis;
-        dest.smsAvailableMillis = source.smsAvailableMillis;
-        dest.videoCapableMillis = source.videoCapableMillis;
-        dest.videoAvailableMillis = source.videoAvailableMillis;
-        dest.utCapableMillis = source.utCapableMillis;
-        dest.utAvailableMillis = source.utAvailableMillis;
 
         return dest;
     }

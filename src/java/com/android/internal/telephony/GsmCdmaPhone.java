@@ -350,12 +350,13 @@ public class GsmCdmaPhone extends Phone {
                 .inject(EmergencyNumberTracker.class.getName()).makeEmergencyNumberTracker(
                         this, this.mCi);
         mDeviceStateMonitor = mTelephonyComponentFactory.inject(DeviceStateMonitor.class.getName())
-                .makeDeviceStateMonitor(this);
+                .makeDeviceStateMonitor(this, mFeatureFlags);
 
         // DisplayInfoController creates an OverrideNetworkTypeController, which uses
         // DeviceStateMonitor so needs to be crated after it is instantiated.
         mDisplayInfoController = mTelephonyComponentFactory.inject(
-                DisplayInfoController.class.getName()).makeDisplayInfoController(this);
+                DisplayInfoController.class.getName())
+                .makeDisplayInfoController(this, featureFlags);
 
         mDataNetworkController = mTelephonyComponentFactory.inject(
                 DataNetworkController.class.getName())

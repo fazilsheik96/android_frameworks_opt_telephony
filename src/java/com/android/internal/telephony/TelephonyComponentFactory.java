@@ -443,8 +443,12 @@ public class TelephonyComponentFactory {
         return new AppSmsManager(context);
     }
 
-    public DeviceStateMonitor makeDeviceStateMonitor(Phone phone) {
-        return new DeviceStateMonitor(phone);
+    /**
+     * Create a DeviceStateMonitor.
+     */
+    public DeviceStateMonitor makeDeviceStateMonitor(Phone phone,
+            @NonNull FeatureFlags featureFlags) {
+        return new DeviceStateMonitor(phone, featureFlags);
     }
 
     /**
@@ -493,8 +497,8 @@ public class TelephonyComponentFactory {
     /**
      * Create a new DisplayInfoController.
      */
-    public DisplayInfoController makeDisplayInfoController(Phone phone) {
-        return new DisplayInfoController(phone);
+    public DisplayInfoController makeDisplayInfoController(Phone phone, FeatureFlags featureFlags) {
+        return new DisplayInfoController(phone, featureFlags);
     }
 
     public MultiSimSettingController initMultiSimSettingController(Context c,
@@ -603,18 +607,18 @@ public class TelephonyComponentFactory {
         return new DataSettingsManager(phone, dataNetworkController, looper, callback);
     }
 
-    public DataConfigManager makeDataConfigManager(Phone phone, Looper looper) {
+    public DataConfigManager makeDataConfigManager(Phone phone, Looper looper, FeatureFlags featureFlags) {
         Rlog.i(TAG, "makeDataConfigManager");
-        return new DataConfigManager(phone, looper);
+        return new DataConfigManager(phone, looper, featureFlags);
     }
 
     public DataRetryManager makeDataRetryManager(Phone phone,
             DataNetworkController dataNetworkController,
             SparseArray<DataServiceManager> dataServiceManagers,
-            Looper looper, DataRetryManager.DataRetryManagerCallback dataRetryManagerCallback) {
+            Looper looper, FeatureFlags featureFlags, DataRetryManager.DataRetryManagerCallback dataRetryManagerCallback) {
         Rlog.i(TAG, "makeDataRetryManager");
         return new DataRetryManager(phone, dataNetworkController, dataServiceManagers,
-                looper, dataRetryManagerCallback);
+                looper, featureFlags, dataRetryManagerCallback);
     }
 
     public TelephonyNetworkAgent makeTelephonyNetworkAgent(Phone phone, Looper looper,
