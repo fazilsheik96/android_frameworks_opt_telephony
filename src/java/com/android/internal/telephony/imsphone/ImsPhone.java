@@ -16,7 +16,6 @@
 
 package com.android.internal.telephony.imsphone;
 
-import static android.provider.Telephony.SimInfo.COLUMN_PHONE_NUMBER_SOURCE_IMS;
 import static android.telephony.ims.ImsManager.EXTRA_WFC_REGISTRATION_FAILURE_MESSAGE;
 import static android.telephony.ims.ImsManager.EXTRA_WFC_REGISTRATION_FAILURE_TITLE;
 import static android.telephony.ims.RegistrationManager.REGISTRATION_STATE_NOT_REGISTERED;
@@ -82,7 +81,6 @@ import android.telephony.CarrierConfigManager;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.PhoneNumberUtils;
 import android.telephony.ServiceState;
-import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.telephony.UssdResponse;
@@ -124,7 +122,6 @@ import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.PhoneNotifier;
 import com.android.internal.telephony.ServiceStateTracker;
-import com.android.internal.telephony.SubscriptionController;
 import com.android.internal.telephony.TelephonyComponentFactory;
 import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.telephony.domainselection.DomainSelectionResolver;
@@ -2651,61 +2648,39 @@ public class ImsPhone extends ImsPhoneBase {
         int subId = getSubId();
         if (!SubscriptionManager.isValidSubscriptionId(subId)) {
             // Defending b/219080264:
-            // SubscriptionController.setSubscriptionProperty validates input subId
+            // SubscriptionManagerService.setSubscriptionProperty validates input subId
             // so do not proceed if subId invalid. This may be happening because cached
             // IMS callbacks are sent back to telephony after SIM state changed.
             return;
         }
 
         String phoneNumber = extractPhoneNumberFromAssociatedUris(uris, /*isGlobalFormat*/true);
-        if (isSubscriptionManagerServiceEnabled()) {
-            SubscriptionInfoInternal subInfo = mSubscriptionManagerService
-                    .getSubscriptionInfoInternal(subId);
-            if (subInfo == null) {
-                loge("trigger setPhoneNumberForSourceIms, but subInfo is null");
-                return;
-            }
-            String subCountryIso = subInfo.getCountryIso();
-            if (phoneNumber != null) {
-                phoneNumber = PhoneNumberUtils.formatNumberToE164(phoneNumber, subCountryIso);
-                if (phoneNumber == null) {
-                    loge("format to E164 failed");
-                    return;
-                }
-                mSubscriptionManagerService.setNumberFromIms(subId, phoneNumber);
-            } else if (isAllowNonGlobalNumberFormat()) {
-                // If carrier config has true for KEY_IGNORE_GLOBAL_PHONE_NUMBER_FORMAT_BOOL and
-                // P-Associated-Uri does not have global number,
-                // try to find phone number excluding '+' one more time.
-                phoneNumber = extractPhoneNumberFromAssociatedUris(uris, /*isGlobalFormat*/false);
-                if (phoneNumber == null) {
-                    loge("extract phone number without '+' failed");
-                    return;
-                }
-                mSubscriptionManagerService.setNumberFromIms(subId, phoneNumber);
-            } else {
-                logd("extract phone number failed");
-            }
-        } else {
-            SubscriptionController subController = SubscriptionController.getInstance();
-            String countryIso = getCountryIso(subController, subId);
-            // Format the number as one more defense to reject garbage values:
-            // phoneNumber will become null.
-            phoneNumber = PhoneNumberUtils.formatNumberToE164(phoneNumber, countryIso);
-            if (phoneNumber == null) {
-                loge("format to E164 failed");
-                return;
-            }
-            subController.setSubscriptionProperty(subId, COLUMN_PHONE_NUMBER_SOURCE_IMS,
-                    phoneNumber);
-        }
-    }
 
-    private static String getCountryIso(SubscriptionController subController, int subId) {
-        SubscriptionInfo info = subController.getSubscriptionInfo(subId);
-        String countryIso = info == null ? "" : info.getCountryIso();
-        // info.getCountryIso() may return null
-        return countryIso == null ? "" : countryIso;
+        SubscriptionInfoInternal subInfo = mSubscriptionManagerService
+                .getSubscriptionInfoInternal(subId);
+        if (subInfo == null) {
+            return;
+        }
+        if (phoneNumber != null) {
+            phoneNumber = PhoneNumberUtils.formatNumberToE164(phoneNumber,
+                    subInfo.getCountryIso());
+            if (phoneNumber == null) {
+                return;
+            }
+            mSubscriptionManagerService.setNumberFromIms(subId, phoneNumber);
+        } else if (isAllowNonGlobalNumberFormat()) {
+            // If carrier config has true for KEY_IGNORE_GLOBAL_PHONE_NUMBER_FORMAT_BOOL and
+            // P-Associated-Uri does not have global number,
+            // try to find phone number excluding '+' one more time.
+            phoneNumber = extractPhoneNumberFromAssociatedUris(uris, /*isGlobalFormat*/false);
+            if (phoneNumber == null) {
+                loge("extract phone number without '+' failed");
+                return;
+            }
+            mSubscriptionManagerService.setNumberFromIms(subId, phoneNumber);
+        } else {
+            logd("extract phone number failed");
+        }
     }
 
     /**

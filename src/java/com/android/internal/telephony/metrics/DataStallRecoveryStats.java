@@ -33,7 +33,6 @@ import android.telephony.data.DataCallResponse.LinkStatus;
 
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
-import com.android.internal.telephony.SubscriptionController;
 import com.android.internal.telephony.TelephonyStatsLog;
 import com.android.internal.telephony.data.DataNetwork;
 import com.android.internal.telephony.data.DataNetworkController;
@@ -266,13 +265,9 @@ public class DataStallRecoveryStats {
     }
 
     private static boolean getIsOpportunistic(@NonNull Phone phone) {
-        if (phone.isSubscriptionManagerServiceEnabled()) {
-            SubscriptionInfoInternal subInfo = SubscriptionManagerService.getInstance()
-                    .getSubscriptionInfoInternal(phone.getSubId());
-            return subInfo != null && subInfo.isOpportunistic();
-        }
-        SubscriptionController subController = SubscriptionController.getInstance();
-        return subController != null && subController.isOpportunistic(phone.getSubId());
+        SubscriptionInfoInternal subInfo = SubscriptionManagerService.getInstance()
+                .getSubscriptionInfoInternal(phone.getSubId());
+        return subInfo != null && subInfo.isOpportunistic();
     }
 
     private void updateNetworkRegState() {

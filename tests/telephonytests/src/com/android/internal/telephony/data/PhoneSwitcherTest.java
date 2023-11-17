@@ -567,7 +567,6 @@ public class PhoneSwitcherTest extends TelephonyTest {
         setSlotIndexToSubId(1, 2);
         setDefaultDataSubId(1);
 
-        doReturn(true).when(mSubscriptionController).isOpportunistic(2);
         doReturn(new SubscriptionInfoInternal.Builder(mSubscriptionManagerService
                 .getSubscriptionInfoInternal(2)).setOpportunistic(1).build())
                 .when(mSubscriptionManagerService).getSubscriptionInfoInternal(2);
@@ -614,7 +613,6 @@ public class PhoneSwitcherTest extends TelephonyTest {
         setSlotIndexToSubId(0, 1);
         setSlotIndexToSubId(1, 2);
         // single visible sub, as the other one is CBRS
-        doReturn(new int[1]).when(mSubscriptionController).getActiveSubIdList(true);
         doReturn(new int[1]).when(mSubscriptionManagerService).getActiveSubIdList(true);
         setDefaultDataSubId(1);
 
@@ -671,7 +669,6 @@ public class PhoneSwitcherTest extends TelephonyTest {
         setDefaultDataSubId(1);
 
         clearInvocations(mCellularNetworkValidator);
-        doReturn(new int[1]).when(mSubscriptionController).getActiveSubIdList(true);
         doReturn(new int[1]).when(mSubscriptionManagerService).getActiveSubIdList(true);
         prepareIdealAutoSwitchCondition();
         processAllFutureMessages();
@@ -756,7 +753,6 @@ public class PhoneSwitcherTest extends TelephonyTest {
                 new TelephonyNetworkRequest(mmsRequest, mPhone), 1));
 
         // Set sub 2 as preferred sub should make phone 1 preferredDataModem
-        doReturn(true).when(mSubscriptionController).isOpportunistic(2);
         doReturn(new SubscriptionInfoInternal.Builder(mSubscriptionManagerService
                 .getSubscriptionInfoInternal(2)).setOpportunistic(1).build())
                 .when(mSubscriptionManagerService).getSubscriptionInfoInternal(2);
@@ -818,8 +814,6 @@ public class PhoneSwitcherTest extends TelephonyTest {
         doReturn(true).when(mMockRadioConfig).isSetPreferredDataCommandSupported();
         initialize();
 
-        // Mark sub 2 as opportunistic.
-        doReturn(true).when(mSubscriptionController).isOpportunistic(2);
         // Phone 0 has sub 1, phone 1 has sub 2.
         // Sub 1 is default data sub.
         // Both are active subscriptions are active sub, as they are in both active slots.
@@ -1383,8 +1377,6 @@ public class PhoneSwitcherTest extends TelephonyTest {
         doReturn(true).when(mMockRadioConfig).isSetPreferredDataCommandSupported();
         initialize();
 
-        // Mark sub 2 as opportunistic.
-        doReturn(true).when(mSubscriptionController).isOpportunistic(2);
         // Phone 0 has sub 1, phone 1 has sub 2.
         // Sub 1 is default data sub.
         // Both are active subscriptions are active sub, as they are in both active slots.
@@ -1546,7 +1538,6 @@ public class PhoneSwitcherTest extends TelephonyTest {
         setAllPhonesInactive();
         // Initialization done.
 
-        doReturn(true).when(mSubscriptionController).isOpportunistic(2);
         doReturn(new SubscriptionInfoInternal.Builder(mSubscriptionManagerService
                 .getSubscriptionInfoInternal(2)).setOpportunistic(1).build())
                 .when(mSubscriptionManagerService).getSubscriptionInfoInternal(2);
@@ -1588,7 +1579,6 @@ public class PhoneSwitcherTest extends TelephonyTest {
         setAllPhonesInactive();
         // Initialization done.
 
-        doReturn(true).when(mSubscriptionController).isOpportunistic(2);
         doReturn(new SubscriptionInfoInternal.Builder(mSubscriptionManagerService
                 .getSubscriptionInfoInternal(2)).setOpportunistic(1).build())
                 .when(mSubscriptionManagerService).getSubscriptionInfoInternal(2);
@@ -1639,8 +1629,6 @@ public class PhoneSwitcherTest extends TelephonyTest {
         verify(mMockRadioConfig, times(1)).setPreferredDataModem(eq(0), any());
 
         clearInvocations(mMockRadioConfig);
-        doReturn(mSubscriptionInfo).when(mSubscriptionController)
-            .getActiveSubscriptionInfoForSimSlotIndex(eq(0), any(), any());
         doReturn(mSubscriptionInfo).when(mSubscriptionManagerService)
                 .getActiveSubscriptionInfoForSimSlotIndex(eq(0), any(), any());
         doReturn(true).when(mSubscriptionInfo).areUiccApplicationsEnabled();
@@ -1980,25 +1968,12 @@ public class PhoneSwitcherTest extends TelephonyTest {
      * network requests on PhoneSwitcher.
      */
     private void initializeSubControllerMock() throws Exception {
-        doReturn(mDefaultDataSub).when(mSubscriptionController).getDefaultDataSubId();
         doReturn(mDefaultDataSub).when(mSubscriptionManagerService).getDefaultDataSubId();
         doReturn(mDefaultDataSub).when(mMockedIsub).getDefaultDataSubId();
-        doReturn(0).when(mSubscriptionController).getPhoneId(1);
         doReturn(0).when(mSubscriptionManagerService).getPhoneId(1);
         doReturn(0).when(mMockedIsub).getPhoneId(1);
-        doReturn(1).when(mSubscriptionController).getPhoneId(2);
         doReturn(1).when(mSubscriptionManagerService).getPhoneId(2);
         doReturn(1).when(mMockedIsub).getPhoneId(2);
-        doAnswer(invocation -> {
-            int phoneId = (int) invocation.getArguments()[0];
-            if (phoneId == SubscriptionManager.INVALID_PHONE_INDEX) {
-                return SubscriptionManager.INVALID_SUBSCRIPTION_ID;
-            } else if (phoneId == SubscriptionManager.DEFAULT_PHONE_INDEX) {
-                return mSlotIndexToSubId[0][0];
-            } else {
-                return mSlotIndexToSubId[phoneId][0];
-            }
-        }).when(mSubscriptionController).getSubId(anyInt());
 
         doAnswer(invocation -> {
             int phoneId = (int) invocation.getArguments()[0];
@@ -2025,17 +2000,6 @@ public class PhoneSwitcherTest extends TelephonyTest {
         doAnswer(invocation -> {
             int subId = (int) invocation.getArguments()[0];
 
-            if (!SubscriptionManager.isUsableSubIdValue(subId)) return false;
-
-            for (int i = 0; i < mSlotIndexToSubId.length; i++) {
-                if (mSlotIndexToSubId[i][0] == subId) return true;
-            }
-            return false;
-        }).when(mSubscriptionController).isActiveSubId(anyInt());
-
-        doAnswer(invocation -> {
-            int subId = (int) invocation.getArguments()[0];
-
             if (!SubscriptionManager.isUsableSubIdValue(subId)) return null;
 
             int slotIndex = -1;
@@ -2046,8 +2010,6 @@ public class PhoneSwitcherTest extends TelephonyTest {
                     .setSimSlotIndex(slotIndex).setId(subId).build();
         }).when(mSubscriptionManagerService).getSubscriptionInfoInternal(anyInt());
 
-        doReturn(new int[mSlotIndexToSubId.length]).when(mSubscriptionController)
-                .getActiveSubIdList(true);
         doReturn(new int[mSlotIndexToSubId.length]).when(mSubscriptionManagerService)
                 .getActiveSubIdList(true);
     }
@@ -2063,7 +2025,6 @@ public class PhoneSwitcherTest extends TelephonyTest {
 
     private void setDefaultDataSubId(int defaultDataSub) {
         mDefaultDataSub = defaultDataSub;
-        doReturn(mDefaultDataSub).when(mSubscriptionController).getDefaultDataSubId();
         doReturn(mDefaultDataSub).when(mSubscriptionManagerService).getDefaultDataSubId();
         for (Phone phone : mPhones) {
             doAnswer(invocation -> phone.getSubId() == mDefaultDataSub)

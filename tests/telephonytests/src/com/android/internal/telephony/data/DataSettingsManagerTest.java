@@ -23,7 +23,6 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.never;
@@ -74,9 +73,6 @@ public class DataSettingsManagerTest extends TelephonyTest {
         mBundle = mContextFixture.getCarrierConfigBundle();
         doReturn(true).when(mDataConfigManager).isConfigCarrierSpecific();
 
-        doReturn("").when(mSubscriptionController).getEnabledMobileDataPolicies(anyInt());
-        doReturn(true).when(mSubscriptionController).setEnabledMobileDataPolicies(
-                anyInt(), anyString());
         doReturn(new SubscriptionInfoInternal.Builder().setId(1).build())
                 .when(mSubscriptionManagerService).getSubscriptionInfoInternal(anyInt());
 
@@ -118,13 +114,8 @@ public class DataSettingsManagerTest extends TelephonyTest {
         processAllMessages();
 
         ArgumentCaptor<String> stringArgumentCaptor = ArgumentCaptor.forClass(String.class);
-        if (isSubscriptionManagerServiceEnabled()) {
-            verify(mSubscriptionManagerService, times(2))
-                    .setEnabledMobileDataPolicies(anyInt(), stringArgumentCaptor.capture());
-        } else {
-            verify(mSubscriptionController, times(2))
-                    .setEnabledMobileDataPolicies(anyInt(), stringArgumentCaptor.capture());
-        }
+        verify(mSubscriptionManagerService, times(2))
+                .setEnabledMobileDataPolicies(anyInt(), stringArgumentCaptor.capture());
         assertEquals("1,2", stringArgumentCaptor.getValue());
     }
 
