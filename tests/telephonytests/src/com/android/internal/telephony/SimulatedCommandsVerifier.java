@@ -1492,4 +1492,12 @@ public class SimulatedCommandsVerifier implements CommandsInterface {
     @Override
     public void getEnhancedRadioCapability(Message result) {
     }
+
+    /**
+     * Register to listen for the changes in the primary IMEI with respect to the sim slot.
+     */
+    @Override
+    public void registerForImeiMappingChanged(Handler h, int what, Object obj) {
+
+    }
 }

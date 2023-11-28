@@ -63,6 +63,7 @@ import android.os.MessageQueue;
 import android.os.RegistrantList;
 import android.os.ServiceManager;
 import android.os.StrictMode;
+import android.os.SystemClock;
 import android.os.UserManager;
 import android.permission.LegacyPermissionManager;
 import android.provider.BlockedNumberContract;
@@ -147,8 +148,6 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -299,7 +298,7 @@ public abstract class TelephonyTest {
     protected Context mContext;
     protected FakeBlockedNumberContentProvider mFakeBlockedNumberContentProvider;
     private final ContentProvider mContentProvider = spy(new ContextFixture.FakeContentProvider());
-    private Object mLock = new Object();
+    private final Object mLock = new Object();
     private boolean mReady;
     protected HashMap<String, IBinder> mServiceManagerMockedServices = new HashMap<>();
     protected Phone[] mPhones;
@@ -313,9 +312,9 @@ public abstract class TelephonyTest {
 
     private final HashMap<InstanceKey, Object> mOldInstances = new HashMap<>();
 
-    private final LinkedList<InstanceKey> mInstanceKeys = new LinkedList<>();
+    private final List<InstanceKey> mInstanceKeys = new ArrayList<>();
 
-    private class InstanceKey {
+    private static class InstanceKey {
         public final Class mClass;
         public final String mInstName;
         public final Object mObj;
@@ -332,7 +331,7 @@ public abstract class TelephonyTest {
 
         @Override
         public boolean equals(Object obj) {
-            if (obj == null || obj.getClass() != getClass()) {
+            if (obj == null || !(obj instanceof InstanceKey)) {
                 return false;
             }
 
@@ -344,15 +343,18 @@ public abstract class TelephonyTest {
 
     protected void waitUntilReady() {
         synchronized (mLock) {
-            if (!mReady) {
+            long now = SystemClock.elapsedRealtime();
+            long deadline = now + MAX_INIT_WAIT_MS;
+            while (!mReady && now < deadline) {
                 try {
                     mLock.wait(MAX_INIT_WAIT_MS);
-                } catch (InterruptedException ie) {
+                } catch (Exception e) {
+                    fail("Telephony tests failed to initialize: e=" + e);
                 }
-
-                if (!mReady) {
-                    fail("Telephony tests failed to initialize");
-                }
+                now = SystemClock.elapsedRealtime();
+            }
+            if (!mReady) {
+                fail("Telephony tests failed to initialize");
             }
         }
     }
@@ -391,10 +393,8 @@ public abstract class TelephonyTest {
     }
 
     protected synchronized void restoreInstances() throws Exception {
-        Iterator<InstanceKey> it = mInstanceKeys.descendingIterator();
-
-        while (it.hasNext()) {
-            InstanceKey key = it.next();
+        for (int i = mInstanceKeys.size() - 1; i >= 0; i--) {
+            InstanceKey key = mInstanceKeys.get(i);
             Field field = key.mClass.getDeclaredField(key.mInstName);
             field.setAccessible(true);
             field.set(key.mObj, mOldInstances.get(key));
@@ -596,7 +596,7 @@ public abstract class TelephonyTest {
         doReturn(mWspTypeDecoder).when(mTelephonyComponentFactory)
                 .makeWspTypeDecoder(nullable(byte[].class));
         doReturn(mImsCT).when(mTelephonyComponentFactory)
-                .makeImsPhoneCallTracker(nullable(ImsPhone.class));
+                .makeImsPhoneCallTracker(nullable(ImsPhone.class), any(FeatureFlags.class));
         doReturn(mCdmaSSM).when(mTelephonyComponentFactory)
                 .getCdmaSubscriptionSourceManagerInstance(nullable(Context.class),
                         nullable(CommandsInterface.class), nullable(Handler.class),
@@ -709,7 +709,7 @@ public abstract class TelephonyTest {
         doReturn(mSimRecords).when(mUiccProfile).getIccRecords();
         doAnswer(new Answer<IccRecords>() {
             public IccRecords answer(InvocationOnMock invocation) {
-                return (mPhone.isPhoneTypeGsm()) ? mSimRecords : mRuimRecords;
+                return mSimRecords;
             }
         }).when(mUiccProfile).getIccRecords();
 
@@ -922,7 +922,9 @@ public abstract class TelephonyTest {
         }
         if (mContext != null) {
             SharedPreferences sharedPreferences = mContext.getSharedPreferences((String) null, 0);
-            sharedPreferences.edit().clear().commit();
+            if (sharedPreferences != null) {
+                sharedPreferences.edit().clear().commit();
+            }
         }
         restoreInstances();
         TelephonyManager.enableServiceHandleCaching();
@@ -946,7 +948,6 @@ public abstract class TelephonyTest {
         mContextFixture = null;
         mContext = null;
         mFakeBlockedNumberContentProvider = null;
-        mLock = null;
         mServiceManagerMockedServices.clear();
         mServiceManagerMockedServices = null;
         mPhone = null;
