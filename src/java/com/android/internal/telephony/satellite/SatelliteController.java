@@ -214,6 +214,7 @@ public class SatelliteController extends Handler {
     private final AtomicBoolean mRegisteredForNtnSignalStrengthChanged = new AtomicBoolean(false);
     private final AtomicBoolean mRegisteredForSatelliteCapabilitiesChanged =
             new AtomicBoolean(false);
+    private final AtomicBoolean mShouldReportNtnSignalStrength = new AtomicBoolean(false);
     /**
      * Map key: subId, value: callback to get error code of the provision request.
      */
@@ -1184,10 +1185,19 @@ public class SatelliteController extends Handler {
             case CMD_UPDATE_NTN_SIGNAL_STRENGTH_REPORTING: {
                 ar = (AsyncResult) msg.obj;
                 boolean shouldReport = (boolean) ar.result;
-                logd("CMD_UPDATE_NTN_SIGNAL_STRENGTH_REPORTING: shouldReport=" + shouldReport);
+                if (DBG) {
+                    logd("CMD_UPDATE_NTN_SIGNAL_STRENGTH_REPORTING: shouldReport=" + shouldReport);
+                }
                 request = new SatelliteControllerHandlerRequest(shouldReport,
                         SatelliteServiceUtils.getPhone());
                 if (SATELLITE_RESULT_SUCCESS != evaluateOemSatelliteRequestAllowed(true)) {
+                    return;
+                }
+                if (mShouldReportNtnSignalStrength.get() == shouldReport) {
+                    if (DBG) {
+                        logd("CMD_UPDATE_NTN_SIGNAL_STRENGTH_REPORTING : modem state matches the "
+                                + "expected state, return.");
+                    }
                     return;
                 }
                 onCompleted = obtainMessage(EVENT_UPDATE_NTN_SIGNAL_STRENGTH_REPORTING_DONE,
@@ -1203,9 +1213,12 @@ public class SatelliteController extends Handler {
             case EVENT_UPDATE_NTN_SIGNAL_STRENGTH_REPORTING_DONE: {
                 ar = (AsyncResult) msg.obj;
                 request = (SatelliteControllerHandlerRequest) ar.userObj;
+                boolean shouldReport = (boolean) request.argument;
                 int errorCode =  SatelliteServiceUtils.getSatelliteError(ar,
                         "EVENT_UPDATE_NTN_SIGNAL_STRENGTH_REPORTING_DONE");
-                if (errorCode != SATELLITE_RESULT_SUCCESS) {
+                if (errorCode == SATELLITE_RESULT_SUCCESS) {
+                    mShouldReportNtnSignalStrength.set(shouldReport);
+                } else {
                     loge(((boolean) request.argument ? "startSendingNtnSignalStrength"
                             : "stopSendingNtnSignalStrength") + "returns " + errorCode);
                 }
@@ -1722,6 +1735,7 @@ public class SatelliteController extends Handler {
         if (!mSatelliteModemInterface.isSatelliteServiceSupported()) {
             return SatelliteManager.SATELLITE_RESULT_NOT_SUPPORTED;
         }
+        logd("registerForSatelliteDatagram: callback=" + callback);
         return mDatagramController.registerForSatelliteDatagram(subId, callback);
     }
 
@@ -1742,6 +1756,7 @@ public class SatelliteController extends Handler {
         if (!mSatelliteModemInterface.isSatelliteServiceSupported()) {
             return;
         }
+        logd("unregisterForSatelliteDatagram: callback=" + callback);
         mDatagramController.unregisterForSatelliteDatagram(subId, callback);
     }
 
@@ -3356,6 +3371,31 @@ public class SatelliteController extends Handler {
             return (config.getInt(
                     KEY_SATELLITE_CONNECTION_HYSTERESIS_SEC_INT) * 1000L);
         }
+    }
+
+    /**
+     * This API can be used by only CTS to override the cached value for the device overlay config
+     * value : config_send_satellite_datagram_to_modem_in_demo_mode, which determines whether
+     * outgoing satellite datagrams should be sent to modem in demo mode.
+     *
+     * @param shouldSendToModemInDemoMode Whether send datagram in demo mode should be sent to
+     * satellite modem or not.
+     *
+     * @return {@code true} if the operation is successful, {@code false} otherwise.
+     */
+    public boolean setShouldSendDatagramToModemInDemoMode(boolean shouldSendToModemInDemoMode) {
+        if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
+            logd("setShouldSendDatagramToModemInDemoMode: oemEnabledSatelliteFlag is disabled");
+            return false;
+        }
+
+        if (!isMockModemAllowed()) {
+            logd("setShouldSendDatagramToModemInDemoMode: mock modem not allowed.");
+            return false;
+        }
+
+        mDatagramController.setShouldSendDatagramToModemInDemoMode(shouldSendToModemInDemoMode);
+        return true;
     }
 
     private static void logd(@NonNull String log) {
