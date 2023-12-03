@@ -163,7 +163,7 @@ public class PhoneFactory {
                 // register statsd pullers.
                 sMetricsCollector = new MetricsCollector(context);
 
-                sPhoneNotifier = new DefaultPhoneNotifier(context);
+                sPhoneNotifier = new DefaultPhoneNotifier(context, featureFlags);
                 TelephonyComponentFactory telephonyComponentFactory
                         = TelephonyComponentFactory.getInstance();
 
@@ -277,7 +277,7 @@ public class PhoneFactory {
                     Rlog.i(LOG_TAG, "IMS is not supported on this device, skipping ImsResolver.");
                 }
 
-                sPhoneConfigurationManager = PhoneConfigurationManager.init(sContext);
+                sPhoneConfigurationManager = PhoneConfigurationManager.init(sContext, featureFlags);
 
                 sCellularNetworkValidator = CellularNetworkValidator.make(sContext);
 

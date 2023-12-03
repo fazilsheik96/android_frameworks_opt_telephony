@@ -1892,6 +1892,8 @@ public class SubscriptionManagerService extends ISub.Stub {
      *
      * @param callingPackage The package making the call.
      * @param callingFeatureId The feature in the package.
+     * @param isForAllProfiles whether the caller intends to see all subscriptions regardless
+     *                      association.
      *
      * @return Sorted list of the currently {@link SubscriptionInfo} records available on the
      * device.
@@ -1904,7 +1906,7 @@ public class SubscriptionManagerService extends ISub.Stub {
             "carrier privileges",
     })
     public List<SubscriptionInfo> getActiveSubscriptionInfoList(@NonNull String callingPackage,
-            @Nullable String callingFeatureId) {
+            @Nullable String callingFeatureId, boolean isForAllProfiles) {
         // Check if the caller has READ_PHONE_STATE, READ_PRIVILEGED_PHONE_STATE, or carrier
         // privilege on any active subscription. The carrier app will get full subscription infos
         // on the subs it has carrier privilege.
@@ -1918,7 +1920,13 @@ public class SubscriptionManagerService extends ISub.Stub {
                     + "permission. Returning empty list here.");
             return Collections.emptyList();
         }
-        return getSubscriptionInfoStreamAsUser(BINDER_WRAPPER.getCallingUserHandle())
+        if (isForAllProfiles && !hasAcrossAllUsersPermission()) {
+            //TODO(b/308809058 to determine whether the permission enforcement is needed)
+            loge("getActiveSubscriptionInfoList: "
+                    + callingPackage + " has no appropriate permission.");
+        }
+        return getSubscriptionInfoStreamAsUser(isForAllProfiles
+                ? UserHandle.ALL : BINDER_WRAPPER.getCallingUserHandle())
                 .filter(SubscriptionInfoInternal::isActive)
                 // Remove the identifier if the caller does not have sufficient permission.
                 // carrier apps will get full subscription info on the subscriptions associated
@@ -1935,6 +1943,8 @@ public class SubscriptionManagerService extends ISub.Stub {
      *
      * @param callingPackage The package making the call.
      * @param callingFeatureId The feature in the package.
+     * @param isForAllProfiles whether the caller intends to see all subscriptions regardless
+     *                        association.
      *
      * @return the number of active subscriptions.
      *
@@ -1947,14 +1957,27 @@ public class SubscriptionManagerService extends ISub.Stub {
             "carrier privileges",
     })
     public int getActiveSubInfoCount(@NonNull String callingPackage,
-            @Nullable String callingFeatureId) {
+            @Nullable String callingFeatureId, boolean isForAllProfiles) {
         if (!TelephonyPermissions.checkReadPhoneStateOnAnyActiveSub(mContext,
                 Binder.getCallingPid(), Binder.getCallingUid(), callingPackage, callingFeatureId,
                 "getAllSubInfoList")) {
             throw new SecurityException("Need READ_PHONE_STATE, READ_PRIVILEGED_PHONE_STATE, or "
                     + "carrier privilege");
         }
-        return getActiveSubIdListAsUser(false, BINDER_WRAPPER.getCallingUserHandle()).length;
+        if (isForAllProfiles && !hasAcrossAllUsersPermission()) {
+            //TODO(b/308809058 to determine whether the permission enforcement is needed)
+            loge("getActiveSubInfoCount: "
+                    + callingPackage + " has no appropriate permission.");
+        }
+        return getActiveSubIdListAsUser(false, isForAllProfiles
+                ? UserHandle.ALL : BINDER_WRAPPER.getCallingUserHandle()).length;
+    }
+
+    /**@return {@code true} if the caller is permitted to see all subscriptions. */
+    private boolean hasAcrossAllUsersPermission() {
+        return hasPermissions(Manifest.permission.INTERACT_ACROSS_USERS,
+                Manifest.permission.INTERACT_ACROSS_USERS_FULL,
+                Manifest.permission.INTERACT_ACROSS_PROFILES);
     }
 
     /**
@@ -3898,16 +3921,6 @@ public class SubscriptionManagerService extends ISub.Stub {
     }
 
     /**
-     * @return All active subscriptions.
-     */
-    @NonNull
-    private List<SubscriptionInfoInternal> getActiveSubscriptionInfoListAllUser() {
-        return mSubscriptionDatabaseManager.getAllSubscriptions().stream()
-                .filter(SubscriptionInfoInternal::isActive)
-                .collect(Collectors.toList());
-    }
-
-    /**
      * Get subscriptions accessible to the caller user.
      *
      * @param user The user to check.
@@ -4149,7 +4162,10 @@ public class SubscriptionManagerService extends ISub.Stub {
      */
     @VisibleForTesting
     public void updateGroupDisabled() {
-        List<SubscriptionInfoInternal> activeSubscriptions = getActiveSubscriptionInfoListAllUser();
+        List<SubscriptionInfoInternal> activeSubscriptions = mSubscriptionDatabaseManager
+                .getAllSubscriptions().stream()
+                .filter(SubscriptionInfoInternal::isActive)
+                .collect(Collectors.toList());
         for (SubscriptionInfo oppSubInfo : getOpportunisticSubscriptions(
                 mContext.getOpPackageName(), mContext.getFeatureId())) {
             boolean groupDisabled = activeSubscriptions.stream()
