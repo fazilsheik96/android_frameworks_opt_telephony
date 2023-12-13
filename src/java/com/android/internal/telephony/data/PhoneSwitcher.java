@@ -1344,7 +1344,7 @@ public class PhoneSwitcher extends Handler {
      * If telephony temp DDS switch is disabled, DDS switch during voice call is
      * performed based on modem recommendations.
      */
-    private boolean isTelephonyTempDdsSwitchEnabled() {
+    protected boolean isTelephonyTempDdsSwitchEnabled() {
         for (int i = 0; i < mActiveModemCount; i++) {
             Phone phone = PhoneFactory.getPhone(i);
             if(phone == null) {
