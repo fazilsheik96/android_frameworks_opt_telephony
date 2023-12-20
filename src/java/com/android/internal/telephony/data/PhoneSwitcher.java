@@ -28,6 +28,7 @@ import static android.telephony.TelephonyManager.SET_OPPORTUNISTIC_SUB_VALIDATIO
 import static android.telephony.ims.stub.ImsRegistrationImplBase.REGISTRATION_TECH_CROSS_SIM;
 import static android.telephony.ims.stub.ImsRegistrationImplBase.REGISTRATION_TECH_IWLAN;
 import static android.telephony.ims.stub.ImsRegistrationImplBase.REGISTRATION_TECH_NONE;
+
 import static java.util.Arrays.copyOf;
 
 import android.annotation.NonNull;
@@ -84,6 +85,7 @@ import com.android.internal.telephony.RadioConfig;
 import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.telephony.data.DataNetworkController.NetworkRequestList;
 import com.android.internal.telephony.data.DataSettingsManager.DataSettingsManagerCallback;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
 import com.android.internal.telephony.nano.TelephonyProto.TelephonyEvent;
 import com.android.internal.telephony.nano.TelephonyProto.TelephonyEvent.DataSwitch;
@@ -185,6 +187,7 @@ public class PhoneSwitcher extends Handler {
     private final @NonNull NetworkRequestList mNetworkRequestList = new NetworkRequestList();
     protected final RegistrantList mActivePhoneRegistrants;
     private final SubscriptionManagerService mSubscriptionManagerService;
+    private final @NonNull FeatureFlags mFlags;
     protected final Context mContext;
     private final LocalLog mLocalLog;
     protected PhoneState[] mPhoneStates;
@@ -407,9 +410,10 @@ public class PhoneSwitcher extends Handler {
     /**
      * Method to create singleton instance.
      */
-    public static PhoneSwitcher make(int maxDataAttachModemCount, Context context, Looper looper) {
+    public static PhoneSwitcher make(int maxDataAttachModemCount, Context context, Looper looper,
+            @NonNull FeatureFlags flags) {
         if (sPhoneSwitcher == null) {
-            sPhoneSwitcher = new PhoneSwitcher(maxDataAttachModemCount, context, looper);
+            sPhoneSwitcher = new PhoneSwitcher(maxDataAttachModemCount, context, looper, flags);
         }
 
         return sPhoneSwitcher;
@@ -468,9 +472,11 @@ public class PhoneSwitcher extends Handler {
     }
 
     @VisibleForTesting
-    public PhoneSwitcher(int maxActivePhones, Context context, Looper looper) {
+    public PhoneSwitcher(int maxActivePhones, Context context, Looper looper,
+            @NonNull FeatureFlags featureFlags) {
         super(looper);
         mContext = context;
+        mFlags = featureFlags;
         mActiveModemCount = getTm().getActiveModemCount();
         mPhoneSubscriptions = new int[mActiveModemCount];
         mPhoneStates = new PhoneState[mActiveModemCount];
@@ -523,10 +529,9 @@ public class PhoneSwitcher extends Handler {
 
                             @Override
                             public void onDataRoamingEnabledChanged(boolean enabled) {
-                                log("onDataRoamingEnabledChanged: enabled: " + enabled);
-                                evaluateIfImmediateDataSwitchIsNeeded(
-                                        "EVENT_DATA_ROAMING_ENABLED_CHANGED",
-                                        DataSwitch.Reason.DATA_SWITCH_REASON_IN_CALL);
+                                PhoneSwitcher.this.mAutoDataSwitchController.evaluateAutoDataSwitch(
+                                        AutoDataSwitchController
+                                                .EVALUATION_REASON_DATA_SETTINGS_CHANGED);
                             }});
                 phone.getDataSettingsManager().registerCallback(
                         mDataSettingsManagerCallbacks.get(phoneId));
@@ -576,7 +581,7 @@ public class PhoneSwitcher extends Handler {
             }
         };
         mAutoDataSwitchController = new AutoDataSwitchController(context, looper, this,
-                mAutoDataSwitchCallback);
+                mFlags, mAutoDataSwitchCallback);
 
         mContext.registerReceiver(mDefaultDataChangedReceiver,
                 new IntentFilter(TelephonyIntents.ACTION_DEFAULT_DATA_SUBSCRIPTION_CHANGED));
@@ -677,7 +682,6 @@ public class PhoneSwitcher extends Handler {
     public void handleMessage(Message msg) {
         switch (msg.what) {
             case EVENT_SUBSCRIPTION_CHANGED: {
-                mAutoDataSwitchController.notifySubscriptionsChanged();
                 onEvaluate(REQUESTS_UNCHANGED, "subscription changed");
                 break;
             }
@@ -969,14 +973,6 @@ public class PhoneSwitcher extends Handler {
                         }
 
                         @Override
-                        public void onDataRoamingEnabledChanged(boolean enabled) {
-                            log("onDataRoamingEnabledChanged: enabled: " + enabled);
-                            evaluateIfImmediateDataSwitchIsNeeded(
-                                    "EVENT_DATA_ROAMING_ENABLED_CHANGED",
-                                    DataSwitch.Reason.DATA_SWITCH_REASON_IN_CALL);
-                        }
-
-                        @Override
                         public void onDataEnabledOverrideChanged(boolean enabled,
                                 @TelephonyManager.MobileDataPolicy int policy) {
                             // Add it when mobile data is on
@@ -986,6 +982,13 @@ public class PhoneSwitcher extends Handler {
                                         "EVENT_DATA_DURING_CALL_ENABLED_CHANGED",
                                         DataSwitch.Reason.DATA_SWITCH_REASON_IN_CALL);
                             }
+                        }
+
+                        @Override
+                        public void onDataRoamingEnabledChanged(boolean enabled) {
+                            PhoneSwitcher.this.mAutoDataSwitchController.evaluateAutoDataSwitch(
+                                    AutoDataSwitchController
+                                            .EVALUATION_REASON_DATA_SETTINGS_CHANGED);
                         }
                     });
             phone.getDataSettingsManager().registerCallback(
@@ -1169,6 +1172,7 @@ public class PhoneSwitcher extends Handler {
                     registerForImsRadioTechChange(mContext, i);
                 }
                 diffDetected = true;
+                mAutoDataSwitchController.notifySubscriptionsMappingChanged();
             }
         }
 
