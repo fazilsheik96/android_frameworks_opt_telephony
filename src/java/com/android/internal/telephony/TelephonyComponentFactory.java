@@ -62,6 +62,7 @@ import com.android.internal.telephony.imsphone.ImsPhone;
 import com.android.internal.telephony.imsphone.ImsPhoneCallTracker;
 import com.android.internal.telephony.nitz.NitzStateMachineImpl;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
+import com.android.internal.telephony.security.CellularIdentifierDisclosureNotifier;
 import com.android.internal.telephony.uicc.IccCardStatus;
 import com.android.internal.telephony.uicc.UiccCard;
 import com.android.internal.telephony.uicc.UiccProfile;
@@ -518,9 +519,9 @@ public class TelephonyComponentFactory {
     }
 
     public PhoneSwitcher makePhoneSwitcher(int maxDataAttachModemCount, Context context,
-            Looper looper) {
+            Looper looper, @NonNull FeatureFlags featureFlags) {
         Rlog.i(TAG, "makePhoneSwitcher");
-        return PhoneSwitcher.make(maxDataAttachModemCount, context, looper);
+        return PhoneSwitcher.make(maxDataAttachModemCount, context, looper, featureFlags);
     }
 
     /**
@@ -668,5 +669,10 @@ public class TelephonyComponentFactory {
             @NonNull Context context, @NonNull Looper looper) {
         Rlog.i(TAG, "make SubscriptionManagerService");
         return new SubscriptionManagerService(context, looper, new FeatureFlagsImpl());
+    }
+
+    /** Create CellularIdentifierDisclosureNotifier. */
+    public CellularIdentifierDisclosureNotifier makeIdentifierDisclosureNotifier() {
+        return CellularIdentifierDisclosureNotifier.getInstance();
     }
 }

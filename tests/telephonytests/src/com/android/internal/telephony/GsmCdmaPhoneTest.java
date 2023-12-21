@@ -72,6 +72,7 @@ import android.telephony.CarrierConfigManager;
 import android.telephony.CellIdentity;
 import android.telephony.CellIdentityCdma;
 import android.telephony.CellIdentityGsm;
+import android.telephony.CellularIdentifierDisclosure;
 import android.telephony.LinkCapacityEstimate;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.RadioAccessFamily;
@@ -131,7 +132,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     private UiccSlot mUiccSlot;
     private CommandsInterface mMockCi;
     private AdnRecordCache adnRecordCache;
-    private DomainSelectionResolver mDomainSelectionResolver;
 
     //mPhoneUnderTest
     private GsmCdmaPhone mPhoneUT;
@@ -172,13 +172,10 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         mUiccPort = Mockito.mock(UiccPort.class);
         mMockCi = Mockito.mock(CommandsInterface.class);
         adnRecordCache = Mockito.mock(AdnRecordCache.class);
-        mDomainSelectionResolver = Mockito.mock(DomainSelectionResolver.class);
         mFeatureFlags = Mockito.mock(FeatureFlags.class);
 
         doReturn(false).when(mSST).isDeviceShuttingDown();
         doReturn(true).when(mImsManager).isVolteEnabledByPlatform();
-        doReturn(false).when(mDomainSelectionResolver).isDomainSelectionSupported();
-        DomainSelectionResolver.setDomainSelectionResolver(mDomainSelectionResolver);
 
         mPhoneUT = new GsmCdmaPhone(mContext, mSimulatedCommands, mNotifier, true, 0,
             PhoneConstants.PHONE_TYPE_GSM, mTelephonyComponentFactory, (c, p) -> mImsManager,
@@ -197,7 +194,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     public void tearDown() throws Exception {
         mPhoneUT.removeCallbacksAndMessages(null);
         mPhoneUT = null;
-        DomainSelectionResolver.setDomainSelectionResolver(null);
         try {
             DeviceConfig.setProperties(mPreTestProperties);
         } catch (DeviceConfig.BadConfigException e) {
@@ -2774,5 +2770,106 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         mPhoneUT.handleMessage(message);
         assertEquals(Phone.IMEI_TYPE_SECONDARY, mPhoneUT.getImeiType());
         assertEquals(FAKE_IMEI, mPhoneUT.getImei());
+    }
+
+    @Test
+    public void testCellularIdentifierDisclosureFlagOff() {
+        when(mFeatureFlags.enableIdentifierDisclosureTransparency()).thenReturn(false);
+
+        GsmCdmaPhone phoneUT =
+                new GsmCdmaPhone(
+                        mContext,
+                        mSimulatedCommands,
+                        mNotifier,
+                        true,
+                        0,
+                        PhoneConstants.PHONE_TYPE_GSM,
+                        mTelephonyComponentFactory,
+                        (c, p) -> mImsManager,
+                        mFeatureFlags);
+        phoneUT.mCi = mMockCi;
+
+        verify(mMockCi, never())
+                .registerForCellularIdentifierDisclosures(
+                        any(Handler.class), anyInt(), any(Object.class));
+    }
+
+    @Test
+    public void testCellularIdentifierDisclosureFlagOn() {
+        when(mFeatureFlags.enableIdentifierDisclosureTransparency()).thenReturn(true);
+
+        Phone phoneUT =
+                new GsmCdmaPhone(
+                        mContext,
+                        mMockCi,
+                        mNotifier,
+                        true,
+                        0,
+                        PhoneConstants.PHONE_TYPE_GSM,
+                        mTelephonyComponentFactory,
+                        (c, p) -> mImsManager,
+                        mFeatureFlags);
+
+        verify(mMockCi, times(1))
+                .registerForCellularIdentifierDisclosures(
+                        eq(phoneUT),
+                        eq(Phone.EVENT_CELL_IDENTIFIER_DISCLOSURE),
+                        nullable(Object.class));
+    }
+
+    @Test
+    public void testCellularIdentifierDisclosure_disclosureEventAddedToNotifier() {
+        when(mFeatureFlags.enableIdentifierDisclosureTransparency()).thenReturn(true);
+
+        Phone phoneUT =
+                new GsmCdmaPhone(
+                        mContext,
+                        mMockCi,
+                        mNotifier,
+                        true,
+                        0,
+                        PhoneConstants.PHONE_TYPE_GSM,
+                        mTelephonyComponentFactory,
+                        (c, p) -> mImsManager,
+                        mFeatureFlags);
+
+        CellularIdentifierDisclosure disclosure =
+                new CellularIdentifierDisclosure(
+                        CellularIdentifierDisclosure.NAS_PROTOCOL_MESSAGE_ATTACH_REQUEST,
+                        CellularIdentifierDisclosure.CELLULAR_IDENTIFIER_IMSI,
+                        "001001",
+                        false);
+        phoneUT.sendMessage(
+                mPhoneUT.obtainMessage(
+                        Phone.EVENT_CELL_IDENTIFIER_DISCLOSURE,
+                        new AsyncResult(null, disclosure, null)));
+        processAllMessages();
+
+        verify(mIdentifierDisclosureNotifier, times(1)).addDisclosure(eq(disclosure));
+    }
+
+    @Test
+    public void testCellularIdentifierDisclosure_disclosureEventNull() {
+        when(mFeatureFlags.enableIdentifierDisclosureTransparency()).thenReturn(true);
+
+        Phone phoneUT =
+                new GsmCdmaPhone(
+                        mContext,
+                        mMockCi,
+                        mNotifier,
+                        true,
+                        0,
+                        PhoneConstants.PHONE_TYPE_GSM,
+                        mTelephonyComponentFactory,
+                        (c, p) -> mImsManager,
+                        mFeatureFlags);
+
+        phoneUT.sendMessage(
+                mPhoneUT.obtainMessage(
+                        Phone.EVENT_CELL_IDENTIFIER_DISCLOSURE, new AsyncResult(null, null, null)));
+        processAllMessages();
+
+        verify(mIdentifierDisclosureNotifier, never())
+                .addDisclosure(any(CellularIdentifierDisclosure.class));
     }
 }
