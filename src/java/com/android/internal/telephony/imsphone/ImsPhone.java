@@ -55,6 +55,7 @@ import static com.android.internal.telephony.CommandsInterface.SERVICE_CLASS_VOI
 import android.annotation.FlaggedApi;
 import android.annotation.NonNull;
 import android.app.Activity;
+import android.app.ActivityManager;
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
@@ -1075,6 +1076,7 @@ public class ImsPhone extends ImsPhoneBase {
         String networkPortion = PhoneNumberUtils.extractNetworkPortionAlt(newDialString);
         ImsPhoneMmiCode mmi =
                 ImsPhoneMmiCode.newFromDialString(networkPortion, this, wrappedCallback);
+        UserHandle currentUserHandle = UserHandle.of(ActivityManager.getCurrentUser());
         if (DBG) logd("dialInternal: dialing w/ mmi '" + mmi + "'...");
 
         if (mmi == null) {
@@ -1082,6 +1084,11 @@ public class ImsPhone extends ImsPhoneBase {
         } else if (mmi.isTemporaryModeCLIR()) {
             imsDialArgsBuilder.setClirMode(mmi.getCLIRMode());
             return mCT.dial(mmi.getDialingNumber(), imsDialArgsBuilder.build());
+        } else if (!currentUserHandle.isSystem()) {
+            // Must be primary user to use supplementary service.
+            loge("dialInternal: Supplementary service not allowed in non-primary mode");
+            throw new CallStateException(
+                    "Supplementary service is not allowed for non-primary user");
         } else if (!mmi.isSupportedOverImsPhone()) {
             // If the mmi is not supported by IMS service,
             // try to initiate dialing with default phone
