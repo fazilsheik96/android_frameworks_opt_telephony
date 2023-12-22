@@ -1712,6 +1712,13 @@ public class GsmCdmaPhone extends Phone {
                 return mCT.dialGsm(mmi.mDialingNumber, mmi.getCLIRMode(), dialArgs.uusInfo,
                         dialArgs.intentExtras);
             } else {
+                UserHandle currentUserHandle = UserHandle.of(ActivityManager.getCurrentUser());
+                // Must be primary user to use supplementary service.
+                if(!currentUserHandle.isSystem()) {
+                    loge("dialInternal: Supplementary service not allowed in non-primary mode");
+                    throw new CallStateException(
+                           "Supplementary service is not allowed for non-primary user");
+                }
                 mPendingMMIs.add(mmi);
                 mMmiRegistrants.notifyRegistrants(new AsyncResult(null, mmi, null));
                 mmi.processCode();
