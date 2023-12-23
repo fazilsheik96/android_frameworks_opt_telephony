@@ -372,8 +372,9 @@ public class TelephonyComponentFactory {
      * Create a new UiccProfile object.
      */
     public UiccProfile makeUiccProfile(Context context, CommandsInterface ci, IccCardStatus ics,
-                                       int phoneId, UiccCard uiccCard, Object lock) {
-        return new UiccProfile(context, ci, ics, phoneId, uiccCard, lock);
+                                       int phoneId, UiccCard uiccCard, Object lock,
+            @NonNull FeatureFlags flags) {
+        return new UiccProfile(context, ci, ics, phoneId, uiccCard, lock, flags);
     }
 
     public EriManager makeEriManager(Phone phone, int eriFileSource) {
@@ -660,9 +661,9 @@ public class TelephonyComponentFactory {
     }
 
     public TelephonyNetworkFactory makeTelephonyNetworkFactory(Looper looper, Phone phone,
-            PhoneSwitcher phoneSwitcher) {
+            PhoneSwitcher phoneSwitcher, @NonNull FeatureFlags flags) {
         Rlog.i(TAG, "make TelephonyNetworkFactory");
-        return new TelephonyNetworkFactory(looper, phone, phoneSwitcher);
+        return new TelephonyNetworkFactory(looper, phone, phoneSwitcher, flags);
     }
 
     public SubscriptionManagerService makeSubscriptionManagerService(
