@@ -16,6 +16,7 @@
 
 package com.android.internal.telephony.data;
 
+import android.annotation.NonNull;
 import android.net.NetworkCapabilities;
 import android.net.NetworkFactory;
 import android.net.NetworkRequest;
@@ -31,6 +32,7 @@ import android.util.LocalLog;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.metrics.NetworkRequestsStats;
 import com.android.internal.util.IndentingPrintWriter;
 import com.android.telephony.Rlog;
@@ -79,14 +81,24 @@ public class TelephonyNetworkFactory extends NetworkFactory {
     @VisibleForTesting
     public Handler mInternalHandler;
 
+    private final @NonNull FeatureFlags mFlags;
 
     private static final int PRIMARY_SLOT = 0;
     private static final int SECONDARY_SLOT = 1;
 
-    public TelephonyNetworkFactory(Looper looper, Phone phone, PhoneSwitcher phoneSwitcher) {
+    /**
+     * Constructor
+     *
+     * @param looper The looper for the handler
+     * @param phone The phone instance
+     * @param featureFlags The feature flags
+     */
+    public TelephonyNetworkFactory(@NonNull Looper looper, @NonNull Phone phone, PhoneSwitcher phoneSwitcher,
+            @NonNull FeatureFlags featureFlags) {
         super(looper, phone.getContext(), "TelephonyNetworkFactory[" + phone.getPhoneId()
                 + "]", null);
         mPhone = phone;
+        mFlags = featureFlags;
         mInternalHandler = new InternalHandler(looper);
 
         mAccessNetworksManager = mPhone.getAccessNetworksManager();

@@ -251,6 +251,7 @@ public abstract class TelephonyTest {
     protected IntentBroadcaster mIntentBroadcaster;
     protected NitzStateMachine mNitzStateMachine;
     protected RadioConfig mMockRadioConfig;
+    protected RadioConfigProxy mMockRadioConfigProxy;
     protected LocaleTracker mLocaleTracker;
     protected RestrictedState mRestrictedState;
     protected PhoneConfigurationManager mPhoneConfigurationManager;
@@ -523,6 +524,7 @@ public abstract class TelephonyTest {
         mIntentBroadcaster = Mockito.mock(IntentBroadcaster.class);
         mNitzStateMachine = Mockito.mock(NitzStateMachine.class);
         mMockRadioConfig = Mockito.mock(RadioConfig.class);
+        mMockRadioConfigProxy = Mockito.mock(RadioConfigProxy.class);
         mLocaleTracker = Mockito.mock(LocaleTracker.class);
         mRestrictedState = Mockito.mock(RestrictedState.class);
         mPhoneConfigurationManager = Mockito.mock(PhoneConfigurationManager.class);
@@ -624,7 +626,7 @@ public abstract class TelephonyTest {
         doReturn(mUiccProfile).when(mTelephonyComponentFactory)
                 .makeUiccProfile(nullable(Context.class), nullable(CommandsInterface.class),
                         nullable(IccCardStatus.class), anyInt(), nullable(UiccCard.class),
-                        nullable(Object.class));
+                        nullable(Object.class), any(FeatureFlags.class));
         doReturn(mCT).when(mTelephonyComponentFactory)
                 .makeGsmCdmaCallTracker(nullable(GsmCdmaPhone.class));
         doReturn(mIccPhoneBookIntManager).when(mTelephonyComponentFactory)
@@ -814,6 +816,7 @@ public abstract class TelephonyTest {
                 anyInt(), anyInt());
         doReturn(RIL.RADIO_HAL_VERSION_2_0).when(mPhone).getHalVersion(anyInt());
         doReturn(2).when(mSignalStrength).getLevel();
+        doReturn(mMockRadioConfigProxy).when(mMockRadioConfig).getRadioConfigProxy(any());
 
         // WiFi
         doReturn(mWifiInfo).when(mWifiManager).getConnectionInfo();
