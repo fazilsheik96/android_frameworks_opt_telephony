@@ -229,6 +229,9 @@ public class GsmCdmaPhone extends Phone {
 
     private int mPrecisePhoneType;
 
+    // mEcmTimerResetRegistrants are informed after Ecm timer is canceled or re-started
+    private final RegistrantList mEcmTimerResetRegistrants = new RegistrantList();
+
     private final RegistrantList mVolteSilentRedialRegistrants = new RegistrantList();
     private DialArgs mDialArgs = null;
     private final RegistrantList mEmergencyDomainSelectedRegistrants = new RegistrantList();
@@ -4720,6 +4723,10 @@ public class GsmCdmaPhone extends Phone {
         return country.toUpperCase(Locale.ROOT);
     }
 
+    public void notifyEcbmTimerReset(Boolean flag) {
+        mEcmTimerResetRegistrants.notifyResult(flag);
+    }
+
     private static final int[] VOICE_PS_CALL_RADIO_TECHNOLOGY = {
             ServiceState.RIL_RADIO_TECHNOLOGY_LTE,
             ServiceState.RIL_RADIO_TECHNOLOGY_LTE_CA,
@@ -4783,6 +4790,23 @@ public class GsmCdmaPhone extends Phone {
     private void onVoiceRegStateOrRatChanged(int vrs, int vrat) {
         logd("onVoiceRegStateOrRatChanged");
         mCT.dispatchCsCallRadioTech(getCsCallRadioTech(vrs, vrat));
+    }
+
+    /**
+     * Registration point for Ecm timer reset
+     *
+     * @param h handler to notify
+     * @param what User-defined message code
+     * @param obj placed in Message.obj
+     */
+    @Override
+    public void registerForEcmTimerReset(Handler h, int what, Object obj) {
+        mEcmTimerResetRegistrants.addUnique(h, what, obj);
+    }
+
+    @Override
+    public void unregisterForEcmTimerReset(Handler h) {
+        mEcmTimerResetRegistrants.remove(h);
     }
 
     @Override
