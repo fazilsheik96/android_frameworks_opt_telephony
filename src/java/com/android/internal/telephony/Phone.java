@@ -32,7 +32,6 @@ import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.hardware.radio.modem.ImeiInfo;
 import android.net.Uri;
@@ -268,8 +267,7 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     protected static final int EVENT_IMEI_MAPPING_CHANGED = 71;
     protected static final int EVENT_CELL_IDENTIFIER_DISCLOSURE = 72;
     protected static final int EVENT_SET_IDENTIFIER_DISCLOSURE_ENABLED_DONE = 73;
-    protected static final int EVENT_SECURITY_ALGORITHM_UPDATE = 74;
-    protected static final int EVENT_LAST = EVENT_SECURITY_ALGORITHM_UPDATE;
+    protected static final int EVENT_LAST = EVENT_SET_IDENTIFIER_DISCLOSURE_ENABLED_DONE;
 
     // For shared prefs.
     private static final String GSM_ROAMING_LIST_OVERRIDE_PREFIX = "gsm_roaming_list_";
@@ -1099,20 +1097,9 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     public void notifySmsSent(String destinationAddress) {
         TelephonyManager m = (TelephonyManager) getContext().getSystemService(
                 Context.TELEPHONY_SERVICE);
-        if (!mFeatureFlags.enforceTelephonyFeatureMappingForPublicApis()) {
-            if (m != null && m.isEmergencyNumber(destinationAddress)) {
-                mLocalLog.log("Emergency SMS detected, recording time.");
-                mTimeLastEmergencySmsSentMs = SystemClock.elapsedRealtime();
-            }
-        } else {
-            if (mContext.getPackageManager() != null
-                    && mContext.getPackageManager().hasSystemFeature(
-                            PackageManager.FEATURE_TELEPHONY_CALLING)) {
-                if (m != null && m.isEmergencyNumber(destinationAddress)) {
-                    mLocalLog.log("Emergency SMS detected, recording time.");
-                    mTimeLastEmergencySmsSentMs = SystemClock.elapsedRealtime();
-                }
-            }
+        if (m != null && m.isEmergencyNumber(destinationAddress)) {
+            mLocalLog.log("Emergency SMS detected, recording time.");
+            mTimeLastEmergencySmsSentMs = SystemClock.elapsedRealtime();
         }
     }
 

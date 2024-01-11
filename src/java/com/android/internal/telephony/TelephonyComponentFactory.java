@@ -63,7 +63,6 @@ import com.android.internal.telephony.imsphone.ImsPhoneCallTracker;
 import com.android.internal.telephony.nitz.NitzStateMachineImpl;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.security.CellularIdentifierDisclosureNotifier;
-import com.android.internal.telephony.security.NullCipherNotifier;
 import com.android.internal.telephony.uicc.IccCardStatus;
 import com.android.internal.telephony.uicc.UiccCard;
 import com.android.internal.telephony.uicc.UiccProfile;
@@ -507,8 +506,8 @@ public class TelephonyComponentFactory {
     }
 
     public LocaleTracker makeLocaleTracker(Phone phone, NitzStateMachine nitzStateMachine,
-                                           Looper looper, @NonNull FeatureFlags featureFlags) {
-        return new LocaleTracker(phone, nitzStateMachine, looper, featureFlags);
+                                           Looper looper) {
+        return new LocaleTracker(phone, nitzStateMachine, looper);
     }
 
     public Phone makePhone(Context context, CommandsInterface ci, PhoneNotifier notifier,
@@ -676,10 +675,5 @@ public class TelephonyComponentFactory {
     /** Create CellularIdentifierDisclosureNotifier. */
     public CellularIdentifierDisclosureNotifier makeIdentifierDisclosureNotifier() {
         return CellularIdentifierDisclosureNotifier.getInstance();
-    }
-
-    /** Create NullCipherNotifier. */
-    public NullCipherNotifier makeNullCipherNotifier() {
-        return NullCipherNotifier.getInstance();
     }
 }

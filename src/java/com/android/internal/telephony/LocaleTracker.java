@@ -41,7 +41,6 @@ import android.util.LocalLog;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.MccTable.MccMnc;
-import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.util.TelephonyUtils;
 import com.android.internal.util.IndentingPrintWriter;
 import com.android.telephony.Rlog;
@@ -173,8 +172,6 @@ public class LocaleTracker extends Handler {
     @Nullable
     private String mCurrentCountryIso;
 
-    @NonNull private final FeatureFlags mFeatureFlags;
-
     /** The country override for testing purposes */
     @Nullable
     private String mCountryOverride;
@@ -265,14 +262,12 @@ public class LocaleTracker extends Handler {
      * @param nitzStateMachine NITZ state machine
      * @param looper The looper message handler
      */
-    public LocaleTracker(Phone phone, NitzStateMachine nitzStateMachine, Looper looper,
-            FeatureFlags featureFlags)  {
+    public LocaleTracker(Phone phone, NitzStateMachine nitzStateMachine, Looper looper)  {
         super(looper);
         mPhone = phone;
         mNitzStateMachine = nitzStateMachine;
         mSimState = TelephonyManager.SIM_STATE_UNKNOWN;
         mTag = LocaleTracker.class.getSimpleName() + "-" + mPhone.getPhoneId();
-        mFeatureFlags = featureFlags;
 
         final IntentFilter filter = new IntentFilter();
         filter.addAction(TelephonyManager.ACTION_SIM_CARD_STATE_CHANGED);
@@ -583,10 +578,6 @@ public class LocaleTracker extends Handler {
                 TelephonyProperties.operator_iso_country(newProp);
             }
 
-            if (mFeatureFlags.oemEnabledSatelliteFlag()) {
-                TelephonyCountryDetector.getInstance(mPhone.getContext())
-                        .onNetworkCountryCodeChanged(mPhone, countryIso);
-            }
             Intent intent = new Intent(TelephonyManager.ACTION_NETWORK_COUNTRY_CHANGED);
             intent.putExtra(TelephonyManager.EXTRA_NETWORK_COUNTRY, countryIso);
             intent.putExtra(TelephonyManager.EXTRA_LAST_KNOWN_NETWORK_COUNTRY,
