@@ -4175,6 +4175,21 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     public void queryCLIP(Message onComplete) {
     }
 
+    /**
+     * Set C_IWLAN timer use to delay deactivating data call when mobile data UI is off or
+     * roaming UI is off when device is in roaming.
+     */
+    public void setCiwlanTimerToDealayDeactivateDataCall(long ciwlanTimer) {
+    }
+
+    /**
+     * Get C_IWLAN timer use to delay deactivating data call when mobile data UI is off or
+     * roaming UI is off when device is in roaming.
+     */
+    public long getCiwlanTimerToDealayDeactivateDataCall() {
+        return -1;
+    }
+
     /*
      * Returns the subscription id.
      */
