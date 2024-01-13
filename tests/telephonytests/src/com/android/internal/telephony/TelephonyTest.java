@@ -124,6 +124,7 @@ import com.android.internal.telephony.metrics.SmsStats;
 import com.android.internal.telephony.metrics.VoiceCallSessionStats;
 import com.android.internal.telephony.satellite.SatelliteController;
 import com.android.internal.telephony.security.CellularIdentifierDisclosureNotifier;
+import com.android.internal.telephony.security.NullCipherNotifier;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.test.SimulatedCommands;
 import com.android.internal.telephony.test.SimulatedCommandsVerifier;
@@ -285,6 +286,7 @@ public abstract class TelephonyTest {
     protected DeviceStateHelper mDeviceStateHelper;
     protected CellularIdentifierDisclosureNotifier mIdentifierDisclosureNotifier;
     protected DomainSelectionResolver mDomainSelectionResolver;
+    protected NullCipherNotifier mNullCipherNotifier;
 
     // Initialized classes
     protected ActivityManager mActivityManager;
@@ -559,6 +561,7 @@ public abstract class TelephonyTest {
         mDeviceStateHelper = Mockito.mock(DeviceStateHelper.class);
         mIdentifierDisclosureNotifier = Mockito.mock(CellularIdentifierDisclosureNotifier.class);
         mDomainSelectionResolver = Mockito.mock(DomainSelectionResolver.class);
+        mNullCipherNotifier = Mockito.mock(NullCipherNotifier.class);
 
         TelephonyManager.disableServiceHandleCaching();
         PropertyInvalidatedCache.disableForTestMode();
@@ -662,7 +665,7 @@ public abstract class TelephonyTest {
                 .makeNitzStateMachine(nullable(GsmCdmaPhone.class));
         doReturn(mLocaleTracker).when(mTelephonyComponentFactory)
                 .makeLocaleTracker(nullable(Phone.class), nullable(NitzStateMachine.class),
-                        nullable(Looper.class));
+                        nullable(Looper.class), any(FeatureFlags.class));
         doReturn(mEriManager).when(mTelephonyComponentFactory)
                 .makeEriManager(nullable(Phone.class), anyInt());
         doReturn(mLinkBandwidthEstimator).when(mTelephonyComponentFactory)
@@ -675,6 +678,9 @@ public abstract class TelephonyTest {
         doReturn(mIdentifierDisclosureNotifier)
                 .when(mTelephonyComponentFactory)
                 .makeIdentifierDisclosureNotifier();
+        doReturn(mNullCipherNotifier)
+                .when(mTelephonyComponentFactory)
+                .makeNullCipherNotifier();
 
         //mPhone
         doReturn(mContext).when(mPhone).getContext();
