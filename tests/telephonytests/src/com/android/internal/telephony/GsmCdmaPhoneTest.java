@@ -21,6 +21,7 @@ import static com.android.internal.telephony.CommandsInterface.CF_REASON_UNCONDI
 import static com.android.internal.telephony.Phone.EVENT_ICC_CHANGED;
 import static com.android.internal.telephony.Phone.EVENT_IMS_DEREGISTRATION_TRIGGERED;
 import static com.android.internal.telephony.Phone.EVENT_RADIO_AVAILABLE;
+import static com.android.internal.telephony.Phone.EVENT_SET_IDENTIFIER_DISCLOSURE_ENABLED_DONE;
 import static com.android.internal.telephony.Phone.EVENT_SET_NULL_CIPHER_AND_INTEGRITY_DONE;
 import static com.android.internal.telephony.Phone.EVENT_SRVCC_STATE_CHANGED;
 import static com.android.internal.telephony.Phone.EVENT_UICC_APPS_ENABLEMENT_STATUS_CHANGED;
@@ -72,6 +73,7 @@ import android.telephony.CarrierConfigManager;
 import android.telephony.CellIdentity;
 import android.telephony.CellIdentityCdma;
 import android.telephony.CellIdentityGsm;
+import android.telephony.CellularIdentifierDisclosure;
 import android.telephony.LinkCapacityEstimate;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.RadioAccessFamily;
@@ -131,7 +133,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     private UiccSlot mUiccSlot;
     private CommandsInterface mMockCi;
     private AdnRecordCache adnRecordCache;
-    private DomainSelectionResolver mDomainSelectionResolver;
 
     //mPhoneUnderTest
     private GsmCdmaPhone mPhoneUT;
@@ -172,13 +173,10 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         mUiccPort = Mockito.mock(UiccPort.class);
         mMockCi = Mockito.mock(CommandsInterface.class);
         adnRecordCache = Mockito.mock(AdnRecordCache.class);
-        mDomainSelectionResolver = Mockito.mock(DomainSelectionResolver.class);
         mFeatureFlags = Mockito.mock(FeatureFlags.class);
 
         doReturn(false).when(mSST).isDeviceShuttingDown();
         doReturn(true).when(mImsManager).isVolteEnabledByPlatform();
-        doReturn(false).when(mDomainSelectionResolver).isDomainSelectionSupported();
-        DomainSelectionResolver.setDomainSelectionResolver(mDomainSelectionResolver);
 
         mPhoneUT = new GsmCdmaPhone(mContext, mSimulatedCommands, mNotifier, true, 0,
             PhoneConstants.PHONE_TYPE_GSM, mTelephonyComponentFactory, (c, p) -> mImsManager,
@@ -197,7 +195,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     public void tearDown() throws Exception {
         mPhoneUT.removeCallbacksAndMessages(null);
         mPhoneUT = null;
-        DomainSelectionResolver.setDomainSelectionResolver(null);
         try {
             DeviceConfig.setProperties(mPreTestProperties);
         } catch (DeviceConfig.BadConfigException e) {
@@ -1105,17 +1102,14 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
                 getVoiceCallForwardingFlag();
 
         // invalid subId
-        doReturn(SubscriptionManager.INVALID_SUBSCRIPTION_ID).when(mSubscriptionController).
-                getSubId(anyInt());
         doReturn(SubscriptionManager.INVALID_SUBSCRIPTION_ID).when(mSubscriptionManagerService)
                 .getSubId(anyInt());
         assertEquals(false, mPhoneUT.getCallForwardingIndicator());
 
-        doReturn(true).when(mSubscriptionController).isActiveSubId(anyInt());
+        doReturn(true).when(mPhoneUT).isActiveSubId(anyInt());
         // valid subId, sharedPreference not present
         int subId1 = 0;
         int subId2 = 1;
-        doReturn(subId1).when(mSubscriptionController).getSubId(anyInt());
         doReturn(subId1).when(mSubscriptionManagerService).getSubId(anyInt());
         assertEquals(false, mPhoneUT.getCallForwardingIndicator());
 
@@ -1138,7 +1132,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         assertEquals(true, mPhoneUT.getCallForwardingIndicator());
 
         // check for another subId
-        doReturn(subId2).when(mSubscriptionController).getSubId(anyInt());
         doReturn(subId2).when(mSubscriptionManagerService).getSubId(anyInt());
         assertEquals(false, mPhoneUT.getCallForwardingIndicator());
 
@@ -1148,7 +1141,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         assertEquals(true, mPhoneUT.getCallForwardingIndicator());
 
         // switching back to previous subId, stored value should still be available
-        doReturn(subId1).when(mSubscriptionController).getSubId(anyInt());
         doReturn(subId1).when(mSubscriptionManagerService).getSubId(anyInt());
         assertEquals(true, mPhoneUT.getCallForwardingIndicator());
 
@@ -1311,7 +1303,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         processAllMessages();
 
         verify(mSubscriptionManagerService, never()).getAllSubInfoList(anyString(), anyString());
-        verify(mSubscriptionController, never()).getSubInfoForIccId(any());
 
         // Have IccId defined. But expected value and current value are the same. So no RIL command
         // should be sent.
@@ -1321,12 +1312,8 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         processAllMessages();
         // TODO: Clean code from google.
         // Bug id: 154781677
-        if (isSubscriptionManagerServiceEnabled()) {
-            //verify(mSubscriptionManagerService).getAllSubInfoList(anyString(),
-            //        nullable(String.class));
-        } else {
-            //verify(mSubscriptionController).getSubInfoForIccId(iccId);
-        }
+        // verify(mSubscriptionManagerService).getAllSubInfoList(anyString(),
+        //        nullable(String.class));
         verify(mMockCi, never()).enableUiccApplications(anyBoolean(), any());
     }
 
@@ -1496,8 +1483,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testEventCarrierConfigChanged() {
-        doReturn(null).when(mSubscriptionController).getSubscriptionProperty(anyInt(),
-                eq(SubscriptionManager.NR_ADVANCED_CALLING_ENABLED));
         doReturn(null).when(mSubscriptionManagerService).getSubscriptionProperty(anyInt(),
                 eq(SubscriptionManager.NR_ADVANCED_CALLING_ENABLED), anyString(), anyString());
 
@@ -1705,11 +1690,8 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     @SmallTest
     public void testLoadAllowedNetworksFromSubscriptionDatabase_loadTheNullValue_isLoadedTrue() {
         int subId = 1;
-        doReturn(subId).when(mSubscriptionController).getSubId(anyInt());
         doReturn(subId).when(mSubscriptionManagerService).getSubId(anyInt());
 
-        doReturn(null).when(mSubscriptionController).getSubscriptionProperty(anyInt(),
-                eq(SubscriptionManager.ALLOWED_NETWORK_TYPES));
         doReturn(null).when(mSubscriptionManagerService).getSubscriptionProperty(anyInt(),
                 eq(SubscriptionManager.ALLOWED_NETWORK_TYPES), anyString(), anyString());
 
@@ -1722,11 +1704,8 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     @SmallTest
     public void testLoadAllowedNetworksFromSubscriptionDatabase_subIdNotValid_isLoadedFalse() {
         int subId = -1;
-        doReturn(subId).when(mSubscriptionController).getSubId(anyInt());
         doReturn(subId).when(mSubscriptionManagerService).getSubId(anyInt());
 
-        when(mSubscriptionController.getSubscriptionProperty(anyInt(),
-                eq(SubscriptionManager.ALLOWED_NETWORK_TYPES))).thenReturn(null);
         when(mSubscriptionManagerService.getSubscriptionProperty(anyInt(),
                 eq(SubscriptionManager.ALLOWED_NETWORK_TYPES), anyString(), anyString()))
                 .thenReturn(null);
@@ -1739,14 +1718,11 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     @Test
     public void testLoadAllowedNetworksFromSubscriptionDatabase_allValidData() {
         int subId = 1;
-        doReturn(subId).when(mSubscriptionController).getSubId(anyInt());
         doReturn(subId).when(mSubscriptionManagerService).getSubId(anyInt());
 
         // 13 == TelephonyManager.NETWORK_TYPE_LTE
         // NR_BITMASK == 4096 == 1 << (13 - 1)
         String validSerializedNetworkMap = "user=4096,power=4096,carrier=4096,enable_2g=4096";
-        doReturn(validSerializedNetworkMap).when(mSubscriptionController).getSubscriptionProperty(
-                anyInt(), eq(SubscriptionManager.ALLOWED_NETWORK_TYPES));
         SubscriptionInfoInternal si = new SubscriptionInfoInternal.Builder()
                 .setId(1)
                 .setAllowedNetworkTypesForReasons(validSerializedNetworkMap)
@@ -1766,15 +1742,12 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     @Test
     public void testLoadAllowedNetworksFromSubscriptionDatabase_invalidKeys() {
         int subId = 1;
-        doReturn(subId).when(mSubscriptionController).getSubId(anyInt());
         doReturn(subId).when(mSubscriptionManagerService).getSubId(anyInt());
 
         // 13 == TelephonyManager.NETWORK_TYPE_LTE
         // NR_BITMASK == 4096 == 1 << (13 - 1)
         String validSerializedNetworkMap =
                 "user=4096,power=4096,carrier=4096,enable_2g=4096,-1=4096";
-        doReturn(validSerializedNetworkMap).when(mSubscriptionController).getSubscriptionProperty(
-                anyInt(), eq(SubscriptionManager.ALLOWED_NETWORK_TYPES));
         SubscriptionInfoInternal si = new SubscriptionInfoInternal.Builder()
                 .setId(1)
                 .setAllowedNetworkTypesForReasons(validSerializedNetworkMap)
@@ -1794,14 +1767,11 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     @Test
     public void testLoadAllowedNetworksFromSubscriptionDatabase_invalidValues() {
         int subId = 1;
-        doReturn(subId).when(mSubscriptionController).getSubId(anyInt());
         doReturn(subId).when(mSubscriptionManagerService).getSubId(anyInt());
 
         // 19 == TelephonyManager.NETWORK_TYPE_NR
         // NR_BITMASK == 524288 == 1 << 19
         String validSerializedNetworkMap = "user=4096,power=4096,carrier=4096,enable_2g=-1";
-        doReturn(validSerializedNetworkMap).when(mSubscriptionController).getSubscriptionProperty(
-                anyInt(), eq(SubscriptionManager.ALLOWED_NETWORK_TYPES));
         SubscriptionInfoInternal si = new SubscriptionInfoInternal.Builder()
                 .setId(1)
                 .setAllowedNetworkTypesForReasons(validSerializedNetworkMap)
@@ -1983,8 +1953,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         final SubscriptionInfoInternal si = makeSubscriptionInfoInternal(
                 false, SubscriptionManager.USAGE_SETTING_DATA_CENTRIC);
 
-        doReturn(si.toSubscriptionInfo()).when(mSubscriptionController)
-                .getSubscriptionInfo(anyInt());
         doReturn(si).when(mSubscriptionManagerService).getSubscriptionInfoInternal(anyInt());
 
         mPhoneUT.updateUsageSetting();
@@ -2008,8 +1976,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
         final SubscriptionInfoInternal si = makeSubscriptionInfoInternal(
                 true, SubscriptionManager.USAGE_SETTING_DEFAULT);
-        doReturn(si.toSubscriptionInfo()).when(mSubscriptionController)
-                .getSubscriptionInfo(anyInt());
         doReturn(si).when(mSubscriptionManagerService).getSubscriptionInfoInternal(anyInt());
 
         mPhoneUT.updateUsageSetting();
@@ -2035,8 +2001,6 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
                 false, SubscriptionManager.USAGE_SETTING_DEFAULT);
 
         assertNotNull(si);
-        doReturn(si.toSubscriptionInfo()).when(mSubscriptionController)
-                .getSubscriptionInfo(anyInt());
         doReturn(si).when(mSubscriptionManagerService).getSubscriptionInfoInternal(anyInt());
 
         mPhoneUT.updateUsageSetting();
@@ -2780,5 +2744,211 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         // Verify set network selection mode to be AUTO
         verify(mSimulatedCommandsVerifier).getNetworkSelectionMode(any(Message.class));
         verify(mSimulatedCommandsVerifier).setNetworkSelectionModeAutomatic(any(Message.class));
+    }
+
+    /**
+     * Verify the ImeiMappingChange and EVENT_GET_DEVICE_IMEI_CHANGE_DONE are handled properly.
+     */
+    @Test
+    public void testChangeInPrimaryImei() {
+        // Initially assign the primaryImei and test it.
+        Message message = mPhoneUT.obtainMessage(Phone.EVENT_GET_DEVICE_IMEI_DONE);
+        ImeiInfo imeiInfo = new ImeiInfo();
+        imeiInfo.imei = FAKE_IMEI;
+        imeiInfo.svn = FAKE_IMEISV;
+        imeiInfo.type = ImeiInfo.ImeiType.PRIMARY;
+        AsyncResult.forMessage(message, imeiInfo, null);
+        mPhoneUT.handleMessage(message);
+        assertEquals(Phone.IMEI_TYPE_PRIMARY, mPhoneUT.getImeiType());
+        assertEquals(FAKE_IMEI, mPhoneUT.getImei());
+
+        // Now update the same one to secondary and check whether it is reflecting or not.
+        message = mPhoneUT.obtainMessage(Phone.EVENT_IMEI_MAPPING_CHANGED);
+        imeiInfo.imei = FAKE_IMEI;
+        imeiInfo.svn = FAKE_IMEISV;
+        imeiInfo.type = ImeiInfo.ImeiType.SECONDARY;
+        AsyncResult.forMessage(message, imeiInfo, null);
+        mPhoneUT.handleMessage(message);
+        assertEquals(Phone.IMEI_TYPE_SECONDARY, mPhoneUT.getImeiType());
+        assertEquals(FAKE_IMEI, mPhoneUT.getImei());
+    }
+
+    @Test
+    public void testCellularIdentifierDisclosureFlagOff() {
+        when(mFeatureFlags.enableIdentifierDisclosureTransparency()).thenReturn(false);
+
+        GsmCdmaPhone phoneUT =
+                new GsmCdmaPhone(
+                        mContext,
+                        mSimulatedCommands,
+                        mNotifier,
+                        true,
+                        0,
+                        PhoneConstants.PHONE_TYPE_GSM,
+                        mTelephonyComponentFactory,
+                        (c, p) -> mImsManager,
+                        mFeatureFlags);
+        phoneUT.mCi = mMockCi;
+
+        verify(mMockCi, never())
+                .registerForCellularIdentifierDisclosures(
+                        any(Handler.class), anyInt(), any(Object.class));
+    }
+
+    @Test
+    public void testCellularIdentifierDisclosureFlagOn() {
+        when(mFeatureFlags.enableIdentifierDisclosureTransparency()).thenReturn(true);
+
+        Phone phoneUT =
+                new GsmCdmaPhone(
+                        mContext,
+                        mMockCi,
+                        mNotifier,
+                        true,
+                        0,
+                        PhoneConstants.PHONE_TYPE_GSM,
+                        mTelephonyComponentFactory,
+                        (c, p) -> mImsManager,
+                        mFeatureFlags);
+
+        verify(mMockCi, times(1))
+                .registerForCellularIdentifierDisclosures(
+                        eq(phoneUT),
+                        eq(Phone.EVENT_CELL_IDENTIFIER_DISCLOSURE),
+                        nullable(Object.class));
+    }
+
+    @Test
+    public void testCellularIdentifierDisclosure_disclosureEventAddedToNotifier() {
+        when(mFeatureFlags.enableIdentifierDisclosureTransparency()).thenReturn(true);
+
+        Phone phoneUT =
+                new GsmCdmaPhone(
+                        mContext,
+                        mMockCi,
+                        mNotifier,
+                        true,
+                        0,
+                        PhoneConstants.PHONE_TYPE_GSM,
+                        mTelephonyComponentFactory,
+                        (c, p) -> mImsManager,
+                        mFeatureFlags);
+
+        CellularIdentifierDisclosure disclosure =
+                new CellularIdentifierDisclosure(
+                        CellularIdentifierDisclosure.NAS_PROTOCOL_MESSAGE_ATTACH_REQUEST,
+                        CellularIdentifierDisclosure.CELLULAR_IDENTIFIER_IMSI,
+                        "001001",
+                        false);
+        phoneUT.sendMessage(
+                mPhoneUT.obtainMessage(
+                        Phone.EVENT_CELL_IDENTIFIER_DISCLOSURE,
+                        new AsyncResult(null, disclosure, null)));
+        processAllMessages();
+
+        verify(mIdentifierDisclosureNotifier, times(1)).addDisclosure(eq(disclosure));
+    }
+
+    @Test
+    public void testCellularIdentifierDisclosure_disclosureEventNull() {
+        when(mFeatureFlags.enableIdentifierDisclosureTransparency()).thenReturn(true);
+
+        Phone phoneUT =
+                new GsmCdmaPhone(
+                        mContext,
+                        mMockCi,
+                        mNotifier,
+                        true,
+                        0,
+                        PhoneConstants.PHONE_TYPE_GSM,
+                        mTelephonyComponentFactory,
+                        (c, p) -> mImsManager,
+                        mFeatureFlags);
+
+        phoneUT.sendMessage(
+                mPhoneUT.obtainMessage(
+                        Phone.EVENT_CELL_IDENTIFIER_DISCLOSURE, new AsyncResult(null, null, null)));
+        processAllMessages();
+
+        verify(mIdentifierDisclosureNotifier, never())
+                .addDisclosure(any(CellularIdentifierDisclosure.class));
+    }
+
+    @Test
+    public void testCellularIdentifierDisclosure_noModemCallOnRadioAvailable_FlagOff() {
+        when(mFeatureFlags.enableIdentifierDisclosureTransparency()).thenReturn(false);
+        GsmCdmaPhone phoneUT = makeNewPhoneUT();
+        assertFalse(phoneUT.isIdentifierDisclosureTransparencySupported());
+
+        sendRadioAvailableToPhone(phoneUT);
+
+        verify(mMockCi, never()).setCellularIdentifierTransparencyEnabled(anyBoolean(),
+                any(Message.class));
+        assertFalse(phoneUT.isIdentifierDisclosureTransparencySupported());
+    }
+
+    @Test
+    public void testCellularIdentifierDisclosure_unsupportedByModemOnRadioAvailable() {
+        when(mFeatureFlags.enableIdentifierDisclosureTransparency()).thenReturn(true);
+        GsmCdmaPhone phoneUT = makeNewPhoneUT();
+        assertFalse(phoneUT.isIdentifierDisclosureTransparencySupported());
+
+        // The following block emulates incoming messages from the modem in the case that
+        // the modem does not support the new HAL APIs. We expect the phone instance to attempt
+        // to set cipher-identifier-transparency-enabled state when the radio becomes available.
+        sendRadioAvailableToPhone(phoneUT);
+        verify(mMockCi, times(1)).setCellularIdentifierTransparencyEnabled(anyBoolean(),
+                any(Message.class));
+        sendRequestNotSupportedToPhone(phoneUT, EVENT_SET_IDENTIFIER_DISCLOSURE_ENABLED_DONE);
+
+        assertFalse(phoneUT.isIdentifierDisclosureTransparencySupported());
+    }
+
+    @Test
+    public void testCellularIdentifierDisclosure_supportedByModem() {
+        when(mFeatureFlags.enableIdentifierDisclosureTransparency()).thenReturn(true);
+        GsmCdmaPhone phoneUT = makeNewPhoneUT();
+        assertFalse(phoneUT.isIdentifierDisclosureTransparencySupported());
+
+        // The following block emulates incoming messages from the modem in the case that
+        // the modem supports the new HAL APIs. We expect the phone instance to attempt
+        // to set cipher-identifier-transparency-enabled state when the radio becomes available.
+        sendRadioAvailableToPhone(phoneUT);
+        verify(mMockCi, times(1)).setCellularIdentifierTransparencyEnabled(anyBoolean(),
+                any(Message.class));
+        sendIdentifierDisclosureEnabledSuccessToPhone(phoneUT);
+
+        assertTrue(phoneUT.isIdentifierDisclosureTransparencySupported());
+    }
+
+    private void sendRadioAvailableToPhone(GsmCdmaPhone phone) {
+        phone.sendMessage(phone.obtainMessage(EVENT_RADIO_AVAILABLE,
+                new AsyncResult(null, new int[]{ServiceState.RIL_RADIO_TECHNOLOGY_GSM}, null)));
+        processAllMessages();
+    }
+
+    private void sendRequestNotSupportedToPhone(GsmCdmaPhone phone, int eventId) {
+        phone.sendMessage(phone.obtainMessage(eventId, new AsyncResult(null, null,
+                new CommandException(CommandException.Error.REQUEST_NOT_SUPPORTED))));
+        processAllMessages();
+    }
+
+    private void sendIdentifierDisclosureEnabledSuccessToPhone(GsmCdmaPhone phone) {
+        phone.sendMessage(phone.obtainMessage(EVENT_SET_IDENTIFIER_DISCLOSURE_ENABLED_DONE,
+                new AsyncResult(null, null, null)));
+        processAllMessages();
+    }
+
+    private GsmCdmaPhone makeNewPhoneUT() {
+        return new GsmCdmaPhone(
+                mContext,
+                mMockCi,
+                mNotifier,
+                true,
+                0,
+                PhoneConstants.PHONE_TYPE_GSM,
+                mTelephonyComponentFactory,
+                (c, p) -> mImsManager,
+                mFeatureFlags);
     }
 }

@@ -63,7 +63,6 @@ import com.android.internal.telephony.PhoneConfigurationManager;
 import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.RadioConfig;
-import com.android.internal.telephony.SubscriptionInfoUpdater;
 import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
@@ -599,8 +598,6 @@ public class UiccController extends Handler {
                         log("Received EVENT_RADIO_AVAILABLE/EVENT_RADIO_ON, calling "
                                 + "getIccCardStatus");
                     }
-                    mCis[phoneId].getIccCardStatus(obtainMessage(EVENT_GET_ICC_STATUS_DONE,
-                            phoneId));
                     // slot status should be the same on all RILs; request it only for phoneId 0
                     if (phoneId == 0) {
                         if (DBG) {
@@ -610,6 +607,8 @@ public class UiccController extends Handler {
                         mRadioConfig.getSimSlotsStatus(obtainMessage(EVENT_GET_SLOT_STATUS_DONE,
                                 phoneId));
                     }
+                    mCis[phoneId].getIccCardStatus(obtainMessage(EVENT_GET_ICC_STATUS_DONE,
+                            phoneId));
                     break;
                 case EVENT_GET_ICC_STATUS_DONE:
                     if (DBG) log("Received EVENT_GET_ICC_STATUS_DONE");
@@ -749,38 +748,6 @@ public class UiccController extends Handler {
             case CARD_RESTRICTED: return IccCardConstants.INTENT_VALUE_ICC_CARD_RESTRICTED;
             case LOADED: return IccCardConstants.INTENT_VALUE_ICC_LOADED;
             default: return IccCardConstants.INTENT_VALUE_ICC_UNKNOWN;
-        }
-    }
-
-    static void updateInternalIccStateForInactivePort(
-            Context context, int prevActivePhoneId, String iccId) {
-        if (SubscriptionManager.isValidPhoneId(prevActivePhoneId)) {
-            // Mark SIM state as ABSENT on previously phoneId.
-            TelephonyManager telephonyManager = (TelephonyManager) context.getSystemService(
-                    Context.TELEPHONY_SERVICE);
-            telephonyManager.setSimStateForPhone(prevActivePhoneId,
-                    IccCardConstants.State.ABSENT.toString());
-        }
-
-        SubscriptionInfoUpdater subInfoUpdator = PhoneFactory.getSubscriptionInfoUpdater();
-        if (subInfoUpdator != null) {
-            subInfoUpdator.updateInternalIccStateForInactivePort(prevActivePhoneId, iccId);
-        } else {
-            Rlog.e(LOG_TAG, "subInfoUpdate is null.");
-        }
-    }
-
-    static void updateInternalIccState(Context context, IccCardConstants.State state, String reason,
-            int phoneId) {
-        TelephonyManager telephonyManager = (TelephonyManager) context.getSystemService(
-                Context.TELEPHONY_SERVICE);
-        telephonyManager.setSimStateForPhone(phoneId, state.toString());
-
-        SubscriptionInfoUpdater subInfoUpdator = PhoneFactory.getSubscriptionInfoUpdater();
-        if (subInfoUpdator != null) {
-            subInfoUpdator.updateInternalIccState(getIccStateIntentString(state), reason, phoneId);
-        } else {
-            Rlog.e(LOG_TAG, "subInfoUpdate is null.");
         }
     }
 

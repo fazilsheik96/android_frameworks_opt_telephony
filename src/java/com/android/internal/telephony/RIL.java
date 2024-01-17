@@ -43,6 +43,7 @@ import android.hardware.radio.V1_0.RadioError;
 import android.hardware.radio.V1_0.RadioIndicationType;
 import android.hardware.radio.V1_0.RadioResponseInfo;
 import android.hardware.radio.V1_0.RadioResponseType;
+import android.hardware.radio.modem.ImeiInfo;
 import android.net.KeepalivePacketData;
 import android.net.LinkProperties;
 import android.os.AsyncResult;
@@ -1192,7 +1193,8 @@ public class RIL extends BaseCommands implements CommandsInterface {
     private void addRequest(RILRequest rr) {
         acquireWakeLock(rr, FOR_WAKELOCK);
         Trace.asyncTraceForTrackBegin(
-                Trace.TRACE_TAG_NETWORK, "RIL", RILUtils.requestToString(rr.mRequest), rr.mSerial);
+                Trace.TRACE_TAG_NETWORK, "RIL", rr.mSerial + "> "
+                + RILUtils.requestToString(rr.mRequest), rr.mSerial);
         synchronized (mRequestList) {
             rr.mStartTimeMs = SystemClock.elapsedRealtime();
             mRequestList.append(rr.mSerial, rr);
@@ -1577,7 +1579,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
     public void getSystemSelectionChannels(Message result) {
         RadioNetworkProxy networkProxy = getRadioServiceProxy(RadioNetworkProxy.class);
         if (!canMakeRequest("getSystemSelectionChannels", networkProxy, result,
-                RADIO_HAL_VERSION_1_4)) {
+                RADIO_HAL_VERSION_1_6)) {
             return;
         }
 
@@ -5103,6 +5105,122 @@ public class RIL extends BaseCommands implements CommandsInterface {
         });
     }
 
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public void setCellularIdentifierTransparencyEnabled(boolean enable, Message result) {
+        RadioNetworkProxy networkProxy = getRadioServiceProxy(RadioNetworkProxy.class);
+        if (!canMakeRequest(
+                "setCellularIdentifierTransparencyEnabled",
+                networkProxy,
+                result,
+                RADIO_HAL_VERSION_2_2)) {
+            return;
+        }
+
+        RILRequest rr = obtainRequest(RIL_REQUEST_SET_CELLULAR_IDENTIFIER_DISCLOSED_ENABLED, result,
+                mRILDefaultWorkSource);
+
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + RILUtils.requestToString(rr.mRequest)
+                    + " enable=" + enable);
+        }
+
+        radioServiceInvokeHelper(
+                HAL_SERVICE_NETWORK,
+                rr,
+                "setCellularIdentifierTransparencyEnabled",
+                () -> {
+                    networkProxy.setCellularIdentifierTransparencyEnabled(rr.mSerial, enable);
+                });
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public void isCellularIdentifierTransparencyEnabled(Message result) {
+        RadioNetworkProxy networkProxy = getRadioServiceProxy(RadioNetworkProxy.class);
+        if (!canMakeRequest(
+                "isCellularIdentifierTransparencyEnabled",
+                networkProxy,
+                result,
+                RADIO_HAL_VERSION_2_2)) {
+            return;
+        }
+
+        RILRequest rr = obtainRequest(RIL_REQUEST_IS_CELLULAR_IDENTIFIER_DISCLOSED_ENABLED, result,
+                mRILDefaultWorkSource);
+
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + RILUtils.requestToString(rr.mRequest));
+        }
+
+        radioServiceInvokeHelper(
+                HAL_SERVICE_NETWORK,
+                rr,
+                "isCellularIdentifierTransparencyEnabled",
+                () -> {
+                    networkProxy.isCellularIdentifierTransparencyEnabled(rr.mSerial);
+                });
+    }
+
+   /**
+     * {@inheritDoc}
+     */
+    @Override
+    public void setSecurityAlgorithmsUpdatedEnabled(boolean enable, Message result) {
+        RadioNetworkProxy networkProxy = getRadioServiceProxy(RadioNetworkProxy.class);
+        if (!canMakeRequest(
+                "setSecurityAlgorithmsUpdatedEnabled",
+                networkProxy,
+                result,
+                RADIO_HAL_VERSION_2_2)) {
+            return;
+        }
+
+        RILRequest rr = obtainRequest(RIL_REQUEST_SET_SECURITY_ALGORITHMS_UPDATED_ENABLED, result,
+                mRILDefaultWorkSource);
+
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + RILUtils.requestToString(rr.mRequest)
+                    + " enable=" + enable);
+        }
+
+        radioServiceInvokeHelper(HAL_SERVICE_NETWORK, rr, "setSecurityAlgorithmsUpdatedEnabled",
+                () -> {
+                    networkProxy.setSecurityAlgorithmsUpdatedEnabled(rr.mSerial, enable);
+            });
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public void isSecurityAlgorithmsUpdatedEnabled(Message result) {
+        RadioNetworkProxy networkProxy = getRadioServiceProxy(RadioNetworkProxy.class);
+        if (!canMakeRequest(
+                "isSecurityAlgorithmsUpdatedEnabled",
+                networkProxy,
+                result,
+                RADIO_HAL_VERSION_2_2)) {
+            return;
+        }
+
+        RILRequest rr = obtainRequest(RIL_REQUEST_IS_SECURITY_ALGORITHMS_UPDATED_ENABLED, result,
+                mRILDefaultWorkSource);
+
+        if (RILJ_LOGD) {
+            riljLog(rr.serialString() + "> " + RILUtils.requestToString(rr.mRequest));
+        }
+
+        radioServiceInvokeHelper(
+                HAL_SERVICE_NETWORK, rr, "isSecurityAlgorithmsUpdatedEnabled", () -> {
+                networkProxy.isSecurityAlgorithmsUpdatedEnabled(rr.mSerial);
+            });
+    }
+
     //***** Private Methods
     /**
      * This is a helper function to be called when an indication callback is called for any radio
@@ -5289,7 +5407,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
      * @param responseInfo RadioResponseInfo received in the callback
      * @param ret object to be returned to request sender
      */
-    @VisibleForTesting
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PROTECTED)
     public void processResponseDone(RILRequest rr, RadioResponseInfo responseInfo, Object ret) {
         processResponseDoneInternal(rr, responseInfo.error, responseInfo.type, ret);
     }
@@ -5327,14 +5445,22 @@ public class RIL extends BaseCommands implements CommandsInterface {
     private void processResponseDoneInternal(RILRequest rr, int rilError, int responseType,
             Object ret) {
         if (rilError == 0) {
-            if (RILJ_LOGD) {
-                riljLog(rr.serialString() + "< " + RILUtils.requestToString(rr.mRequest)
-                        + " " + retToString(rr.mRequest, ret));
+            if (isLogOrTrace()) {
+                String logStr = rr.serialString() + "< " + RILUtils.requestToString(rr.mRequest)
+                        + " " + retToString(rr.mRequest, ret);
+                if (RILJ_LOGD) {
+                    riljLog(logStr);
+                }
+                Trace.instantForTrack(Trace.TRACE_TAG_NETWORK, "RIL", logStr);
             }
         } else {
-            if (RILJ_LOGD) {
-                riljLog(rr.serialString() + "< " + RILUtils.requestToString(rr.mRequest)
-                        + " error " + rilError);
+            if (isLogOrTrace()) {
+                String logStr = rr.serialString() + "< " + RILUtils.requestToString(rr.mRequest)
+                        + " error " + rilError;
+                if (RILJ_LOGD) {
+                    riljLog(logStr);
+                }
+                Trace.instantForTrack(Trace.TRACE_TAG_NETWORK, "RIL", logStr);
             }
             rr.onError(rilError, ret);
         }
@@ -5821,6 +5947,13 @@ public class RIL extends BaseCommands implements CommandsInterface {
                 mT53AudCntrlInfoRegistrants.notifyRegistrants(
                         new AsyncResult(null, infoRec.record, null));
             }
+        }
+    }
+
+    void notifyRegistrantsImeiMappingChanged(ImeiInfo imeiInfo) {
+        if (mImeiInfoRegistrants != null) {
+            mImeiInfoRegistrants.notifyRegistrants(
+                    new AsyncResult(null, imeiInfo, null));
         }
     }
 

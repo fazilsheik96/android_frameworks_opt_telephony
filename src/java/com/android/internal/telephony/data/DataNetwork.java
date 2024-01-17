@@ -104,6 +104,7 @@ import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.metrics.DataCallSessionStats;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
 import com.android.internal.util.ArrayUtils;
+import com.android.internal.util.FunctionalUtils;
 import com.android.internal.util.IState;
 import com.android.internal.util.State;
 import com.android.internal.util.StateMachine;
@@ -257,6 +258,12 @@ public class DataNetwork extends StateMachine {
      */
     private static final int EVENT_NOTIFY_HANDOVER_CANCELLED_RESPONSE = 27;
 
+    /** Event for data network validation request from the AccessNetworksManager. */
+    private static final int EVENT_DATA_NETWORK_VALIDATION_REQUESTED = 28;
+
+    /** Event for response to data network validation request. */
+    private static final int EVENT_DATA_NETWORK_VALIDATION_RESPONSE = 29;
+
     /** Invalid context id. */
     private static final int INVALID_CID = -1;
 
@@ -399,6 +406,10 @@ public class DataNetwork extends StateMachine {
 
     /** Data network tear down due to preferred data switched to another phone. */
     public static final int TEAR_DOWN_REASON_PREFERRED_DATA_SWITCHED = 30;
+
+    //********************************************************************************************//
+    // WHENEVER ADD A NEW TEAR DOWN REASON, PLEASE UPDATE DataDeactivateReasonEnum in enums.proto //
+    //********************************************************************************************//
 
     @IntDef(prefix = {"BANDWIDTH_SOURCE_"},
             value = {
@@ -718,6 +729,19 @@ public class DataNetwork extends StateMachine {
      * Data config callback for carrier config update.
      */
     private @Nullable DataConfigManagerCallback mDataConfigManagerCallback;
+
+    /**
+     * Network validation status for this data network. If the data service provider does not
+     * support the network validation feature, should be UNSUPPORTED.
+     */
+    private @PreciseDataConnectionState.NetworkValidationStatus int mNetworkValidationStatus =
+            PreciseDataConnectionState.NETWORK_VALIDATION_UNSUPPORTED;
+
+    /**
+     * Callback used to respond to a network validation request to determine whether the request is
+     * successfully submitted. If the request has been submitted, change it to null.
+     */
+    private @Nullable Consumer<Integer> mNetworkValidationResultCodeCallback;
 
     /**
      * The network bandwidth.
@@ -1280,6 +1304,14 @@ public class DataNetwork extends StateMachine {
                     loge(eventToString(msg.what) + ": transition to disconnected state");
                     transitionTo(mDisconnectedState);
                     break;
+                case EVENT_DATA_NETWORK_VALIDATION_REQUESTED:
+                    // If the data network is not connected, the request should be ignored.
+                    handleErrorDataNetworkValidationRequest((Consumer<Integer>) msg.obj);
+                    break;
+                case EVENT_DATA_NETWORK_VALIDATION_RESPONSE:
+                    // handle the resultCode in response for the request.
+                    handleDataNetworkValidationRequestResultCode(msg.arg1 /* resultCode */);
+                    break;
                 default:
                     loge("Unhandled event " + eventToString(msg.what));
                     break;
@@ -1625,6 +1657,10 @@ public class DataNetwork extends StateMachine {
                     updateSuspendState();
                     updateNetworkCapabilities();
                     break;
+                case EVENT_DATA_NETWORK_VALIDATION_REQUESTED:
+                    // Network validation request can be accepted if the data is in connected state
+                    handleDataNetworkValidationRequest((Consumer<Integer>) msg.obj);
+                    break;
                 default:
                     return NOT_HANDLED;
             }
@@ -1679,6 +1715,7 @@ public class DataNetwork extends StateMachine {
                 case EVENT_CSS_INDICATOR_CHANGED:
                 case EVENT_VOICE_CALL_ENDED:
                 case EVENT_VOICE_CALL_STARTED:
+                case EVENT_DATA_NETWORK_VALIDATION_REQUESTED:
                     // Defer the request until handover succeeds or fails.
                     log("Defer message " + eventToString(msg.what));
                     deferMessage(msg);
@@ -1813,6 +1850,8 @@ public class DataNetwork extends StateMachine {
 
             if (mEverConnected) {
                 mLinkStatus = DataCallResponse.LINK_STATUS_INACTIVE;
+                mNetworkValidationStatus =
+                        PreciseDataConnectionState.NETWORK_VALIDATION_UNSUPPORTED;
                 mDataNetworkCallback.invokeFromExecutor(() -> mDataNetworkCallback
                         .onLinkStatusChanged(DataNetwork.this, mLinkStatus));
                 mDataNetworkCallback.invokeFromExecutor(() -> mDataNetworkCallback
@@ -2295,6 +2334,10 @@ public class DataNetwork extends StateMachine {
             }
         }
 
+        if (mDataNetworkController.isEsimBootStrapProvisioningActivated()) {
+            builder.removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED);
+        }
+
         // If one of the capabilities are for special use, for example, IMS, CBS, then this
         // network should be restricted, regardless data is enabled or not.
         if (NetworkCapabilitiesUtils.inferRestrictedCapability(builder.build())
@@ -2598,6 +2641,7 @@ public class DataNetwork extends StateMachine {
         }
 
         updateNetworkCapabilities();
+        updateValidationStatus(response.getNetworkValidationStatus());
     }
 
     /**
@@ -3259,6 +3303,7 @@ public class DataNetwork extends StateMachine {
                 .setNetworkType(getDataNetworkType())
                 .setFailCause(mFailCause)
                 .setDefaultQos(mDefaultQos)
+                .setNetworkValidationStatus(mNetworkValidationStatus)
                 .build();
     }
 
@@ -3336,7 +3381,8 @@ public class DataNetwork extends StateMachine {
             TelephonyNetworkRequest networkRequest = mAttachedNetworkRequestList.get(0);
             DataProfile dataProfile = mDataNetworkController.getDataProfileManager()
                     .getDataProfileForNetworkRequest(networkRequest, targetNetworkType,
-                            mPhone.getServiceState().isUsingNonTerrestrialNetwork(), false);
+                            mPhone.getServiceState().isUsingNonTerrestrialNetwork(),
+                            mDataNetworkController.isEsimBootStrapProvisioningActivated(), false);
             if (dataProfile != null) {
                 mHandoverDataProfile = dataProfile;
                 log("Used different data profile for handover. " + mDataProfile);
@@ -3522,6 +3568,81 @@ public class DataNetwork extends StateMachine {
     }
 
     /**
+     * The network validation requests moves to process on the statemachich handler. A request is
+     * processed according to state of the data network.
+     */
+    public void requestNetworkValidation(@NonNull Consumer<Integer> resultCodeCallback) {
+        // request a network validation by DataNetwork state
+        sendMessage(EVENT_DATA_NETWORK_VALIDATION_REQUESTED, resultCodeCallback);
+    }
+
+    /**
+     * Request network validation to data service provider.
+     */
+    private void handleDataNetworkValidationRequest(@NonNull Consumer<Integer> resultCodeCallback) {
+        if (mNetworkValidationResultCodeCallback != null) {
+            loge("requestNetworkValidation: previous networkValidationRequest is in progress.");
+            FunctionalUtils.ignoreRemoteException(resultCodeCallback::accept)
+                    .accept(DataServiceCallback.RESULT_ERROR_BUSY);
+            return;
+        }
+
+        mNetworkValidationResultCodeCallback = resultCodeCallback;
+
+        // Request validation directly from the data service.
+        mDataServiceManagers.get(mTransport).requestValidation(
+                mCid.get(mTransport), obtainMessage(EVENT_DATA_NETWORK_VALIDATION_RESPONSE));
+        log("handleDataNetworkValidationRequest, network validation requested");
+    }
+
+    private void handleErrorDataNetworkValidationRequest(
+            @NonNull Consumer<Integer> resultCodeCallback) {
+        loge("handleErrorDataNetworkValidationRequest: DataNetwork is not in Connected state");
+        FunctionalUtils.ignoreRemoteException(resultCodeCallback::accept)
+                .accept(DataServiceCallback.RESULT_ERROR_ILLEGAL_STATE);
+    }
+
+    /**
+     * handle the resultCode in response for the request.
+     *
+     * @param resultCode {@link DataServiceCallback.ResultCode}
+     */
+    private void handleDataNetworkValidationRequestResultCode(
+            @DataServiceCallback.ResultCode int resultCode) {
+        if (mNetworkValidationResultCodeCallback != null) {
+            log("handleDataNetworkValidationRequestResultCode, resultCode:"
+                    + DataServiceCallback.resultCodeToString(resultCode));
+            FunctionalUtils.ignoreRemoteException(mNetworkValidationResultCodeCallback::accept)
+                    .accept(resultCode);
+            mNetworkValidationResultCodeCallback = null;
+        }
+    }
+
+    /**
+     * Update the validation status from {@link DataCallResponse}, convert to network validation
+     * status {@link PreciseDataConnectionState.NetworkValidationStatus} and notify to
+     * {@link PreciseDataConnectionState} if status was changed.
+     *
+     * @param networkValidationStatus {@link PreciseDataConnectionState.NetworkValidationStatus}
+     */
+    private void updateValidationStatus(
+            @PreciseDataConnectionState.NetworkValidationStatus int networkValidationStatus) {
+        if (!mFlags.networkValidation()) {
+            // Do nothing, if network validation feature is disabled
+            return;
+        }
+
+        // if network validation status is changed, notify preciseDataConnectionState.
+        if (mNetworkValidationStatus != networkValidationStatus) {
+            log("updateValidationStatus:"
+                    + PreciseDataConnectionState.networkValidationStatusToString(
+                    networkValidationStatus));
+            mNetworkValidationStatus = networkValidationStatus;
+            notifyPreciseDataConnectionState();
+        }
+    }
+
+    /**
      * Convert the data tear down reason to string.
      *
      * @param reason Data deactivation reason.
@@ -3654,6 +3775,10 @@ public class DataNetwork extends StateMachine {
                 return "EVENT_NOTIFY_HANDOVER_STARTED_RESPONSE";
             case EVENT_NOTIFY_HANDOVER_CANCELLED_RESPONSE:
                 return "EVENT_NOTIFY_HANDOVER_CANCELLED_RESPONSE";
+            case EVENT_DATA_NETWORK_VALIDATION_REQUESTED:
+                return "EVENT_DATA_NETWORK_VALIDATION_REQUESTED";
+            case EVENT_DATA_NETWORK_VALIDATION_RESPONSE:
+                return "EVENT_DATA_NETWORK_VALIDATION_RESPONSE";
             default:
                 return "Unknown(" + event + ")";
         }

@@ -1751,6 +1751,12 @@ public interface CommandsInterface {
     public void getImei(Message response);
 
     /**
+     * Register to listen for the changes in the primary IMEI with respect to the sim slot.
+     */
+
+    public void registerForImeiMappingChanged(Handler h, int what, Object obj);
+
+    /**
      * Request the device MDN / H_SID / H_NID / MIN.
      * "response" is const char **
      *   [0] is MDN if CDMA subscription is available
@@ -2914,4 +2920,47 @@ public interface CommandsInterface {
      *  @param result Callback message.
      */
     public void getEnhancedRadioCapability(Message result);
+
+    /**
+     * Enables or disables cellular identifier disclosure transparency.
+     *
+     * @param enable {@code true} to enable, {@code false} to disable.
+     * @param result Callback message to receive the result.
+     */
+    default void setCellularIdentifierTransparencyEnabled(boolean enable, Message result) {}
+
+    /**
+     * Check whether cellular identifier transparency.
+     *
+     * @param result Callback message to receive the result.
+     */
+    default void isCellularIdentifierTransparencyEnabled(Message result) {}
+
+    /**
+     * Enables or disables security algorithm update reports.
+     *
+     * @param enable {@code true} to enable, {@code false} to disable.
+     * @param result Callback message to receive the result.
+     */
+    default void setSecurityAlgorithmsUpdatedEnabled(boolean enable, Message result) {}
+
+    /**
+     * Check whether security algorithm update reports are enabled.
+     *
+     * @param result Callback message to receive the result.
+     */
+    default void isSecurityAlgorithmsUpdatedEnabled(Message result) {}
+
+    /**
+     * Registers for cellular identifier disclosure events.
+     */
+    default void registerForCellularIdentifierDisclosures(
+            @NonNull Handler h, int what, @Nullable Object obj) {}
+
+    /**
+     * Unregisters for cellular identifier disclosure events.
+     *
+     * @param h Handler to be removed from the registrant list.
+     */
+    default void unregisterForCellularIdentifierDisclosures(@NonNull Handler h) {}
 }

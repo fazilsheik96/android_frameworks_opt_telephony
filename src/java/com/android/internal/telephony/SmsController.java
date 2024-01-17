@@ -22,6 +22,7 @@ import static android.content.pm.PackageManager.PERMISSION_GRANTED;
 
 import static com.android.internal.telephony.util.TelephonyUtils.checkDumpPermission;
 
+import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.ActivityManager;
 import android.app.AppOpsManager;
@@ -44,6 +45,7 @@ import android.telephony.TelephonyFrameworkInitializer;
 import android.telephony.TelephonyManager;
 
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.util.TelephonyUtils;
 import com.android.internal.util.IndentingPrintWriter;
@@ -62,10 +64,11 @@ public class SmsController extends ISmsImplBase {
     static final String LOG_TAG = "SmsController";
 
     private final Context mContext;
-
+    private final FeatureFlags mFlags;
     @VisibleForTesting
-    public SmsController(Context context) {
+    public SmsController(Context context, @NonNull FeatureFlags flags) {
         mContext = context;
+        mFlags = flags;
         ServiceRegisterer smsServiceRegisterer = TelephonyFrameworkInitializer
                 .getTelephonyServiceManager()
                 .getSmsServiceRegisterer();
@@ -618,32 +621,19 @@ public class SmsController extends ISmsImplBase {
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     @Override
     public int getPreferredSmsSubscription() {
-        int defaultSubId;
-        if (PhoneFactory.isSubscriptionManagerServiceEnabled()) {
-            // If there is a default, choose that one.
-            defaultSubId = SubscriptionManagerService.getInstance().getDefaultSmsSubId();
-        } else {
-            // If there is a default, choose that one.
-            defaultSubId = SubscriptionController.getInstance().getDefaultSmsSubId();
-        }
+        // If there is a default, choose that one.
+        int defaultSubId = SubscriptionManagerService.getInstance().getDefaultSmsSubId();
+
         if (SubscriptionManager.isValidSubscriptionId(defaultSubId)) {
             return defaultSubId;
         }
         // No default, if there is only one sub active, choose that as the "preferred" sub id.
         long token = Binder.clearCallingIdentity();
         try {
-            if (PhoneFactory.isSubscriptionManagerServiceEnabled()) {
-                int[] activeSubs = SubscriptionManagerService.getInstance()
-                        .getActiveSubIdList(true /*visibleOnly*/);
-                if (activeSubs.length == 1) {
-                    return activeSubs[0];
-                }
-            } else {
-                int[] activeSubs = SubscriptionController.getInstance()
-                        .getActiveSubIdList(true /*visibleOnly*/);
-                if (activeSubs.length == 1) {
-                    return activeSubs[0];
-                }
+            int[] activeSubs = SubscriptionManagerService.getInstance()
+                    .getActiveSubIdList(true /*visibleOnly*/);
+            if (activeSubs.length == 1) {
+                return activeSubs[0];
             }
         } finally {
             Binder.restoreCallingIdentity(token);
@@ -1126,5 +1116,21 @@ public class SmsController extends ISmsImplBase {
 
         // Check if smscAddr is present in FDN list
         return FdnUtils.isNumberBlockedByFDN(phoneId, smscAddr, defaultCountryIso);
+    }
+
+    /**
+     * Gets the message size of WAP from the cache.
+     *
+     * @param locationUrl the location to use as a key for looking up the size in the cache.
+     * The locationUrl may or may not have the transactionId appended to the url.
+     *
+     * @return long representing the message size
+     * @throws java.util.NoSuchElementException if the WAP push doesn't exist in the cache
+     * @throws IllegalArgumentException if the locationUrl is empty
+     */
+    @Override
+    public long getWapMessageSize(@NonNull String locationUrl) {
+        byte[] bytes = locationUrl.getBytes(StandardCharsets.ISO_8859_1);
+        return WapPushCache.getWapMessageSize(bytes);
     }
 }

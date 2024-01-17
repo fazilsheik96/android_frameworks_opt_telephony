@@ -32,10 +32,8 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.LocalServerSocket;
 import android.os.Build;
-import android.os.HandlerThread;
 import android.os.Looper;
 import android.preference.PreferenceManager;
-import android.provider.DeviceConfig;
 import android.provider.Settings;
 import android.provider.Settings.SettingNotFoundException;
 import android.telephony.AnomalyReporter;
@@ -64,6 +62,7 @@ import com.android.telephony.Rlog;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
+import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -92,8 +91,6 @@ public class PhoneFactory {
     private static @Nullable EuiccCardController sEuiccCardController;
     private static SubscriptionManagerService sSubscriptionManagerService;
 
-    static private SubscriptionInfoUpdater sSubInfoRecordUpdater = null;
-
     @UnsupportedAppUsage
     static private boolean sMadeDefaults = false;
     @UnsupportedAppUsage
@@ -110,8 +107,6 @@ public class PhoneFactory {
     private static MetricsCollector sMetricsCollector;
     private static RadioInterfaceCapabilityController sRadioHalCapabilities;
     private static @NonNull FeatureFlags sFeatureFlags = new FeatureFlagsImpl();
-
-    private static boolean sSubscriptionManagerServiceEnabled = false;
 
     //***** Class Methods
 
@@ -133,12 +128,6 @@ public class PhoneFactory {
         synchronized (sLockProxyPhones) {
             if (!sMadeDefaults) {
                 sContext = context;
-
-                // This is a temp flag which will be removed before U AOSP public release.
-                sSubscriptionManagerServiceEnabled = context.getResources().getBoolean(
-                        com.android.internal.R.bool.config_using_subscription_manager_service)
-                        || DeviceConfig.getBoolean(DeviceConfig.NAMESPACE_TELEPHONY,
-                        "enable_subscription_manager_service", false);
 
                 // create the telephony device controller.
                 TelephonyDevController.create();
@@ -172,9 +161,9 @@ public class PhoneFactory {
                 }
 
                 // register statsd pullers.
-                sMetricsCollector = new MetricsCollector(context);
+                sMetricsCollector = new MetricsCollector(context, sFeatureFlags);
 
-                sPhoneNotifier = new DefaultPhoneNotifier(context);
+                sPhoneNotifier = new DefaultPhoneNotifier(context, featureFlags);
                 TelephonyComponentFactory telephonyComponentFactory
                         = TelephonyComponentFactory.getInstance();
 
@@ -220,25 +209,13 @@ public class PhoneFactory {
                 // call getInstance()
                 sUiccController = UiccController.make(context);
 
-
-                if (isSubscriptionManagerServiceEnabled()) {
-                    Rlog.i(LOG_TAG, "Creating SubscriptionManagerService");
-                    sSubscriptionManagerService = TelephonyComponentFactory.getInstance().inject(
-                            SubscriptionManagerService.class.getName())
-                            .makeSubscriptionManagerService(context, Looper.myLooper());
-                } else {
-                    Rlog.i(LOG_TAG, "Creating SubscriptionController");
-                    TelephonyComponentFactory.getInstance().inject(SubscriptionController.class
-                            .getName()).initSubscriptionController(context);
-                }
-
-                SubscriptionController sc = null;
-                if (!isSubscriptionManagerServiceEnabled()) {
-                    sc = SubscriptionController.getInstance();
-                }
+                Rlog.i(LOG_TAG, "Creating SubscriptionManagerService");
+                sSubscriptionManagerService = TelephonyComponentFactory.getInstance().inject(
+                        SubscriptionManagerService.class.getName())
+                        .makeSubscriptionManagerService(context, Looper.myLooper());
 
                 TelephonyComponentFactory.getInstance().inject(MultiSimSettingController.class.
-                        getName()).initMultiSimSettingController(context, sc);
+                        getName()).initMultiSimSettingController(context);
 
                 if (context.getPackageManager().hasSystemFeature(
                         PackageManager.FEATURE_TELEPHONY_EUICC)) {
@@ -287,16 +264,6 @@ public class PhoneFactory {
 
                 sMadeDefaults = true;
 
-                if (!isSubscriptionManagerServiceEnabled()) {
-                    Rlog.i(LOG_TAG, "Creating SubInfoRecordUpdater ");
-                    HandlerThread pfhandlerThread = new HandlerThread("PhoneFactoryHandlerThread");
-                    pfhandlerThread.start();
-                    sSubInfoRecordUpdater = TelephonyComponentFactory.getInstance().inject(
-                            SubscriptionInfoUpdater.class.getName())
-                            .makeSubscriptionInfoUpdater(pfhandlerThread.getLooper(), context,
-                                    SubscriptionController.getInstance());
-                }
-
                 // Only bring up IMS if the device supports having an IMS stack.
                 if (context.getPackageManager().hasSystemFeature(
                         PackageManager.FEATURE_TELEPHONY_IMS)) {
@@ -310,7 +277,7 @@ public class PhoneFactory {
                     Rlog.i(LOG_TAG, "IMS is not supported on this device, skipping ImsResolver.");
                 }
 
-                sPhoneConfigurationManager = PhoneConfigurationManager.init(sContext);
+                sPhoneConfigurationManager = PhoneConfigurationManager.init(sContext, featureFlags);
 
                 sCellularNetworkValidator = CellularNetworkValidator.make(sContext);
 
@@ -319,9 +286,10 @@ public class PhoneFactory {
 
                 sPhoneSwitcher = TelephonyComponentFactory.getInstance().inject(
                         PhoneSwitcher.class.getName()).
-                        makePhoneSwitcher(maxActivePhones, sContext, Looper.myLooper());
+                        makePhoneSwitcher(maxActivePhones, sContext, Looper.myLooper(),
+                                featureFlags);
 
-                sProxyController = ProxyController.getInstance(context);
+                sProxyController = ProxyController.getInstance(context, featureFlags);
 
                 sIntentBroadcaster = IntentBroadcaster.getInstance(context);
 
@@ -331,7 +299,7 @@ public class PhoneFactory {
                     sTelephonyNetworkFactories[i] = TelephonyComponentFactory.getInstance().inject(
                             TelephonyNetworkFactory.class.getName())
                             .makeTelephonyNetworkFactory(Looper.myLooper(),
-                            sPhones[i], sPhoneSwitcher);
+                            sPhones[i], sPhoneSwitcher, featureFlags);
                 }
                 telephonyComponentFactory.inject(TelephonyComponentFactory.class.getName()).
                         makeExtTelephonyClasses(context, sPhones, sCommandsInterfaces);
@@ -340,18 +308,11 @@ public class PhoneFactory {
     }
 
     /**
-     * @return {@code true} if the new {@link SubscriptionManagerService} is enabled, otherwise the
-     * old {@link SubscriptionController} is used.
-     */
-    public static boolean isSubscriptionManagerServiceEnabled() {
-        return sSubscriptionManagerServiceEnabled;
-    }
-
-    /**
      * Upon single SIM to dual SIM switch or vice versa, we dynamically allocate or de-allocate
      * Phone and CommandInterface objects.
-     * @param context
-     * @param activeModemCount
+     *
+     * @param context The context
+     * @param activeModemCount The number of active modems
      */
     public static void onMultiSimConfigChanged(Context context, int activeModemCount) {
         synchronized (sLockProxyPhones) {
@@ -381,7 +342,7 @@ public class PhoneFactory {
                 }
                 sTelephonyNetworkFactories[i] = TelephonyComponentFactory.getInstance().inject(
                         TelephonyNetworkFactory.class.getName())
-                        .makeTelephonyNetworkFactory(Looper.myLooper(), sPhones[i], sPhoneSwitcher);
+                        .makeTelephonyNetworkFactory(Looper.myLooper(), sPhones[i], sPhoneSwitcher, sFeatureFlags);
             }
         }
     }
@@ -449,10 +410,6 @@ public class PhoneFactory {
         }
     }
 
-    public static SubscriptionInfoUpdater getSubscriptionInfoUpdater() {
-        return sSubInfoRecordUpdater;
-    }
-
     /**
      * Get the network factory associated with a given phone ID.
      * @param phoneId the phone id
@@ -489,7 +446,6 @@ public class PhoneFactory {
      * @param phoneId The phone's id.
      * @return the preferred network mode bitmask that should be set.
      */
-    // TODO: Fix when we "properly" have TelephonyDevController/SubscriptionController ..
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public static int calculatePreferredNetworkType(int phoneId) {
         if (getPhone(phoneId) == null) {
@@ -506,10 +462,7 @@ public class PhoneFactory {
     /* Gets the default subscription */
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public static int getDefaultSubscription() {
-        if (isSubscriptionManagerServiceEnabled()) {
-            return SubscriptionManagerService.getInstance().getDefaultSubId();
-        }
-        return SubscriptionController.getInstance().getDefaultSubId();
+        return SubscriptionManagerService.getInstance().getDefaultSubId();
     }
 
     /* Returns User SMS Prompt property,  enabled or not */
@@ -537,19 +490,7 @@ public class PhoneFactory {
     }
 
     /**
-     * Request a refresh of the embedded subscription list.
-     *
-     * @param cardId the card ID of the eUICC.
-     * @param callback Optional callback to execute after the refresh completes. Must terminate
-     *     quickly as it will be called from SubscriptionInfoUpdater's handler thread.
-     */
-    public static void requestEmbeddedSubscriptionInfoListRefresh(
-            int cardId, @Nullable Runnable callback) {
-        sSubInfoRecordUpdater.requestEmbeddedSubscriptionInfoListRefresh(cardId, callback);
-    }
-
-    /**
-     * Get a the SmsController.
+     * Get the instance of {@link SmsController}.
      */
     public static SmsController getSmsController() {
         synchronized (sLockProxyPhones) {
@@ -611,6 +552,27 @@ public class PhoneFactory {
         return sMetricsCollector;
     }
 
+    /**
+     * Print all feature flag configurations that Telephony is using for debugging purposes.
+     */
+    private static void reflectAndPrintFlagConfigs(IndentingPrintWriter pw) {
+
+        try {
+            // Look away, a forbidden technique (reflection) is being used to allow us to get
+            // all flag configs without having to add them manually to this method.
+            Method[] methods = FeatureFlags.class.getMethods();
+            if (methods.length == 0) {
+                pw.println("NONE");
+                return;
+            }
+            for (Method m : methods) {
+                pw.println(m.getName() + "-> " + m.invoke(sFeatureFlags));
+            }
+        } catch (Exception e) {
+            pw.println("[ERROR]");
+        }
+    }
+
     public static void dump(FileDescriptor fd, PrintWriter printwriter, String[] args) {
         IndentingPrintWriter pw = new IndentingPrintWriter(printwriter, "  ");
         pw.println("PhoneFactory:");
@@ -652,26 +614,6 @@ public class PhoneFactory {
         pw.decreaseIndent();
         pw.println("++++++++++++++++++++++++++++++++");
 
-        if (!isSubscriptionManagerServiceEnabled()) {
-            pw.println("SubscriptionController:");
-            pw.increaseIndent();
-            try {
-                SubscriptionController.getInstance().dump(fd, pw, args);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-            pw.flush();
-            pw.decreaseIndent();
-            pw.println("++++++++++++++++++++++++++++++++");
-
-            pw.println("SubInfoRecordUpdater:");
-            pw.increaseIndent();
-            try {
-                sSubInfoRecordUpdater.dump(fd, pw, args);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
         pw.flush();
         pw.decreaseIndent();
         pw.println("++++++++++++++++++++++++++++++++");
@@ -723,8 +665,15 @@ public class PhoneFactory {
         } catch (Exception e) {
             e.printStackTrace();
         }
-
         pw.flush();
         pw.decreaseIndent();
+
+        pw.println("++++++++++++++++++++++++++++++++");
+        pw.println("Flag Configurations:");
+        pw.increaseIndent();
+        reflectAndPrintFlagConfigs(pw);
+        pw.flush();
+        pw.decreaseIndent();
+        pw.println("++++++++++++++++++++++++++++++++");
     }
 }

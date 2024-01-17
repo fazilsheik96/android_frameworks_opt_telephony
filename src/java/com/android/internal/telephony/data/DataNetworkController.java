@@ -61,10 +61,12 @@ import android.telephony.TelephonyManager;
 import android.telephony.TelephonyManager.DataState;
 import android.telephony.TelephonyManager.SimState;
 import android.telephony.TelephonyRegistryManager;
+import android.telephony.data.ApnSetting;
 import android.telephony.data.DataCallResponse;
 import android.telephony.data.DataCallResponse.HandoverFailureMode;
 import android.telephony.data.DataCallResponse.LinkStatus;
 import android.telephony.data.DataProfile;
+import android.telephony.data.DataServiceCallback;
 import android.telephony.ims.ImsException;
 import android.telephony.ims.ImsManager;
 import android.telephony.ims.ImsReasonInfo;
@@ -102,7 +104,10 @@ import com.android.internal.telephony.data.DataStallRecoveryManager.DataStallRec
 import com.android.internal.telephony.data.LinkBandwidthEstimator.LinkBandwidthEstimatorCallback;
 import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.ims.ImsResolver;
+import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
+import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.util.TelephonyUtils;
+import com.android.internal.util.FunctionalUtils;
 import com.android.telephony.Rlog;
 
 import java.io.FileDescriptor;
@@ -125,6 +130,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -1383,6 +1389,7 @@ public class DataNetworkController extends Handler {
                         .getDataProfileForNetworkRequest(requestList.getFirst(),
                                 TelephonyManager.NETWORK_TYPE_IWLAN,
                                 mServiceState.isUsingNonTerrestrialNetwork(),
+                                isEsimBootStrapProvisioningActivated(),
                                 false/*ignorePermanentFailure*/);
                 if (candidate != null && !dataNetwork.getDataProfile().equals(candidate)) {
                     logv("But skipped because found better data profile " + candidate
@@ -1454,22 +1461,26 @@ public class DataNetworkController extends Handler {
     /**
      * Evaluate if telephony frameworks would allow data setup for internet in current environment.
      *
+     * @param ignoreExistingNetworks {@code true} to skip the existing network check.
      * @return {@code true} if the environment is allowed for internet data. {@code false} if not
      * allowed. For example, if SIM is absent, or airplane mode is on, then data is NOT allowed.
      * This API does not reflect the currently internet data network status. It's possible there is
      * no internet data due to weak cellular signal or network side issue, but internet data is
      * still allowed in this case.
      */
-    public boolean isInternetDataAllowed() {
+    public boolean isInternetDataAllowed(boolean ignoreExistingNetworks) {
         TelephonyNetworkRequest internetRequest = new TelephonyNetworkRequest(
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                         .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
                         .build(), mPhone);
-        // If one of the existing networks can satisfy the internet request, then internet is
-        // allowed.
-        if (mDataNetworkList.stream().anyMatch(dataNetwork -> internetRequest.canBeSatisfiedBy(
-                dataNetwork.getNetworkCapabilities()))) {
+        // If we don't skip checking existing network, then we should check If one of the
+        // existing networks can satisfy the internet request, then internet is allowed.
+        if ((!mFeatureFlags.ignoreExistingNetworksForInternetAllowedChecking()
+                || !ignoreExistingNetworks)
+                && mDataNetworkList.stream().anyMatch(
+                        dataNetwork -> internetRequest.canBeSatisfiedBy(
+                                dataNetwork.getNetworkCapabilities()))) {
             return true;
         }
 
@@ -1547,7 +1558,8 @@ public class DataNetworkController extends Handler {
             evaluation.addDataAllowedReason(DataAllowedReason.EMERGENCY_REQUEST);
             evaluation.setCandidateDataProfile(mDataProfileManager.getDataProfileForNetworkRequest(
                     networkRequest, getDataNetworkType(transport),
-                    mServiceState.isUsingNonTerrestrialNetwork(), true));
+                    mServiceState.isUsingNonTerrestrialNetwork(),
+                    isEsimBootStrapProvisioningActivated(), true));
             networkRequest.setEvaluation(evaluation);
             log(evaluation.toString());
             return evaluation;
@@ -1709,6 +1721,7 @@ public class DataNetworkController extends Handler {
         DataProfile dataProfile = mDataProfileManager
                 .getDataProfileForNetworkRequest(networkRequest, networkType,
                         mServiceState.isUsingNonTerrestrialNetwork(),
+                        isEsimBootStrapProvisioningActivated(),
                         // If the evaluation is due to environmental changes, then we should ignore
                         // the permanent failure reached earlier.
                         reason.isConditionBased());
@@ -2385,6 +2398,22 @@ public class DataNetworkController extends Handler {
                         dataNetwork.getLinkProperties().getInterfaceName()))
                 .findFirst()
                 .orElse(null);
+    }
+
+    /**
+     * Check if the device is in eSIM bootstrap provisioning state.
+     *
+     * @return {@code true} if the device is under eSIM bootstrap provisioning.
+     */
+    public boolean isEsimBootStrapProvisioningActivated() {
+        if (!mFeatureFlags.esimBootstrapProvisioningFlag()) {
+            return false;
+        }
+
+        SubscriptionInfoInternal subInfo = SubscriptionManagerService.getInstance()
+                .getSubscriptionInfoInternal(mPhone.getSubId());
+        return subInfo != null
+                && subInfo.getProfileClass() == SubscriptionManager.PROFILE_CLASS_PROVISIONING;
     }
 
     /**
@@ -3989,6 +4018,43 @@ public class DataNetworkController extends Handler {
 
         // Data is disallowed while using satellite
         return true;
+    }
+
+    /**
+     * Request network validation.
+     *
+     * Nnetwork validation request is sent to the DataNetwork that matches the network capability
+     * in the list of DataNetwork owned by the DNC.
+     *
+     * @param capability network capability {@link NetCapability}
+     */
+    public void requestNetworkValidation(@NetCapability int capability,
+            @NonNull Consumer<Integer> resultCodeCallback) {
+
+        if (DataUtils.networkCapabilityToApnType(capability) == ApnSetting.TYPE_NONE) {
+            // If the capability is not an apn type based capability, sent an invalid argument.
+            loge("requestNetworkValidation: the capability is not an apn type based. capability:"
+                    + capability);
+            FunctionalUtils.ignoreRemoteException(resultCodeCallback::accept)
+                    .accept(DataServiceCallback.RESULT_ERROR_INVALID_ARG);
+            return;
+        }
+
+        // Find DataNetwork that matches the capability.
+        List<DataNetwork> list = mDataNetworkList.stream()
+                .filter(dataNetwork ->
+                        dataNetwork.getNetworkCapabilities().hasCapability(capability))
+                .toList();
+
+        if (!list.isEmpty()) {
+            // request network validation.
+            list.forEach(dataNetwork -> dataNetwork.requestNetworkValidation(resultCodeCallback));
+        } else {
+            // If not found, sent an invalid argument.
+            loge("requestNetworkValidation: No matching DataNetwork was found");
+            FunctionalUtils.ignoreRemoteException(resultCodeCallback::accept)
+                    .accept(DataServiceCallback.RESULT_ERROR_INVALID_ARG);
+        }
     }
 
     /**

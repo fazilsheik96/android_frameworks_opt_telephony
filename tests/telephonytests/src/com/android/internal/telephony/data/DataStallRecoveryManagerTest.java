@@ -20,7 +20,6 @@ import static com.google.common.truth.Truth.assertThat;
 
 import static org.junit.Assert.assertNotNull;
 import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyInt;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
@@ -108,16 +107,12 @@ public class DataStallRecoveryManagerTest extends TelephonyTest {
         doReturn(dataStallRecoveryStepsArray)
                 .when(mDataConfigManager)
                 .getDataStallRecoveryShouldSkipArray();
-        doReturn(true).when(mDataNetworkController).isInternetDataAllowed();
+        doReturn(true).when(mDataNetworkController).isInternetDataAllowed(true);
 
-        doAnswer(
-                invocation -> {
-                    ((Runnable) invocation.getArguments()[0]).run();
-                    return null;
-                })
-                .when(mDataStallRecoveryManagerCallback)
-                .invokeFromExecutor(any(Runnable.class));
-        doReturn("").when(mSubscriptionController).getEnabledMobileDataPolicies(anyInt());
+        doAnswer(invocation -> {
+            ((Runnable) invocation.getArguments()[0]).run();
+            return null;
+        }).when(mDataStallRecoveryManagerCallback).invokeFromExecutor(any(Runnable.class));
 
         mDataStallRecoveryManager =
                 new DataStallRecoveryManager(
@@ -352,7 +347,7 @@ public class DataStallRecoveryManagerTest extends TelephonyTest {
         mDataStallRecoveryManager.setRecoveryAction(1);
         doReturn(mSignalStrength).when(mPhone).getSignalStrength();
         doReturn(PhoneConstants.State.IDLE).when(mPhone).getState();
-        doReturn(false).when(mDataNetworkController).isInternetDataAllowed();
+        doReturn(false).when(mDataNetworkController).isInternetDataAllowed(true);
 
         logd("Sending validation failed callback");
         sendValidationStatusCallback(NetworkAgent.VALIDATION_STATUS_NOT_VALID);

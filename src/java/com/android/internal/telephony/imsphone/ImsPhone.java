@@ -16,7 +16,6 @@
 
 package com.android.internal.telephony.imsphone;
 
-import static android.provider.Telephony.SimInfo.COLUMN_PHONE_NUMBER_SOURCE_IMS;
 import static android.telephony.ims.ImsManager.EXTRA_WFC_REGISTRATION_FAILURE_MESSAGE;
 import static android.telephony.ims.ImsManager.EXTRA_WFC_REGISTRATION_FAILURE_TITLE;
 import static android.telephony.ims.RegistrationManager.REGISTRATION_STATE_NOT_REGISTERED;
@@ -24,6 +23,8 @@ import static android.telephony.ims.RegistrationManager.REGISTRATION_STATE_REGIS
 import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_NONE;
 import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_PLMN_BLOCK;
 import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_PLMN_BLOCK_WITH_TIMEOUT;
+import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_RAT_BLOCK;
+import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCK;
 import static android.telephony.ims.stub.ImsRegistrationImplBase.REGISTRATION_TECH_NONE;
 
 import static com.android.internal.telephony.CommandsInterface.CB_FACILITY_BAIC;
@@ -51,8 +52,10 @@ import static com.android.internal.telephony.CommandsInterface.SERVICE_CLASS_NON
 import static com.android.internal.telephony.CommandsInterface.SERVICE_CLASS_PACKET;
 import static com.android.internal.telephony.CommandsInterface.SERVICE_CLASS_VOICE;
 
+import android.annotation.FlaggedApi;
 import android.annotation.NonNull;
 import android.app.Activity;
+import android.app.ActivityManager;
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
@@ -82,7 +85,6 @@ import android.telephony.CarrierConfigManager;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.PhoneNumberUtils;
 import android.telephony.ServiceState;
-import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.telephony.UssdResponse;
@@ -124,13 +126,13 @@ import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.PhoneNotifier;
 import com.android.internal.telephony.ServiceStateTracker;
-import com.android.internal.telephony.SubscriptionController;
 import com.android.internal.telephony.TelephonyComponentFactory;
 import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.telephony.domainselection.DomainSelectionResolver;
 import com.android.internal.telephony.emergency.EmergencyNumberTracker;
 import com.android.internal.telephony.emergency.EmergencyStateTracker;
 import com.android.internal.telephony.flags.FeatureFlags;
+import com.android.internal.telephony.flags.Flags;
 import com.android.internal.telephony.gsm.SuppServiceNotification;
 import com.android.internal.telephony.metrics.ImsStats;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
@@ -494,7 +496,7 @@ public class ImsPhone extends ImsPhoneBase {
                         .inject(ImsNrSaModeHandler.class.getName())
                         .makeImsNrSaModeHandler(this);
         mCT = TelephonyComponentFactory.getInstance().inject(ImsPhoneCallTracker.class.getName())
-                .makeImsPhoneCallTracker(this);
+                .makeImsPhoneCallTracker(this, featureFlags);
         mCT.registerPhoneStateListener(mExternalCallTracker);
         mExternalCallTracker.setCallPuller(mCT);
 
@@ -1074,6 +1076,7 @@ public class ImsPhone extends ImsPhoneBase {
         String networkPortion = PhoneNumberUtils.extractNetworkPortionAlt(newDialString);
         ImsPhoneMmiCode mmi =
                 ImsPhoneMmiCode.newFromDialString(networkPortion, this, wrappedCallback);
+        UserHandle currentUserHandle = UserHandle.of(ActivityManager.getCurrentUser());
         if (DBG) logd("dialInternal: dialing w/ mmi '" + mmi + "'...");
 
         if (mmi == null) {
@@ -1081,6 +1084,11 @@ public class ImsPhone extends ImsPhoneBase {
         } else if (mmi.isTemporaryModeCLIR()) {
             imsDialArgsBuilder.setClirMode(mmi.getCLIRMode());
             return mCT.dial(mmi.getDialingNumber(), imsDialArgsBuilder.build());
+        } else if (!currentUserHandle.isSystem()) {
+            // Must be primary user to use supplementary service.
+            loge("dialInternal: Supplementary service not allowed in non-primary mode");
+            throw new CallStateException(
+                    "Supplementary service is not allowed for non-primary user");
         } else if (!mmi.isSupportedOverImsPhone()) {
             // If the mmi is not supported by IMS service,
             // try to initiate dialing with default phone
@@ -2553,7 +2561,7 @@ public class ImsPhone extends ImsPhoneBase {
             setServiceState(ServiceState.STATE_IN_SERVICE);
             getDefaultPhone().setImsRegistrationState(true);
             mMetrics.writeOnImsConnectionState(mPhoneId, ImsConnectionState.State.CONNECTED, null);
-            mImsStats.onImsRegistered(imsRadioTech);
+            mImsStats.onImsRegistered(attributes);
             mImsNrSaModeHandler.onImsRegistered(
                     attributes.getRegistrationTechnology(), attributes.getFeatureTags());
             updateImsRegistrationInfo(REGISTRATION_STATE_REGISTERED,
@@ -2589,14 +2597,14 @@ public class ImsPhone extends ImsPhoneBase {
             int extraCode = imsReasonInfo.getExtraCode();
             /*
              * If lower layer passes extraCode with information that UE is
-             * PS_ONLY attached or not, we update mIsOutgoingImsVoiceAllowed
+             * PS attached or not, we update mIsOutgoingImsVoiceAllowed
              * and return as we expect lower layer to invoke this function
              * again with updated ImsReasonInfo.
              */
-            if (extraCode == QtiImsUtils.CODE_IS_PS_ONLY_ATTACHED ||
-                extraCode == QtiImsUtils.CODE_IS_NOT_PS_ONLY_ATTACHED) {
+            if (extraCode == QtiImsUtils.CODE_IS_PS_ATTACHED ||
+                extraCode == QtiImsUtils.CODE_IS_NOT_PS_ATTACHED) {
                 mIsOutgoingImsVoiceAllowed =
-                        extraCode == QtiImsUtils.CODE_IS_PS_ONLY_ATTACHED;
+                        extraCode == QtiImsUtils.CODE_IS_PS_ATTACHED;
                 return;
             }
             setServiceState(ServiceState.STATE_OUT_OF_SERVICE);
@@ -2612,14 +2620,21 @@ public class ImsPhone extends ImsPhoneBase {
                 if ((suggestedAction == SUGGESTED_ACTION_TRIGGER_PLMN_BLOCK)
                         || (suggestedAction == SUGGESTED_ACTION_TRIGGER_PLMN_BLOCK_WITH_TIMEOUT)) {
                     suggestedModemAction = suggestedAction;
+                } else if (mFeatureFlags.addRatRelatedSuggestedActionToImsRegistration()) {
+                    if ((suggestedAction == SUGGESTED_ACTION_TRIGGER_RAT_BLOCK)
+                            || (suggestedAction == SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCK)) {
+                        suggestedModemAction = suggestedAction;
+                    }
                 }
             }
             updateImsRegistrationInfo(REGISTRATION_STATE_NOT_REGISTERED,
                     imsRadioTech, suggestedModemAction);
 
-            // Clear the phone number from P-Associated-Uri
-            setCurrentSubscriberUris(null);
-            clearPhoneNumberForSourceIms();
+            if (mFeatureFlags.clearCachedImsPhoneNumberWhenDeviceLostImsRegistration()) {
+                // Clear the phone number from P-Associated-Uri
+                setCurrentSubscriberUris(null);
+                clearPhoneNumberForSourceIms();
+            }
         }
 
         @Override
@@ -2635,6 +2650,7 @@ public class ImsPhone extends ImsPhoneBase {
 
     /** Clear the IMS phone number from IMS associated Uris when IMS registration is lost. */
     @VisibleForTesting
+    @FlaggedApi(Flags.FLAG_CLEAR_CACHED_IMS_PHONE_NUMBER_WHEN_DEVICE_LOST_IMS_REGISTRATION)
     public void clearPhoneNumberForSourceIms() {
         int subId = getSubId();
         if (!SubscriptionManager.isValidSubscriptionId(subId)) {
@@ -2651,61 +2667,39 @@ public class ImsPhone extends ImsPhoneBase {
         int subId = getSubId();
         if (!SubscriptionManager.isValidSubscriptionId(subId)) {
             // Defending b/219080264:
-            // SubscriptionController.setSubscriptionProperty validates input subId
+            // SubscriptionManagerService.setSubscriptionProperty validates input subId
             // so do not proceed if subId invalid. This may be happening because cached
             // IMS callbacks are sent back to telephony after SIM state changed.
             return;
         }
 
         String phoneNumber = extractPhoneNumberFromAssociatedUris(uris, /*isGlobalFormat*/true);
-        if (isSubscriptionManagerServiceEnabled()) {
-            SubscriptionInfoInternal subInfo = mSubscriptionManagerService
-                    .getSubscriptionInfoInternal(subId);
-            if (subInfo == null) {
-                loge("trigger setPhoneNumberForSourceIms, but subInfo is null");
-                return;
-            }
-            String subCountryIso = subInfo.getCountryIso();
-            if (phoneNumber != null) {
-                phoneNumber = PhoneNumberUtils.formatNumberToE164(phoneNumber, subCountryIso);
-                if (phoneNumber == null) {
-                    loge("format to E164 failed");
-                    return;
-                }
-                mSubscriptionManagerService.setNumberFromIms(subId, phoneNumber);
-            } else if (isAllowNonGlobalNumberFormat()) {
-                // If carrier config has true for KEY_IGNORE_GLOBAL_PHONE_NUMBER_FORMAT_BOOL and
-                // P-Associated-Uri does not have global number,
-                // try to find phone number excluding '+' one more time.
-                phoneNumber = extractPhoneNumberFromAssociatedUris(uris, /*isGlobalFormat*/false);
-                if (phoneNumber == null) {
-                    loge("extract phone number without '+' failed");
-                    return;
-                }
-                mSubscriptionManagerService.setNumberFromIms(subId, phoneNumber);
-            } else {
-                logd("extract phone number failed");
-            }
-        } else {
-            SubscriptionController subController = SubscriptionController.getInstance();
-            String countryIso = getCountryIso(subController, subId);
-            // Format the number as one more defense to reject garbage values:
-            // phoneNumber will become null.
-            phoneNumber = PhoneNumberUtils.formatNumberToE164(phoneNumber, countryIso);
-            if (phoneNumber == null) {
-                loge("format to E164 failed");
-                return;
-            }
-            subController.setSubscriptionProperty(subId, COLUMN_PHONE_NUMBER_SOURCE_IMS,
-                    phoneNumber);
-        }
-    }
 
-    private static String getCountryIso(SubscriptionController subController, int subId) {
-        SubscriptionInfo info = subController.getSubscriptionInfo(subId);
-        String countryIso = info == null ? "" : info.getCountryIso();
-        // info.getCountryIso() may return null
-        return countryIso == null ? "" : countryIso;
+        SubscriptionInfoInternal subInfo = mSubscriptionManagerService
+                .getSubscriptionInfoInternal(subId);
+        if (subInfo == null) {
+            return;
+        }
+        if (phoneNumber != null) {
+            phoneNumber = PhoneNumberUtils.formatNumberToE164(phoneNumber,
+                    subInfo.getCountryIso());
+            if (phoneNumber == null) {
+                return;
+            }
+            mSubscriptionManagerService.setNumberFromIms(subId, phoneNumber);
+        } else if (isAllowNonGlobalNumberFormat()) {
+            // If carrier config has true for KEY_IGNORE_GLOBAL_PHONE_NUMBER_FORMAT_BOOL and
+            // P-Associated-Uri does not have global number,
+            // try to find phone number excluding '+' one more time.
+            phoneNumber = extractPhoneNumberFromAssociatedUris(uris, /*isGlobalFormat*/false);
+            if (phoneNumber == null) {
+                loge("extract phone number without '+' failed");
+                return;
+            }
+            mSubscriptionManagerService.setNumberFromIms(subId, phoneNumber);
+        } else {
+            logd("extract phone number failed");
+        }
     }
 
     /**

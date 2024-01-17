@@ -55,13 +55,14 @@ import com.android.internal.telephony.data.TelephonyNetworkFactory;
 import com.android.internal.telephony.emergency.EmergencyNumberTracker;
 import com.android.internal.telephony.flags.FeatureFlagsImpl;
 import com.android.internal.telephony.flags.FeatureFlags;
+import com.android.internal.telephony.flags.FeatureFlagsImpl;
 import com.android.internal.telephony.imsphone.ImsExternalCallTracker;
 import com.android.internal.telephony.imsphone.ImsNrSaModeHandler;
 import com.android.internal.telephony.imsphone.ImsPhone;
 import com.android.internal.telephony.imsphone.ImsPhoneCallTracker;
 import com.android.internal.telephony.nitz.NitzStateMachineImpl;
-import com.android.internal.telephony.SubscriptionController;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
+import com.android.internal.telephony.security.CellularIdentifierDisclosureNotifier;
 import com.android.internal.telephony.uicc.IccCardStatus;
 import com.android.internal.telephony.uicc.UiccCard;
 import com.android.internal.telephony.uicc.UiccProfile;
@@ -309,9 +310,10 @@ public class TelephonyComponentFactory {
         return new SmsUsageMonitor(context);
     }
 
-    public ServiceStateTracker makeServiceStateTracker(GsmCdmaPhone phone, CommandsInterface ci) {
+    public ServiceStateTracker makeServiceStateTracker(GsmCdmaPhone phone, CommandsInterface ci,
+            @NonNull FeatureFlags featureFlags) {
         Rlog.d(LOG_TAG, "makeServiceStateTracker");
-        return new ServiceStateTracker(phone, ci);
+        return new ServiceStateTracker(phone, ci, featureFlags);
     }
 
     /**
@@ -370,8 +372,9 @@ public class TelephonyComponentFactory {
      * Create a new UiccProfile object.
      */
     public UiccProfile makeUiccProfile(Context context, CommandsInterface ci, IccCardStatus ics,
-                                       int phoneId, UiccCard uiccCard, Object lock) {
-        return new UiccProfile(context, ci, ics, phoneId, uiccCard, lock);
+                                       int phoneId, UiccCard uiccCard, Object lock,
+            @NonNull FeatureFlags flags) {
+        return new UiccProfile(context, ci, ics, phoneId, uiccCard, lock, flags);
     }
 
     public EriManager makeEriManager(Phone phone, int eriFileSource) {
@@ -418,9 +421,28 @@ public class TelephonyComponentFactory {
         return new InboundSmsTracker(context, cursor, isCurrentFormat3gpp2);
     }
 
+    /**
+     * Create an ImsPhoneCallTracker.
+     *
+     * @param imsPhone imsphone
+     * @return ImsPhoneCallTracker newly created ImsPhoneCallTracker
+     * @deprecated Use {@link #makeImsPhoneCallTracker(ImsPhone, FeatureFlags)} instead
+     */
     public ImsPhoneCallTracker makeImsPhoneCallTracker(ImsPhone imsPhone) {
         Rlog.d(LOG_TAG, "makeImsPhoneCallTracker");
-        return new ImsPhoneCallTracker(imsPhone, ImsManager::getConnector);
+        return makeImsPhoneCallTracker(imsPhone, new FeatureFlagsImpl());
+    }
+
+    /**
+     * Create a ims phone call tracker.
+     *
+     * @param imsPhone imsphone
+     * @param featureFlags feature flags
+     * @return ImsPhoneCallTracker newly created ImsPhoneCallTracker
+     */
+    public ImsPhoneCallTracker makeImsPhoneCallTracker(ImsPhone imsPhone,
+                                                       @NonNull FeatureFlags featureFlags) {
+        return new ImsPhoneCallTracker(imsPhone, ImsManager::getConnector, featureFlags);
     }
 
     public ImsExternalCallTracker makeImsExternalCallTracker(ImsPhone imsPhone) {
@@ -457,9 +479,23 @@ public class TelephonyComponentFactory {
      * @param phone The phone instance
      * @param looper Looper for the handler.
      * @return The access networks manager
+     * @deprecated {@link #makeAccessNetworksManager(Phone, Looper, FeatureFlags)} instead
      */
     public AccessNetworksManager makeAccessNetworksManager(Phone phone, Looper looper) {
-        return new AccessNetworksManager(phone, looper);
+        return new AccessNetworksManager(phone, looper, new FeatureFlagsImpl());
+    }
+
+    /**
+     * Make access networks manager
+     *
+     * @param phone The phone instance
+     * @param looper Looper for the handler.
+     * @param featureFlags feature flags.
+     * @return The access networks manager
+     */
+    public AccessNetworksManager makeAccessNetworksManager(Phone phone, Looper looper,
+            @NonNull FeatureFlags featureFlags) {
+        return new AccessNetworksManager(phone, looper, featureFlags);
     }
 
     public CdmaSubscriptionSourceManager
@@ -483,15 +519,10 @@ public class TelephonyComponentFactory {
                 telephonyComponentFactory, featureFlags);
     }
 
-    public SubscriptionController initSubscriptionController(Context c) {
-        Rlog.i(TAG, "initSubscriptionController");
-        return SubscriptionController.init(c);
-    }
-
     public PhoneSwitcher makePhoneSwitcher(int maxDataAttachModemCount, Context context,
-            Looper looper) {
+            Looper looper, @NonNull FeatureFlags featureFlags) {
         Rlog.i(TAG, "makePhoneSwitcher");
-        return PhoneSwitcher.make(maxDataAttachModemCount, context, looper);
+        return PhoneSwitcher.make(maxDataAttachModemCount, context, looper, featureFlags);
     }
 
     /**
@@ -501,10 +532,15 @@ public class TelephonyComponentFactory {
         return new DisplayInfoController(phone, featureFlags);
     }
 
-    public MultiSimSettingController initMultiSimSettingController(Context c,
-            SubscriptionController sc) {
+    /**
+     * Initialize multi sim settings controller.
+     *
+     * @param c The context.
+     * @return The multi sim settings controller instance.
+     */
+    public MultiSimSettingController initMultiSimSettingController(Context c) {
         Rlog.i(TAG, " initMultiSimSettingController ");
-        return MultiSimSettingController.init(c, sc);
+        return MultiSimSettingController.init(c);
     }
 
     /**
@@ -512,12 +548,6 @@ public class TelephonyComponentFactory {
      */
     public SignalStrengthController makeSignalStrengthController(GsmCdmaPhone phone) {
         return new SignalStrengthController(phone);
-    }
-
-    public SubscriptionInfoUpdater makeSubscriptionInfoUpdater(Looper looper, Context context,
-            SubscriptionController sc) {
-        Rlog.i(TAG, "makeSubscriptionInfoUpdater");
-        return new SubscriptionInfoUpdater(looper, context, sc);
     }
 
     /**
@@ -631,14 +661,19 @@ public class TelephonyComponentFactory {
     }
 
     public TelephonyNetworkFactory makeTelephonyNetworkFactory(Looper looper, Phone phone,
-            PhoneSwitcher phoneSwitcher) {
+            PhoneSwitcher phoneSwitcher, @NonNull FeatureFlags flags) {
         Rlog.i(TAG, "make TelephonyNetworkFactory");
-        return new TelephonyNetworkFactory(looper, phone, phoneSwitcher);
+        return new TelephonyNetworkFactory(looper, phone, phoneSwitcher, flags);
     }
 
     public SubscriptionManagerService makeSubscriptionManagerService(
             @NonNull Context context, @NonNull Looper looper) {
         Rlog.i(TAG, "make SubscriptionManagerService");
         return new SubscriptionManagerService(context, looper, new FeatureFlagsImpl());
+    }
+
+    /** Create CellularIdentifierDisclosureNotifier. */
+    public CellularIdentifierDisclosureNotifier makeIdentifierDisclosureNotifier() {
+        return CellularIdentifierDisclosureNotifier.getInstance();
     }
 }

@@ -17,7 +17,6 @@
 package com.android.internal.telephony.imsphone;
 
 import static android.Manifest.permission.MODIFY_PHONE_STATE;
-import static android.provider.Telephony.SimInfo.COLUMN_PHONE_NUMBER_SOURCE_IMS;
 import static android.telephony.CarrierConfigManager.USSD_OVER_CS_ONLY;
 import static android.telephony.CarrierConfigManager.USSD_OVER_CS_PREFERRED;
 import static android.telephony.CarrierConfigManager.USSD_OVER_IMS_ONLY;
@@ -25,6 +24,8 @@ import static android.telephony.CarrierConfigManager.USSD_OVER_IMS_PREFERRED;
 import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_NONE;
 import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_PLMN_BLOCK;
 import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_PLMN_BLOCK_WITH_TIMEOUT;
+import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_RAT_BLOCK;
+import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCK;
 import static android.telephony.ims.stub.ImsRegistrationImplBase.REGISTRATION_TECH_3G;
 import static android.telephony.ims.stub.ImsRegistrationImplBase.REGISTRATION_TECH_IWLAN;
 import static android.telephony.ims.stub.ImsRegistrationImplBase.REGISTRATION_TECH_LTE;
@@ -125,7 +126,6 @@ public class ImsPhoneTest extends TelephonyTest {
     private ImsPhoneCall mBackgroundCall;
     private ImsPhoneCall mRingingCall;
     private Handler mTestHandler;
-    private DomainSelectionResolver mDomainSelectionResolver;
     Connection mConnection;
     ImsUtInterface mImsUtInterface;
     private FeatureFlags mFeatureFlags;
@@ -153,11 +153,7 @@ public class ImsPhoneTest extends TelephonyTest {
         mTestHandler = mock(Handler.class);
         mConnection = mock(Connection.class);
         mImsUtInterface = mock(ImsUtInterface.class);
-        mDomainSelectionResolver = mock(DomainSelectionResolver.class);
         mFeatureFlags = mock(FeatureFlags.class);
-        doReturn(false).when(mDomainSelectionResolver).isDomainSelectionSupported();
-        DomainSelectionResolver.setDomainSelectionResolver(mDomainSelectionResolver);
-        mEcbmHandler = mock(EcbmHandler.class);
 
         mImsCT.mForegroundCall = mForegroundCall;
         mImsCT.mBackgroundCall = mBackgroundCall;
@@ -203,7 +199,6 @@ public class ImsPhoneTest extends TelephonyTest {
     public void tearDown() throws Exception {
         mImsPhoneUT = null;
         mBundle = null;
-        DomainSelectionResolver.setDomainSelectionResolver(null);
         super.tearDown();
     }
 
@@ -1047,7 +1042,6 @@ public class ImsPhoneTest extends TelephonyTest {
         doReturn(subId).when(mPhone).getSubId();
         SubscriptionInfo subInfo = mock(SubscriptionInfo.class);
         doReturn("gb").when(subInfo).getCountryIso();
-        doReturn(subInfo).when(mSubscriptionController).getSubscriptionInfo(subId);
         doReturn(new SubscriptionInfoInternal.Builder().setId(subId).setSimSlotIndex(0)
                 .setCountryIso("gb").build()).when(mSubscriptionManagerService)
                 .getSubscriptionInfoInternal(subId);
@@ -1059,12 +1053,7 @@ public class ImsPhoneTest extends TelephonyTest {
         };
         mImsPhoneUT.setPhoneNumberForSourceIms(associatedUris);
 
-        if (isSubscriptionManagerServiceEnabled()) {
-            verify(mSubscriptionManagerService).setNumberFromIms(subId, "+447539447777");
-        } else {
-            verify(mSubscriptionController).setSubscriptionProperty(
-                    subId, COLUMN_PHONE_NUMBER_SOURCE_IMS, "+447539447777");
-        }
+        verify(mSubscriptionManagerService).setNumberFromIms(subId, "+447539447777");
 
         // 2. 1st invalid and 2nd valid: 2nd is set.
         associatedUris = new Uri[] {
@@ -1073,12 +1062,7 @@ public class ImsPhoneTest extends TelephonyTest {
         };
         mImsPhoneUT.setPhoneNumberForSourceIms(associatedUris);
 
-        if (isSubscriptionManagerServiceEnabled()) {
-            verify(mSubscriptionManagerService).setNumberFromIms(subId, "+447539446666");
-        } else {
-            verify(mSubscriptionController).setSubscriptionProperty(
-                    subId, COLUMN_PHONE_NUMBER_SOURCE_IMS, "+447539446666");
-        }
+        verify(mSubscriptionManagerService).setNumberFromIms(subId, "+447539446666");
 
         // 3. 1st sip-uri is not phone number and 2nd valid: 2nd is set.
         associatedUris = new Uri[] {
@@ -1088,12 +1072,7 @@ public class ImsPhoneTest extends TelephonyTest {
         };
         mImsPhoneUT.setPhoneNumberForSourceIms(associatedUris);
 
-        if (isSubscriptionManagerServiceEnabled()) {
-            verify(mSubscriptionManagerService).setNumberFromIms(subId, "+447539446677");
-        } else {
-            verify(mSubscriptionController).setSubscriptionProperty(
-                    subId, COLUMN_PHONE_NUMBER_SOURCE_IMS, "+447539446677");
-        }
+        verify(mSubscriptionManagerService).setNumberFromIms(subId, "+447539446677");
 
         // Clean up
         mContextFixture.addCallingOrSelfPermission("");
@@ -1108,7 +1087,6 @@ public class ImsPhoneTest extends TelephonyTest {
         doReturn(subId).when(mPhone).getSubId();
         SubscriptionInfo subInfo = mock(SubscriptionInfo.class);
         doReturn("gb").when(subInfo).getCountryIso();
-        doReturn(subInfo).when(mSubscriptionController).getSubscriptionInfo(subId);
         doReturn(new SubscriptionInfoInternal.Builder().setId(subId).setSimSlotIndex(0)
                 .setCountryIso("gb").build()).when(mSubscriptionManagerService)
                 .getSubscriptionInfoInternal(0);
@@ -1120,44 +1098,24 @@ public class ImsPhoneTest extends TelephonyTest {
         };
         mImsPhoneUT.setPhoneNumberForSourceIms(associatedUris);
 
-        if (isSubscriptionManagerServiceEnabled()) {
-            verify(mSubscriptionManagerService, never()).setNumberFromIms(anyInt(), anyString());
-        } else {
-            verify(mSubscriptionController, never()).setSubscriptionProperty(
-                    anyInt(), any(), any());
-        }
+        verify(mSubscriptionManagerService, never()).setNumberFromIms(anyInt(), anyString());
 
         // 2. no URI; do not set
         associatedUris = new Uri[] {};
         mImsPhoneUT.setPhoneNumberForSourceIms(associatedUris);
 
-        if (isSubscriptionManagerServiceEnabled()) {
-            verify(mSubscriptionManagerService, never()).setNumberFromIms(anyInt(), anyString());
-        } else {
-            verify(mSubscriptionController, never()).setSubscriptionProperty(
-                    anyInt(), any(), any());
-        }
+        verify(mSubscriptionManagerService, never()).setNumberFromIms(anyInt(), anyString());
 
         // 3. null URI; do not set
         associatedUris = new Uri[] { null };
         mImsPhoneUT.setPhoneNumberForSourceIms(associatedUris);
 
-        if (isSubscriptionManagerServiceEnabled()) {
-            verify(mSubscriptionManagerService, never()).setNumberFromIms(anyInt(), anyString());
-        } else {
-            verify(mSubscriptionController, never()).setSubscriptionProperty(
-                    anyInt(), any(), any());
-        }
+        verify(mSubscriptionManagerService, never()).setNumberFromIms(anyInt(), anyString());
 
         // 4. null pointer; do not set
         mImsPhoneUT.setPhoneNumberForSourceIms(null);
 
-        if (isSubscriptionManagerServiceEnabled()) {
-            verify(mSubscriptionManagerService, never()).setNumberFromIms(anyInt(), anyString());
-        } else {
-            verify(mSubscriptionController, never()).setSubscriptionProperty(
-                    anyInt(), any(), any());
-        }
+        verify(mSubscriptionManagerService, never()).setNumberFromIms(anyInt(), anyString());
 
         // Clean up
         mContextFixture.addCallingOrSelfPermission("");
@@ -1227,6 +1185,9 @@ public class ImsPhoneTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testClearPhoneNumberForSourceIms() {
+        doReturn(true).when(mFeatureFlags)
+                .clearCachedImsPhoneNumberWhenDeviceLostImsRegistration();
+
         // In reality the method under test runs in phone process so has MODIFY_PHONE_STATE
         mContextFixture.addCallingOrSelfPermission(MODIFY_PHONE_STATE);
         int subId = 1;
@@ -1588,6 +1549,81 @@ public class ImsPhoneTest extends TelephonyTest {
 
         // verify that there is no update in the SimulatedCommands
         assertTrue(regInfo[0] == 1 && regInfo[1] == 1 && regInfo[2] == 1);
+    }
+
+    /**
+     * Verifies that valid state and reason is passed to RIL with RAT suggested actions
+     * when IMS registration state changes to unregistered.
+     */
+    @Test
+    @SmallTest
+    public void testUpdateImsRegistrationInfoWithRatSuggestedAction() {
+        doReturn(true).when(mFeatureFlags)
+                .addRatRelatedSuggestedActionToImsRegistration();
+
+        mSimulatedCommands.updateImsRegistrationInfo(0, 0, 0, 0, null);
+
+        int[] regInfo = mSimulatedCommands.getImsRegistrationInfo();
+        assertNotNull(regInfo);
+        assertTrue(regInfo[0] == 0 && regInfo[1] == 0 && regInfo[2] == 0);
+
+        RegistrationManager.RegistrationCallback registrationCallback =
+                mImsPhoneUT.getImsMmTelRegistrationCallback();
+
+        ImsReasonInfo reasonInfo = new ImsReasonInfo(ImsReasonInfo.CODE_REGISTRATION_ERROR,
+                ImsReasonInfo.CODE_UNSPECIFIED, "");
+
+        // unregistered with rat block
+        registrationCallback.onUnregistered(reasonInfo,
+                SUGGESTED_ACTION_TRIGGER_RAT_BLOCK,
+                REGISTRATION_TECH_LTE);
+        regInfo = mSimulatedCommands.getImsRegistrationInfo();
+
+        assertTrue(regInfo[0] == RegistrationManager.REGISTRATION_STATE_NOT_REGISTERED
+                && regInfo[1] == REGISTRATION_TECH_LTE
+                && regInfo[2] == SUGGESTED_ACTION_TRIGGER_RAT_BLOCK);
+
+        // reset the registration info saved in the SimulatedCommands
+        mSimulatedCommands.updateImsRegistrationInfo(0, 0, 0, 0, null);
+        regInfo = mSimulatedCommands.getImsRegistrationInfo();
+
+        assertTrue(regInfo[0] == 0 && regInfo[1] == 0 && regInfo[2] == 0);
+
+        // verfies that duplicated notification with the same suggested action is invoked
+        registrationCallback.onUnregistered(reasonInfo,
+                SUGGESTED_ACTION_TRIGGER_RAT_BLOCK,
+                REGISTRATION_TECH_LTE);
+        regInfo = mSimulatedCommands.getImsRegistrationInfo();
+
+        assertTrue(regInfo[0] == RegistrationManager.REGISTRATION_STATE_NOT_REGISTERED
+                && regInfo[1] == REGISTRATION_TECH_LTE
+                && regInfo[2] == SUGGESTED_ACTION_TRIGGER_RAT_BLOCK);
+
+        // unregistered with rat block clear
+        registrationCallback.onUnregistered(reasonInfo,
+                SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCK,
+                REGISTRATION_TECH_LTE);
+        regInfo = mSimulatedCommands.getImsRegistrationInfo();
+
+        assertTrue(regInfo[0] == RegistrationManager.REGISTRATION_STATE_NOT_REGISTERED
+                && regInfo[1] == REGISTRATION_TECH_LTE
+                && regInfo[2] == SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCK);
+
+        // reset the registration info saved in the SimulatedCommands
+        mSimulatedCommands.updateImsRegistrationInfo(0, 0, 0, 0, null);
+        regInfo = mSimulatedCommands.getImsRegistrationInfo();
+
+        assertTrue(regInfo[0] == 0 && regInfo[1] == 0 && regInfo[2] == 0);
+
+        // verfies that duplicated notification with the same suggested action is invoked
+        registrationCallback.onUnregistered(reasonInfo,
+                SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCK,
+                REGISTRATION_TECH_LTE);
+        regInfo = mSimulatedCommands.getImsRegistrationInfo();
+
+        assertTrue(regInfo[0] == RegistrationManager.REGISTRATION_STATE_NOT_REGISTERED
+                && regInfo[1] == REGISTRATION_TECH_LTE
+                && regInfo[2] == SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCK);
     }
 
     @Test

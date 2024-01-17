@@ -80,6 +80,7 @@ import android.telephony.BarringInfo;
 import android.telephony.CarrierConfigManager;
 import android.telephony.CellBroadcastIdRange;
 import android.telephony.CellIdentity;
+import android.telephony.CellularIdentifierDisclosure;
 import android.telephony.ImsiEncryptionInfo;
 import android.telephony.LinkCapacityEstimate;
 import android.telephony.NetworkScanRequest;
@@ -116,6 +117,7 @@ import com.android.internal.telephony.imsphone.ImsPhoneCallTracker;
 import com.android.internal.telephony.imsphone.ImsPhoneMmiCode;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
 import com.android.internal.telephony.metrics.VoiceCallSessionStats;
+import com.android.internal.telephony.security.CellularIdentifierDisclosureNotifier;
 import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
 import com.android.internal.telephony.subscription.SubscriptionManagerService.SubscriptionManagerServiceCallback;
 import com.android.internal.telephony.test.SimulatedRadioControl;
@@ -241,6 +243,7 @@ public class GsmCdmaPhone extends Phone {
             CellBroadcastConfigTracker.make(this, null, true);
 
     private boolean mIsNullCipherAndIntegritySupported = false;
+    private boolean mIsIdentifierDisclosureTransparencySupported = false;
 
     // Create Cfu (Call forward unconditional) so that dialing number &
     // mOnComplete (Message object passed by client) can be packed &
@@ -289,6 +292,8 @@ public class GsmCdmaPhone extends Phone {
     private final SubscriptionManager.OnSubscriptionsChangedListener mSubscriptionsChangedListener;
     private final CallWaitingController mCallWaitingController;
 
+    private CellularIdentifierDisclosureNotifier mIdentifierDisclosureNotifier;
+
     // Set via Carrier Config
     private boolean mIsN1ModeAllowedByCarrier = true;
     // Set via a call to the method on Phone; the only caller is IMS, and all of this code will
@@ -328,7 +333,7 @@ public class GsmCdmaPhone extends Phone {
 
         // phone type needs to be set before other initialization as other objects rely on it
         mPrecisePhoneType = precisePhoneType;
-        mVoiceCallSessionStats = new VoiceCallSessionStats(mPhoneId, this);
+        mVoiceCallSessionStats = new VoiceCallSessionStats(mPhoneId, this, featureFlags);
         mImsManagerFactory = imsManagerFactory;
         initOnce(ci);
         initRatSpecific(precisePhoneType);
@@ -345,7 +350,7 @@ public class GsmCdmaPhone extends Phone {
         mSignalStrengthController = mTelephonyComponentFactory.inject(
                 SignalStrengthController.class.getName()).makeSignalStrengthController(this);
         mSST = mTelephonyComponentFactory.inject(ServiceStateTracker.class.getName())
-                .makeServiceStateTracker(this, this.mCi);
+                .makeServiceStateTracker(this, this.mCi, featureFlags);
         mEmergencyNumberTracker = mTelephonyComponentFactory
                 .inject(EmergencyNumberTracker.class.getName()).makeEmergencyNumberTracker(
                         this, this.mCi);
@@ -374,18 +379,13 @@ public class GsmCdmaPhone extends Phone {
         mSST.registerForVoiceRegStateOrRatChanged(this, EVENT_VRS_OR_RAT_CHANGED, null);
         mSST.getServiceStateStats().registerDataNetworkControllerCallback();
 
-        if (isSubscriptionManagerServiceEnabled()) {
-            mSubscriptionManagerService.registerCallback(new SubscriptionManagerServiceCallback(
-                    this::post) {
-                @Override
-                public void onUiccApplicationsEnabledChanged(int subId) {
-                    reapplyUiccAppsEnablementIfNeeded(ENABLE_UICC_APPS_MAX_RETRIES);
-                }
-            });
-        } else {
-            SubscriptionController.getInstance().registerForUiccAppsEnabled(this,
-                    EVENT_UICC_APPS_ENABLEMENT_SETTING_CHANGED, null, false);
-        }
+        mSubscriptionManagerService.registerCallback(new SubscriptionManagerServiceCallback(
+                this::post) {
+            @Override
+            public void onUiccApplicationsEnabledChanged(int subId) {
+                reapplyUiccAppsEnablementIfNeeded(ENABLE_UICC_APPS_MAX_RETRIES);
+            }
+        });
 
         mLinkBandwidthEstimator = mTelephonyComponentFactory
                 .inject(LinkBandwidthEstimator.class.getName())
@@ -510,13 +510,26 @@ public class GsmCdmaPhone extends Phone {
         mContext.registerReceiver(mBroadcastReceiver, filter,
                 android.Manifest.permission.MODIFY_PHONE_STATE, null, Context.RECEIVER_EXPORTED);
 
-        mCDM = new CarrierKeyDownloadManager(this);
+        mCDM = new CarrierKeyDownloadManager(this, mFeatureFlags);
         mCIM = mTelephonyComponentFactory.inject(CarrierInfoManager.class.getName())
                 .makeCarrierInfoManager(this);
 
-        if (isSubscriptionManagerServiceEnabled()) {
-            initializeCarrierApps();
+        mCi.registerForImeiMappingChanged(this, EVENT_IMEI_MAPPING_CHANGED, null);
+
+        if (mFeatureFlags.enableIdentifierDisclosureTransparency()) {
+            logi(
+                    "enable_identifier_disclosure_transparency is on. Registering for cellular "
+                            + "identifier disclosures from phone "
+                            + getPhoneId());
+            mIdentifierDisclosureNotifier =
+                    mTelephonyComponentFactory
+                            .inject(CellularIdentifierDisclosureNotifier.class.getName())
+                            .makeIdentifierDisclosureNotifier();
+            mCi.registerForCellularIdentifierDisclosures(
+                    this, EVENT_CELL_IDENTIFIER_DISCLOSURE, null);
         }
+
+        initializeCarrierApps();
     }
 
     private void initRatSpecific(int precisePhoneType) {
@@ -573,11 +586,7 @@ public class GsmCdmaPhone extends Phone {
                 logd("update icc_operator_numeric=" + operatorNumeric);
                 tm.setSimOperatorNumericForPhone(mPhoneId, operatorNumeric);
 
-                if (isSubscriptionManagerServiceEnabled()) {
-                    mSubscriptionManagerService.setMccMnc(getSubId(), operatorNumeric);
-                } else {
-                    SubscriptionController.getInstance().setMccMnc(operatorNumeric, getSubId());
-                }
+                mSubscriptionManagerService.setMccMnc(getSubId(), operatorNumeric);
 
                 // Sets iso country property by retrieving from build-time system property
                 String iso = "";
@@ -589,11 +598,7 @@ public class GsmCdmaPhone extends Phone {
 
                 logd("init: set 'gsm.sim.operator.iso-country' to iso=" + iso);
                 tm.setSimCountryIsoForPhone(mPhoneId, iso);
-                if (isSubscriptionManagerServiceEnabled()) {
-                    mSubscriptionManagerService.setCountryIso(getSubId(), iso);
-                } else {
-                    SubscriptionController.getInstance().setCountryIso(iso, getSubId());
-                }
+                mSubscriptionManagerService.setCountryIso(getSubId(), iso);
 
                 // Updates MCC MNC device configuration information
                 logd("update mccmnc=" + operatorNumeric);
@@ -1366,15 +1371,13 @@ public class GsmCdmaPhone extends Phone {
                 && mImsPhone.isImsAvailable();
     }
 
-    private boolean useImsForPsOnlyCall() {
+    private boolean useImsForPsAttachedCall() {
         return isImsUseEnabled()
                 && mImsPhone != null
                 && isOutgoingImsVoiceAllowed()
                 && Settings.Global.getInt(mContext.getContentResolver(),
-                        "enable_allow_PS_only_dial", 1) == 1
-                && (mImsPhone.getServiceState().getState() == ServiceState.STATE_OUT_OF_SERVICE)
-                && (mSST.mSS.getRilVoiceRadioTechnology() == ServiceState.RIL_RADIO_TECHNOLOGY_NR
-                || (mSST.mSS.getState() == ServiceState.STATE_OUT_OF_SERVICE));
+                        "enable_allow_PS_attached_dial", 1) == 1
+                && (mImsPhone.getServiceState().getState() == ServiceState.STATE_OUT_OF_SERVICE);
     }
 
     @Override
@@ -1478,7 +1481,7 @@ public class GsmCdmaPhone extends Phone {
         boolean useImsForCall = useImsForCall(dialArgs)
                 && !shallDialOnCircuitSwitch(dialArgs.intentExtras)
                 && (isWpsCall ? allowWpsOverIms : true);
-        boolean useImsForPsOnlyCall = useImsForPsOnlyCall();
+        boolean useImsForPsAttachedCall = useImsForPsAttachedCall();
 
         Bundle extras = dialArgs.intentExtras;
         if (extras != null && extras.containsKey(PhoneConstants.EXTRA_COMPARE_DOMAIN)) {
@@ -1531,7 +1534,7 @@ public class GsmCdmaPhone extends Phone {
 
         if (DBG) {
             logi("useImsForCall=" + useImsForCall
-                    + ", useImsForPsOnlyCall=" + useImsForPsOnlyCall
+                    + ", useImsForPsAttachedCall=" + useImsForPsAttachedCall
                     + ", useOnlyDialedSimEccList=" + useOnlyDialedSimEccList
                     + ", isEmergency=" + isEmergency
                     + ", useImsForEmergency=" + useImsForEmergency
@@ -1573,7 +1576,7 @@ public class GsmCdmaPhone extends Phone {
         if ((useImsForCall && (!isMmiCode || isPotentialUssdCode))
                 || (isMmiCode && useImsForUt)
                 || useImsForEmergency
-                || (useImsForPsOnlyCall && !isMmiCode && !isPotentialUssdCode
+                || (useImsForPsAttachedCall && !isMmiCode && !isPotentialUssdCode
                            && !VideoProfile.isVideo(dialArgs.videoState))) {
             try {
                 if (DBG) logd("Trying IMS PS call");
@@ -1709,6 +1712,13 @@ public class GsmCdmaPhone extends Phone {
                 return mCT.dialGsm(mmi.mDialingNumber, mmi.getCLIRMode(), dialArgs.uusInfo,
                         dialArgs.intentExtras);
             } else {
+                UserHandle currentUserHandle = UserHandle.of(ActivityManager.getCurrentUser());
+                // Must be primary user to use supplementary service.
+                if(!currentUserHandle.isSystem()) {
+                    loge("dialInternal: Supplementary service not allowed in non-primary mode");
+                    throw new CallStateException(
+                           "Supplementary service is not allowed for non-primary user");
+                }
                 mPendingMMIs.add(mmi);
                 mMmiRegistrants.notifyRegistrants(new AsyncResult(null, mmi, null));
                 mmi.processCode();
@@ -3170,6 +3180,7 @@ public class GsmCdmaPhone extends Phone {
 
         handleNullCipherEnabledChange();
         mCi.setSuppServiceNotifications(true, null);
+        handleIdentifierDisclosureNotificationPreferenceChange();
     }
 
     private void handleRadioOn() {
@@ -3215,19 +3226,7 @@ public class GsmCdmaPhone extends Phone {
             }
             break;
             case EVENT_GET_DEVICE_IMEI_DONE :
-                ar = (AsyncResult)msg.obj;
-                if (ar.exception != null || ar.result == null) {
-                    loge("Exception received : " + ar.exception);
-                    break;
-                }
-                ImeiInfo imeiInfo = (ImeiInfo) ar.result;
-                if (!TextUtils.isEmpty(imeiInfo.imei)) {
-                    mImeiType = imeiInfo.type;
-                    mImei = imeiInfo.imei;
-                    mImeiSv = imeiInfo.svn;
-                } else {
-                    // TODO Report telephony anomaly
-                }
+                parseImeiInfo(msg);
                 break;
             case EVENT_GET_DEVICE_IDENTITY_DONE:{
                 ar = (AsyncResult)msg.obj;
@@ -3631,14 +3630,7 @@ public class GsmCdmaPhone extends Phone {
             case EVENT_SET_NULL_CIPHER_AND_INTEGRITY_DONE:
                 logd("EVENT_SET_NULL_CIPHER_AND_INTEGRITY_DONE");
                 ar = (AsyncResult) msg.obj;
-                // Only test for a success here in order to flip the support flag.
-                // Testing for the negative case, e.g. REQUEST_NOT_SUPPORTED, is insufficient
-                // because the modem or the RIL could still return exceptions for temporary
-                // failures even when the feature is unsupported.
-                if (ar == null || ar.exception == null) {
-                    mIsNullCipherAndIntegritySupported = true;
-                    return;
-                }
+                mIsNullCipherAndIntegritySupported = doesResultIndicateModemSupport(ar);
                 break;
 
             case EVENT_IMS_DEREGISTRATION_TRIGGERED:
@@ -3696,8 +3688,64 @@ public class GsmCdmaPhone extends Phone {
                     rsp.sendToTarget();
                 }
                 break;
+
+            case EVENT_IMEI_MAPPING_CHANGED:
+                logd("EVENT_GET_DEVICE_IMEI_CHANGE_DONE phoneId = " + getPhoneId());
+                parseImeiInfo(msg);
+                break;
+
+            case EVENT_CELL_IDENTIFIER_DISCLOSURE:
+                logd("EVENT_CELL_IDENTIFIER_DISCLOSURE phoneId = " + getPhoneId());
+
+                ar = (AsyncResult) msg.obj;
+                if (ar == null || ar.result == null || ar.exception != null) {
+                    Rlog.e(
+                            LOG_TAG,
+                            "Failed to process cellular identifier disclosure",
+                            ar.exception);
+                    break;
+                }
+
+                CellularIdentifierDisclosure disclosure = (CellularIdentifierDisclosure) ar.result;
+                if (mFeatureFlags.enableIdentifierDisclosureTransparency()
+                        && mIdentifierDisclosureNotifier != null
+                        && disclosure != null) {
+                    mIdentifierDisclosureNotifier.addDisclosure(disclosure);
+                }
+                break;
+
+            case EVENT_SET_IDENTIFIER_DISCLOSURE_ENABLED_DONE:
+                logd("EVENT_SET_IDENTIFIER_DISCLOSURE_ENABLED_DONE");
+                ar = (AsyncResult) msg.obj;
+                mIsIdentifierDisclosureTransparencySupported = doesResultIndicateModemSupport(ar);
+                break;
+
             default:
                 super.handleMessage(msg);
+        }
+    }
+
+    private boolean doesResultIndicateModemSupport(AsyncResult ar) {
+        // We can only say that the modem supports a call without ambiguity if there
+        // is no exception set on the response.  Testing for REQUEST_NOT_SUPPORTED, is
+        // insufficient because the modem or the RIL could still return exceptions for temporary
+        // failures even when the feature is unsupported.
+        return (ar == null || ar.exception == null);
+    }
+
+    private void parseImeiInfo(Message msg) {
+        AsyncResult ar = (AsyncResult)msg.obj;
+        if (ar.exception != null || ar.result == null) {
+            loge("parseImeiInfo :: Exception received : " + ar.exception);
+            return;
+        }
+        ImeiInfo imeiInfo = (ImeiInfo) ar.result;
+        if (!TextUtils.isEmpty(imeiInfo.imei)) {
+            mImeiType = imeiInfo.type;
+            mImei = imeiInfo.imei;
+            mImeiSv = imeiInfo.svn;
+        } else {
+            loge("parseImeiInfo :: IMEI value is empty");
         }
     }
 
@@ -4949,18 +4997,12 @@ public class GsmCdmaPhone extends Phone {
             return;
         }
 
-        SubscriptionInfo info;
-        if (isSubscriptionManagerServiceEnabled()) {
-            info = mSubscriptionManagerService
-                    .getAllSubInfoList(mContext.getOpPackageName(), mContext.getAttributionTag())
-                    .stream()
-                    .filter(subInfo -> subInfo.getIccId().equals(IccUtils.stripTrailingFs(iccId)))
-                    .findFirst()
-                    .orElse(null);
-        } else {
-            info = SubscriptionController.getInstance().getSubInfoForIccId(
-                    IccUtils.stripTrailingFs(iccId));
-        }
+        SubscriptionInfo info = mSubscriptionManagerService
+                .getAllSubInfoList(mContext.getOpPackageName(), mContext.getAttributionTag())
+                .stream()
+                .filter(subInfo -> subInfo.getIccId().equals(IccUtils.stripTrailingFs(iccId)))
+                .findFirst()
+                .orElse(null);
 
         logd("reapplyUiccAppsEnablementIfNeeded: retries=" + retries + ", subInfo=" + info);
 
@@ -5048,18 +5090,10 @@ public class GsmCdmaPhone extends Phone {
                 config.getBoolean(CarrierConfigManager.KEY_VONR_ON_BY_DEFAULT_BOOL);
 
         int setting = -1;
-        if (isSubscriptionManagerServiceEnabled()) {
-            SubscriptionInfoInternal subInfo = mSubscriptionManagerService
-                    .getSubscriptionInfoInternal(getSubId());
-            if (subInfo != null) {
-                setting = subInfo.getNrAdvancedCallingEnabled();
-            }
-        } else {
-            String result = SubscriptionController.getInstance().getSubscriptionProperty(
-                    getSubId(), SubscriptionManager.NR_ADVANCED_CALLING_ENABLED);
-            if (result != null) {
-                setting = Integer.parseInt(result);
-            }
+        SubscriptionInfoInternal subInfo = mSubscriptionManagerService
+                .getSubscriptionInfoInternal(getSubId());
+        if (subInfo != null) {
+            setting = subInfo.getNrAdvancedCallingEnabled();
         }
 
         logd("VoNR setting from telephony.db:"
@@ -5171,7 +5205,31 @@ public class GsmCdmaPhone extends Phone {
     }
 
     @Override
+    public void handleIdentifierDisclosureNotificationPreferenceChange() {
+        if (!mFeatureFlags.enableIdentifierDisclosureTransparency()) {
+            logi("Not handling identifier disclosure preference change. Feature flag "
+                    + "ENABLE_IDENTIFIER_DISCLOSURE_TRANSPARENCY disabled");
+            return;
+        }
+        boolean prefEnabled = getIdentifierDisclosureNotificationsPreferenceEnabled();
+
+        if (prefEnabled) {
+            mIdentifierDisclosureNotifier.enable();
+        } else {
+            mIdentifierDisclosureNotifier.disable();
+        }
+
+        mCi.setCellularIdentifierTransparencyEnabled(prefEnabled,
+                obtainMessage(EVENT_SET_IDENTIFIER_DISCLOSURE_ENABLED_DONE));
+    }
+
+    @Override
     public boolean isNullCipherAndIntegritySupported() {
         return mIsNullCipherAndIntegritySupported;
+    }
+
+    @Override
+    public boolean isIdentifierDisclosureTransparencySupported() {
+        return mIsIdentifierDisclosureTransparencySupported;
     }
 }

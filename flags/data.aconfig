@@ -1,6 +1,34 @@
 package: "com.android.internal.telephony.flags"
 
 flag {
+  name: "auto_switch_allow_roaming"
+  namespace: "telephony"
+  description: "Allow using roaming network as target if user allows it from settings."
+  bug: "306488039"
+}
+
+flag {
+  name: "auto_data_switch_rat_ss"
+  namespace: "telephony"
+  description: "Whether switch for better rat and signal strength"
+  bug:"260928808"
+}
+
+flag {
+  name: "use_alarm_callback"
+  namespace: "telephony"
+  description: "Use alarm callback instead of broadcast."
+  bug: "311476875"
+}
+
+flag {
+  name: "refine_preferred_data_profile_selection"
+  namespace: "telephony"
+  description: "Upon internet network connect, refine selection of preferred data profile."
+  bug: "311476883"
+}
+
+flag {
   name: "unthrottle_check_transport"
   namespace: "telephony"
   description: "Check transport when unthrottle."
@@ -26,4 +54,46 @@ flag {
   namespace: "telephony"
   description: "Force networks that have PRIORITIZE_BANDWIDTH or PRIORITIZE_LATENCY to be metered."
   bug: "301310451"
+  }
+
+flag {
+  name: "slicing_additional_error_codes"
+  namespace: "telephony"
+  description: "Support additional slicing error codes and functionality."
+  bug: "307378699"
+}
+
+flag {
+  name: "apn_setting_field_support_flag"
+  namespace: "telephony"
+  description: "Expose apn setting supporting field"
+  bug: "307038091"
+}
+
+flag {
+  name: "network_validation"
+  namespace: "telephony"
+  description: "Request network validation for data networks and response status."
+  bug:"286171724"
+}
+
+flag {
+ name: "notify_data_activity_changed_with_slot"
+  namespace: "telephony"
+  description: "notify data activity changed for slot id"
+  bug: "309896936"
+}
+
+flag {
+  name: "vonr_enabled_metric"
+  namespace: "telephony"
+  description: "Collect vonr status in voice call metric"
+  bug:"288449751"
+}
+
+flag {
+  name: "ignore_existing_networks_for_internet_allowed_checking"
+  namespace: "telephony"
+  description: "Ignore existing networks when checking if internet is allowed"
+  bug: "284420611"
 }

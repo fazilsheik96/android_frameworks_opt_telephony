@@ -255,6 +255,7 @@ public class DataProfileManager extends Handler {
         cursor.close();
         return dataProfile;
     }
+
     /**
      * Update all data profiles, including preferred data profile, and initial attach data profile.
      * Also send those profiles down to the modem if needed.
@@ -434,18 +435,36 @@ public class DataProfileManager extends Handler {
      * @param internetNetworks The connected internet data networks.
      */
     private void onInternetDataNetworkConnected(@NonNull Set<DataNetwork> internetNetworks) {
-        // Most of the cases there should be only one.
-        // but in case there are multiple, find the default internet network, and choose the
-        // one which has longest life cycle.
-        DataProfile defaultProfile = internetNetworks.stream()
-                .filter(network -> mPreferredDataProfile == null
-                        // Find the one most resembles the current preferred profile,
-                        // avoiding e.g. DUN default network.
-                        || canPreferredDataProfileSatisfy(
-                        network.getAttachedNetworkRequestList()))
-                .map(DataNetwork::getDataProfile)
-                .min(Comparator.comparingLong(DataProfile::getLastSetupTimestamp))
-                .orElse(null);
+        DataProfile defaultProfile = null;
+        if (mFeatureFlags.refinePreferredDataProfileSelection()) {
+            // Most of the cases there should be only one.
+            // but in case there are multiple, find the default internet network, and choose the
+            // one which has longest life cycle.
+            defaultProfile = internetNetworks.stream()
+                    .filter(network -> mPreferredDataProfile == null
+                            // Find the one most resembles the current preferred profile,
+                            // avoiding e.g. DUN default network.
+                            || canPreferredDataProfileSatisfy(
+                            network.getAttachedNetworkRequestList()))
+                    .map(DataNetwork::getDataProfile)
+                    .min(Comparator.comparingLong(DataProfile::getLastSetupTimestamp))
+                    .orElse(null);
+        } else {
+            if (internetNetworks.size() == 1) {
+                // Most of the cases there should be only one.
+                defaultProfile = internetNetworks.stream().findFirst().get().getDataProfile();
+            } else if (internetNetworks.size() > 1) {
+                // but in case there are multiple, find the default internet network, and choose the
+                // one which has longest life cycle.
+                defaultProfile = internetNetworks.stream()
+                        .filter(network -> mPreferredDataProfile == null
+                                || canPreferredDataProfileSatisfy(
+                                network.getAttachedNetworkRequestList()))
+                        .map(DataNetwork::getDataProfile)
+                        .min(Comparator.comparingLong(DataProfile::getLastSetupTimestamp))
+                        .orElse(null);
+            }
+        }
 
         // Update a working internet data profile as a future candidate for preferred data profile
         // after APNs are reset to default
@@ -660,12 +679,12 @@ public class DataProfileManager extends Handler {
      */
     public @Nullable DataProfile getDataProfileForNetworkRequest(
             @NonNull TelephonyNetworkRequest networkRequest, @NetworkType int networkType,
-            boolean isNtn, boolean ignorePermanentFailure) {
+            boolean isNtn, boolean isEsimBootstrapProvisioning, boolean ignorePermanentFailure) {
         ApnSetting apnSetting = null;
         if (networkRequest.hasAttribute(TelephonyNetworkRequest
                 .CAPABILITY_ATTRIBUTE_APN_SETTING)) {
             apnSetting = getApnSettingForNetworkRequest(networkRequest, networkType, isNtn,
-                    ignorePermanentFailure);
+                    isEsimBootstrapProvisioning, ignorePermanentFailure);
         }
 
         TrafficDescriptor.Builder trafficDescriptorBuilder = new TrafficDescriptor.Builder();
@@ -731,48 +750,52 @@ public class DataProfileManager extends Handler {
      */
     private @Nullable ApnSetting getApnSettingForNetworkRequest(
             @NonNull TelephonyNetworkRequest networkRequest, @NetworkType int networkType,
-            boolean isNtn, boolean ignorePermanentFailure) {
+            boolean isNtn, boolean isEsimBootStrapProvisioning, boolean ignorePermanentFailure) {
         if (!networkRequest.hasAttribute(
                 TelephonyNetworkRequest.CAPABILITY_ATTRIBUTE_APN_SETTING)) {
             loge("Network request does not have APN setting attribute.");
             return null;
         }
 
-        if (mFeatureFlags.carrierEnabledSatelliteFlag()) {
-            // If the preferred data profile can be used, always use it if it can satisfy the
-            // network request with current network type (even though it's been marked as permanent
-            // failed.)
-            if (mPreferredDataProfile != null
-                    && networkRequest.canBeSatisfiedBy(mPreferredDataProfile)
-                    && mPreferredDataProfile.getApnSetting() != null
-                    && mPreferredDataProfile.getApnSetting().canSupportNetworkType(networkType)
-                    && ((isNtn && mPreferredDataProfile.getApnSetting().isForInfrastructure(
-                            ApnSetting.INFRASTRUCTURE_SATELLITE))
-                    || (!isNtn && mPreferredDataProfile.getApnSetting().isForInfrastructure(
-                            ApnSetting.INFRASTRUCTURE_CELLULAR)))) {
-                if (ignorePermanentFailure || !mPreferredDataProfile.getApnSetting()
-                        .getPermanentFailed()) {
-                    return mPreferredDataProfile.getApnSetting();
+        // if esim bootstrap provisioning in progress, do not apply preferred data profile
+        if (!isEsimBootStrapProvisioning) {
+            if (mFeatureFlags.carrierEnabledSatelliteFlag()) {
+                // If the preferred data profile can be used, always use it if it can satisfy the
+                // network request with current network type (even though it's been marked as
+                // permanent failed.)
+                if (mPreferredDataProfile != null
+                        && networkRequest.canBeSatisfiedBy(mPreferredDataProfile)
+                        && mPreferredDataProfile.getApnSetting() != null
+                        && mPreferredDataProfile.getApnSetting().canSupportNetworkType(networkType)
+                        && ((isNtn && mPreferredDataProfile.getApnSetting().isForInfrastructure(
+                        ApnSetting.INFRASTRUCTURE_SATELLITE))
+                        || (!isNtn && mPreferredDataProfile.getApnSetting().isForInfrastructure(
+                        ApnSetting.INFRASTRUCTURE_CELLULAR)))) {
+                    if (ignorePermanentFailure || !mPreferredDataProfile.getApnSetting()
+                            .getPermanentFailed()) {
+                        return mPreferredDataProfile.getApnSetting();
+                    }
+                    log("The preferred data profile is permanently failed. Only condition based "
+                            + "retry can happen.");
+                    return null;
                 }
-                log("The preferred data profile is permanently failed. Only condition based "
-                        + "retry can happen.");
-                return null;
-            }
-        } else {
-            // If the preferred data profile can be used, always use it if it can satisfy the
-            // network request with current network type (even though it's been marked as permanent
-            // failed.)
-            if (mPreferredDataProfile != null
-                    && networkRequest.canBeSatisfiedBy(mPreferredDataProfile)
-                    && mPreferredDataProfile.getApnSetting() != null
-                    && mPreferredDataProfile.getApnSetting().canSupportNetworkType(networkType)) {
-                if (ignorePermanentFailure || !mPreferredDataProfile.getApnSetting()
-                        .getPermanentFailed()) {
-                    return mPreferredDataProfile.getApnSetting();
+            } else {
+                // If the preferred data profile can be used, always use it if it can satisfy the
+                // network request with current network type (even though it's been marked as
+                // permanent failed.)
+                if (mPreferredDataProfile != null
+                        && networkRequest.canBeSatisfiedBy(mPreferredDataProfile)
+                        && mPreferredDataProfile.getApnSetting() != null
+                        && mPreferredDataProfile.getApnSetting()
+                        .canSupportNetworkType(networkType)) {
+                    if (ignorePermanentFailure || !mPreferredDataProfile.getApnSetting()
+                            .getPermanentFailed()) {
+                        return mPreferredDataProfile.getApnSetting();
+                    }
+                    log("The preferred data profile is permanently failed. Only condition based "
+                            + "retry can happen.");
+                    return null;
                 }
-                log("The preferred data profile is permanently failed. Only condition based "
-                        + "retry can happen.");
-                return null;
             }
         }
 
@@ -798,6 +821,8 @@ public class DataProfileManager extends Handler {
                 .filter((dp) -> {
                     if (dp.getApnSetting() == null) return false;
                     if (!dp.getApnSetting().canSupportNetworkType(networkType)) return false;
+                    if (isEsimBootStrapProvisioning
+                            != dp.getApnSetting().isEsimBootstrapProvisioning()) return false;
                     if (mFeatureFlags.carrierEnabledSatelliteFlag()) {
                         if (isNtn && !dp.getApnSetting().isForInfrastructure(
                                 ApnSetting.INFRASTRUCTURE_SATELLITE)) {
@@ -840,6 +865,10 @@ public class DataProfileManager extends Handler {
             return null;
         }
 
+        if (isEsimBootStrapProvisioning) {
+            log("Found esim bootstrap provisioning data profile for network request: "
+                    + dataProfiles.get(0).getApnSetting());
+        }
         return dataProfiles.get(0).getApnSetting();
     }
 
@@ -885,7 +914,9 @@ public class DataProfileManager extends Handler {
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_DUN)
                         .build(), mPhone);
         return getDataProfileForNetworkRequest(networkRequest, networkType,
-                mPhone.getServiceState().isUsingNonTerrestrialNetwork(), true) != null;
+                mPhone.getServiceState().isUsingNonTerrestrialNetwork(),
+                mDataNetworkController.isEsimBootStrapProvisioningActivated(),
+                true) != null;
     }
 
     /**
@@ -1060,6 +1091,8 @@ public class DataProfileManager extends Handler {
         apnBuilder.setCarrierId(apn1.getCarrierId());
         apnBuilder.setSkip464Xlat(apn1.getSkip464Xlat());
         apnBuilder.setAlwaysOn(apn1.isAlwaysOn());
+        apnBuilder.setInfrastructureBitmask(apn1.getInfrastructureBitmask());
+        apnBuilder.setEsimBootstrapProvisioning(apn1.isEsimBootstrapProvisioning());
 
         return new DataProfile.Builder()
                 .setApnSetting(apnBuilder.build())

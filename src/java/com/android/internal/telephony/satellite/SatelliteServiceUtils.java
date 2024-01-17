@@ -42,7 +42,7 @@ import android.telephony.satellite.stub.SatelliteResult;
 
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
-import com.android.internal.telephony.SubscriptionController;
+import com.android.internal.telephony.RILUtils;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 
 import java.util.Arrays;
@@ -218,7 +218,7 @@ public class SatelliteServiceUtils {
      * @param ntnSignalStrength The non-terrestrial signal strength from the satellite service.
      * @return The converted non-terrestrial signal strength for the framework.
      */
-    @Nullable public static NtnSignalStrength fromModemInterface(
+    @Nullable public static NtnSignalStrength fromNtnSignalStrength(
             android.telephony.satellite.stub.NtnSignalStrength ntnSignalStrength) {
         return new NtnSignalStrength(ntnSignalStrength.signalStrengthLevel);
     }
@@ -271,14 +271,8 @@ public class SatelliteServiceUtils {
     public static int getValidSatelliteSubId(int subId, @NonNull Context context) {
         final long identity = Binder.clearCallingIdentity();
         try {
-            boolean isActive;
-            if (PhoneFactory.isSubscriptionManagerServiceEnabled()) {
-                isActive = SubscriptionManagerService.getInstance().isActiveSubId(subId,
-                        context.getOpPackageName(), context.getAttributionTag());
-            } else {
-                isActive = SubscriptionController.getInstance().isActiveSubId(subId,
-                        context.getOpPackageName(), context.getAttributionTag());
-            }
+            boolean isActive = SubscriptionManagerService.getInstance().isActiveSubId(subId,
+                    context.getOpPackageName(), context.getAttributionTag());
 
             if (isActive) {
                 return subId;

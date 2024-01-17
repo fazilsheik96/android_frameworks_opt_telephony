@@ -30,6 +30,8 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.RegistrantList;
 import android.os.RemoteException;
+import android.telephony.IBooleanConsumer;
+import android.telephony.IIntegerConsumer;
 import android.telephony.Rlog;
 import android.telephony.satellite.NtnSignalStrength;
 import android.telephony.satellite.SatelliteCapabilities;
@@ -47,8 +49,6 @@ import android.util.Pair;
 import com.android.internal.R;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.ExponentialBackoff;
-import com.android.internal.telephony.IBooleanConsumer;
-import com.android.internal.telephony.IIntegerConsumer;
 
 import java.util.Arrays;
 import java.util.List;
@@ -91,6 +91,8 @@ public class SatelliteModemInterface {
             new RegistrantList();
     @NonNull private final RegistrantList mNtnSignalStrengthChangedRegistrants =
             new RegistrantList();
+    @NonNull private final RegistrantList mSatelliteCapabilitiesChangedRegistrants =
+            new RegistrantList();
 
     @NonNull private final ISatelliteListener mListener = new ISatelliteListener.Stub() {
         @Override
@@ -101,12 +103,14 @@ public class SatelliteModemInterface {
         @Override
         public void onSatelliteDatagramReceived(
                 android.telephony.satellite.stub.SatelliteDatagram datagram, int pendingCount) {
+            logd("onSatelliteDatagramReceived: pendingCount=" + pendingCount);
             mSatelliteDatagramsReceivedRegistrants.notifyResult(new Pair<>(
                     SatelliteServiceUtils.fromSatelliteDatagram(datagram), pendingCount));
         }
 
         @Override
         public void onPendingDatagrams() {
+            logd("onPendingDatagrams");
             mPendingDatagramsRegistrants.notifyResult(null);
         }
 
@@ -145,7 +149,14 @@ public class SatelliteModemInterface {
         public void onNtnSignalStrengthChanged(
                 android.telephony.satellite.stub.NtnSignalStrength ntnSignalStrength) {
             mNtnSignalStrengthChangedRegistrants.notifyResult(
-                    SatelliteServiceUtils.fromModemInterface(ntnSignalStrength));
+                    SatelliteServiceUtils.fromNtnSignalStrength(ntnSignalStrength));
+        }
+
+        @Override
+        public void onSatelliteCapabilitiesChanged(
+                android.telephony.satellite.stub.SatelliteCapabilities satelliteCapabilities) {
+            mSatelliteCapabilitiesChangedRegistrants.notifyResult(
+                    SatelliteServiceUtils.fromSatelliteCapabilities(satelliteCapabilities));
         }
     };
 
@@ -470,6 +481,27 @@ public class SatelliteModemInterface {
      */
     public void unregisterForNtnSignalStrengthChanged(@NonNull Handler h) {
         mNtnSignalStrengthChangedRegistrants.remove(h);
+    }
+
+    /**
+     * Registers for satellite capabilities changed.
+     *
+     * @param h Handler for notification message.
+     * @param what User-defined message code.
+     * @param obj User object.
+     */
+    public void registerForSatelliteCapabilitiesChanged(
+            @NonNull Handler h, int what, @Nullable Object obj) {
+        mSatelliteCapabilitiesChangedRegistrants.add(h, what, obj);
+    }
+
+    /**
+     * Unregisters for satellite capabilities changed.
+     *
+     * @param h Handler to be removed from the registrant list.
+     */
+    public void unregisterForSatelliteCapabilitiesChanged(@NonNull Handler h) {
+        mSatelliteCapabilitiesChangedRegistrants.remove(h);
     }
 
     /**

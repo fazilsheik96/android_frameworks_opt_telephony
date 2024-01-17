@@ -71,7 +71,6 @@ import android.telephony.PhysicalChannelConfig;
 import android.telephony.RadioAccessFamily;
 import android.telephony.ServiceState;
 import android.telephony.ServiceState.RilRadioTechnology;
-import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.SubscriptionManager.OnSubscriptionsChangedListener;
 import android.telephony.TelephonyManager;
@@ -95,6 +94,9 @@ import com.android.internal.telephony.data.AccessNetworksManager;
 import com.android.internal.telephony.data.AccessNetworksManager.AccessNetworksManagerCallback;
 import com.android.internal.telephony.data.DataNetwork;
 import com.android.internal.telephony.data.DataNetworkController.DataNetworkControllerCallback;
+import com.android.internal.telephony.domainselection.DomainSelectionResolver;
+import com.android.internal.telephony.emergency.EmergencyStateTracker;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.imsphone.ImsPhone;
 import com.android.internal.telephony.metrics.RadioPowerStateStats;
 import com.android.internal.telephony.metrics.ServiceStateStats;
@@ -328,8 +330,6 @@ public class ServiceStateTracker extends Handler {
     private boolean mDeviceShuttingDown = false;
     /** Keep track of SPN display rules, so we only broadcast intent if something changes. */
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
-    private boolean mSpnUpdatePending = false;
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private String mCurSpn = null;
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private String mCurDataSpn = null;
@@ -349,8 +349,6 @@ public class ServiceStateTracker extends Handler {
 
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private SubscriptionManager mSubscriptionManager;
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
-    private SubscriptionController mSubscriptionController;
     private SubscriptionManagerService mSubscriptionManagerService;
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     private final SstSubscriptionsChangedListener mOnSubscriptionsChangedListener =
@@ -425,12 +423,6 @@ public class ServiceStateTracker extends Handler {
                 mPhone.sendSubscriptionSettings(restoreSelection);
 
                 setDataNetworkTypeForPhone(mSS.getRilDataRadioTechnology());
-
-                if (mSpnUpdatePending) {
-                    mSubscriptionController.setPlmnSpn(mPhone.getPhoneId(), mCurShowPlmn,
-                            mCurPlmn, mCurShowSpn, mCurSpn);
-                    mSpnUpdatePending = false;
-                }
 
                 // Remove old network selection sharedPreferences since SP key names are now
                 // changed to include subId. This will be done only once when upgrading from an
@@ -637,7 +629,8 @@ public class ServiceStateTracker extends Handler {
      */
     private AccessNetworksManagerCallback mAccessNetworksManagerCallback = null;
 
-    public ServiceStateTracker(GsmCdmaPhone phone, CommandsInterface ci) {
+    public ServiceStateTracker(GsmCdmaPhone phone, CommandsInterface ci,
+            FeatureFlags featureFlags) {
         mNitzState = TelephonyComponentFactory.getInstance()
                 .inject(NitzStateMachine.class.getName())
                 .makeNitzStateMachine(phone);
@@ -666,12 +659,7 @@ public class ServiceStateTracker extends Handler {
         mCi.registerForCellInfoList(this, EVENT_UNSOL_CELL_INFO_LIST, null);
         mCi.registerForPhysicalChannelConfiguration(this, EVENT_PHYSICAL_CHANNEL_CONFIG, null);
 
-        if (mPhone.isSubscriptionManagerServiceEnabled()) {
-            mSubscriptionManagerService = SubscriptionManagerService.getInstance();
-        } else {
-            mSubscriptionController = SubscriptionController.getInstance();
-        }
-
+        mSubscriptionManagerService = SubscriptionManagerService.getInstance();
         mSubscriptionManager = SubscriptionManager.from(phone.getContext());
         mSubscriptionManager.addOnSubscriptionsChangedListener(
                 new android.os.HandlerExecutor(this), mOnSubscriptionsChangedListener);
@@ -727,7 +715,7 @@ public class ServiceStateTracker extends Handler {
         mCi.setOnRestrictedStateChanged(this, EVENT_RESTRICTED_STATE_CHANGED, null);
         updatePhoneType();
 
-        mCSST = new CarrierServiceStateTracker(phone, this);
+        mCSST = new CarrierServiceStateTracker(phone, this, featureFlags);
 
         registerForNetworkAttached(mCSST,
                 CarrierServiceStateTracker.CARRIER_EVENT_VOICE_REGISTRATION, null);
@@ -1971,16 +1959,15 @@ public class ServiceStateTracker extends Handler {
                 err = ((CommandException)(ar.exception)).getCommandError();
             }
 
-            if (mCi.getRadioState() != TelephonyManager.RADIO_POWER_ON) {
-                log("handlePollStateResult: Invalid response due to radio off or unavailable. "
-                        + "Set ServiceState to out of service.");
-                pollStateInternal(false);
-                return;
-            }
-
             if (err == CommandException.Error.RADIO_NOT_AVAILABLE) {
-                loge("handlePollStateResult: RIL returned RADIO_NOT_AVAILABLE when radio is on.");
-                cancelPollState();
+                loge("handlePollStateResult: RIL returned RADIO_NOT_AVAILABLE.");
+                if (mCi.getRadioState() == TelephonyManager.RADIO_POWER_ON) {
+                    cancelPollState();
+                } else {
+                    handlePollStateInternalForRadioOffOrUnavailable(
+                            mCi.getRadioState() == TelephonyManager.RADIO_POWER_OFF);
+                    pollStateDone();
+                }
                 return;
             }
 
@@ -2812,18 +2799,10 @@ public class ServiceStateTracker extends Handler {
             SubscriptionManager.putPhoneIdAndSubIdExtra(intent, mPhone.getPhoneId());
             mPhone.getContext().sendStickyBroadcastAsUser(intent, UserHandle.ALL);
 
-            if (mPhone.isSubscriptionManagerServiceEnabled()) {
-                if (SubscriptionManager.isValidSubscriptionId(subId)) {
-                    mSubscriptionManagerService.setCarrierName(subId, TextUtils.emptyIfNull(
-                            getCarrierName(data.shouldShowPlmn(), data.getPlmn(),
-                                    data.shouldShowSpn(), data.getSpn())));
-                }
-            } else {
-                if (!mSubscriptionController.setPlmnSpn(mPhone.getPhoneId(),
-                        data.shouldShowPlmn(), data.getPlmn(), data.shouldShowSpn(),
-                        data.getSpn())) {
-                    mSpnUpdatePending = true;
-                }
+            if (SubscriptionManager.isValidSubscriptionId(subId)) {
+                mSubscriptionManagerService.setCarrierName(subId, TextUtils.emptyIfNull(
+                        getCarrierName(data.shouldShowPlmn(), data.getPlmn(),
+                                data.shouldShowSpn(), data.getSpn())));
             }
         }
         mCurShowSpn = data.shouldShowSpn();
@@ -3352,42 +3331,17 @@ public class ServiceStateTracker extends Handler {
 
     private void pollStateInternal(boolean modemTriggered) {
         mPollingContext = new int[1];
-        NetworkRegistrationInfo nri;
 
         log("pollState: modemTriggered=" + modemTriggered + ", radioState=" + mCi.getRadioState());
 
         switch (mCi.getRadioState()) {
             case TelephonyManager.RADIO_POWER_UNAVAILABLE:
-                // Preserve the IWLAN registration state, because that should not be affected by
-                // radio availability.
-                nri = mNewSS.getNetworkRegistrationInfo(
-                        NetworkRegistrationInfo.DOMAIN_PS,
-                        AccessNetworkConstants.TRANSPORT_TYPE_WLAN);
-                mNewSS.setOutOfService(mAccessNetworksManager.isInLegacyMode(), false);
-                // Add the IWLAN registration info back to service state.
-                if (nri != null) {
-                    mNewSS.addNetworkRegistrationInfo(nri);
-                }
-                mPhone.getSignalStrengthController().setSignalStrengthDefaultValues();
-                mLastNitzData = null;
-                mNitzState.handleNetworkUnavailable();
+                handlePollStateInternalForRadioOffOrUnavailable(false);
                 pollStateDone();
                 break;
 
             case TelephonyManager.RADIO_POWER_OFF:
-                // Preserve the IWLAN registration state, because that should not be affected by
-                // radio availability.
-                nri = mNewSS.getNetworkRegistrationInfo(
-                        NetworkRegistrationInfo.DOMAIN_PS,
-                        AccessNetworkConstants.TRANSPORT_TYPE_WLAN);
-                mNewSS.setOutOfService(mAccessNetworksManager.isInLegacyMode(), true);
-                // Add the IWLAN registration info back to service state.
-                if (nri != null) {
-                    mNewSS.addNetworkRegistrationInfo(nri);
-                }
-                mPhone.getSignalStrengthController().setSignalStrengthDefaultValues();
-                mLastNitzData = null;
-                mNitzState.handleNetworkUnavailable();
+                handlePollStateInternalForRadioOffOrUnavailable(true);
                 // Don't poll when device is shutting down or the poll was not modemTriggered
                 // (they sent us new radio data) and the current network is not IWLAN
                 if (mDeviceShuttingDown ||
@@ -3433,6 +3387,21 @@ public class ServiceStateTracker extends Handler {
             mCi.getNetworkSelectionMode(obtainMessage(
                     EVENT_POLL_STATE_NETWORK_SELECTION_MODE, mPollingContext));
         }
+    }
+
+    private void handlePollStateInternalForRadioOffOrUnavailable(boolean radioOff) {
+        // Preserve the IWLAN registration state, which should not be affected by radio availability
+        NetworkRegistrationInfo nri = mNewSS.getNetworkRegistrationInfo(
+                NetworkRegistrationInfo.DOMAIN_PS,
+                AccessNetworkConstants.TRANSPORT_TYPE_WLAN);
+        mNewSS.setOutOfService(mAccessNetworksManager.isInLegacyMode(), radioOff);
+        // Add the IWLAN registration info back to service state.
+        if (nri != null) {
+            mNewSS.addNetworkRegistrationInfo(nri);
+        }
+        mPhone.getSignalStrengthController().setSignalStrengthDefaultValues();
+        mLastNitzData = null;
+        mNitzState.handleNetworkUnavailable();
     }
 
     /**
@@ -4558,23 +4527,11 @@ public class ServiceStateTracker extends Handler {
         }
         Context context = mPhone.getContext();
 
-        if (mPhone.isSubscriptionManagerServiceEnabled()) {
-            SubscriptionInfoInternal subInfo = mSubscriptionManagerService
-                    .getSubscriptionInfoInternal(mPhone.getSubId());
-            if (subInfo == null || !subInfo.isVisible()) {
-                log("cannot setNotification on invisible subid mSubId=" + mSubId);
-                return;
-            }
-        } else {
-            SubscriptionInfo info = mSubscriptionController
-                    .getActiveSubscriptionInfo(mPhone.getSubId(), context.getOpPackageName(),
-                            context.getAttributionTag());
-
-            //if subscription is part of a group and non-primary, suppress all notifications
-            if (info == null || (info.isOpportunistic() && info.getGroupUuid() != null)) {
-                log("cannot setNotification on invisible subid mSubId=" + mSubId);
-                return;
-            }
+        SubscriptionInfoInternal subInfo = mSubscriptionManagerService
+                .getSubscriptionInfoInternal(mPhone.getSubId());
+        if (subInfo == null || !subInfo.isVisible()) {
+            log("cannot setNotification on invisible subid mSubId=" + mSubId);
+            return;
         }
 
         // Needed because sprout RIL sends these when they shouldn't?
@@ -5038,6 +4995,9 @@ public class ServiceStateTracker extends Handler {
     public void powerOffRadioSafely() {
         synchronized (this) {
             SatelliteController.getInstance().onCellularRadioPowerOffRequested();
+            if (DomainSelectionResolver.getInstance().isDomainSelectionSupported()) {
+                EmergencyStateTracker.getInstance().onCellularRadioPowerOffRequested();
+            }
             if (!mPendingRadioPowerOffAfterDataOff) {
                 // hang up all active voice calls first
                 if (mPhone.isPhoneTypeGsm() && mPhone.isInCall()) {
@@ -5367,7 +5327,6 @@ public class ServiceStateTracker extends Handler {
                 + hasMessages(EVENT_POWER_OFF_RADIO_IMS_DEREG_TIMEOUT));
         pw.println(" mRadioPowerOffReasons=" + mRadioPowerOffReasons);
         pw.println(" mDeviceShuttingDown=" + mDeviceShuttingDown);
-        pw.println(" mSpnUpdatePending=" + mSpnUpdatePending);
         pw.println(" mCellInfoMinIntervalMs=" + mCellInfoMinIntervalMs);
         pw.println(" mEriManager=" + mEriManager);
 

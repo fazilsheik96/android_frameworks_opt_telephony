@@ -40,6 +40,7 @@ import android.telephony.NetworkRegistrationInfo;
 import android.telephony.ServiceState;
 import android.telephony.TelephonyManager;
 import android.telephony.ims.ImsReasonInfo;
+import android.telephony.ims.ImsRegistrationAttributes;
 import android.telephony.ims.ProvisioningManager;
 import android.telephony.ims.RegistrationManager.ImsRegistrationState;
 import android.telephony.ims.feature.MmTelFeature.MmTelCapabilities;
@@ -232,6 +233,12 @@ public class ImsStats {
         } else {
             ImsRegistrationStats stats = copyOfDimensionsOnly(mLastRegistrationStats);
 
+            if (stats.rat == TelephonyManager.NETWORK_TYPE_UNKNOWN) {
+                logw("conclude: discarding UNKNOWN RAT, duration=%d", duration);
+                mLastTimestamp = now;
+                return;
+            }
+
             switch (mLastRegistrationState) {
                 case REGISTRATION_STATE_REGISTERED:
                     stats.registeredMillis = duration;
@@ -286,6 +293,7 @@ public class ImsStats {
             mLastRegistrationStats.rat = newRat;
             ratChanged = true;
         }
+        mLastRegistrationStats.isIwlanCrossSim = radioTech == REGISTRATION_TECH_CROSS_SIM;
 
         boolean voiceAvailableNow = capabilities.isCapable(CAPABILITY_TYPE_VOICE);
         boolean voiceAvailabilityChanged =
@@ -325,15 +333,18 @@ public class ImsStats {
     }
 
     /** Updates the stats when IMS registration succeeds. */
-    public synchronized void onImsRegistered(@TransportType int imsRadioTech) {
+    public synchronized void onImsRegistered(ImsRegistrationAttributes attributes) {
         conclude();
 
-        mLastTransportType = imsRadioTech;
+        mLastTransportType = attributes.getTransportType();
         // NOTE: status can be unregistered (no registering phase)
         if (mLastRegistrationState == REGISTRATION_STATE_NOT_REGISTERED) {
             updateImsRegistrationStats();
         }
-        mLastRegistrationStats.rat = convertTransportTypeToNetworkType(imsRadioTech);
+        mLastRegistrationStats.rat =
+                convertTransportTypeToNetworkType(attributes.getTransportType());
+        mLastRegistrationStats.isIwlanCrossSim = attributes.getRegistrationTechnology()
+                == REGISTRATION_TECH_CROSS_SIM;
         mLastRegistrationState = REGISTRATION_STATE_REGISTERED;
     }
 
@@ -345,6 +356,8 @@ public class ImsStats {
         ImsRegistrationTermination termination = new ImsRegistrationTermination();
         if (mLastRegistrationState != REGISTRATION_STATE_NOT_REGISTERED) {
             termination.carrierId = mLastRegistrationStats.carrierId;
+            termination.ratAtEnd = getRatAtEnd(mLastRegistrationStats.rat);
+            termination.isIwlanCrossSim = mLastRegistrationStats.isIwlanCrossSim;
         } else {
             // if the registration state is from unregistered to unregistered.
             termination.carrierId = mPhone.getDefaultPhone().getCarrierId();
@@ -360,16 +373,20 @@ public class ImsStats {
 
         // Reset state to unregistered.
         mLastRegistrationState = REGISTRATION_STATE_NOT_REGISTERED;
-        mLastRegistrationStats.rat = TelephonyManager.NETWORK_TYPE_UNKNOWN;
         mLastAvailableFeatures = new MmTelCapabilities();
     }
 
     /** Updates the RAT when service state changes. */
     public synchronized void onServiceStateChanged(ServiceState state) {
-        if (mLastTransportType == AccessNetworkConstants.TRANSPORT_TYPE_WWAN
-                && mLastRegistrationState != REGISTRATION_STATE_NOT_REGISTERED) {
-            mLastRegistrationStats.rat =
-                    ServiceStateStats.getRat(state, NetworkRegistrationInfo.DOMAIN_PS);
+        conclude();
+
+        @NetworkType int newRat = state.getDataNetworkType();
+        MmTelCapabilities lastCapableFeatures = getLastCapableFeaturesForNetworkType(newRat);
+
+        if (lastCapableFeatures != null) {
+            mLastRegistrationStats.rat = newRat;
+        } else {
+            mLastRegistrationStats.rat = TelephonyManager.NETWORK_TYPE_UNKNOWN;
         }
     }
 
@@ -428,8 +445,20 @@ public class ImsStats {
         switch (radioTech) {
             case REGISTRATION_TECH_NONE:
                 return null;
-            case REGISTRATION_TECH_CROSS_SIM:
             case REGISTRATION_TECH_IWLAN:
+            case REGISTRATION_TECH_CROSS_SIM:
+                return mLastWlanCapableFeatures;
+            default:
+                return mLastWwanCapableFeatures;
+        }
+    }
+
+    @Nullable
+    private MmTelCapabilities getLastCapableFeaturesForNetworkType(@NetworkType int netType) {
+        switch (netType) {
+            case TelephonyManager.NETWORK_TYPE_UNKNOWN:
+                return null;
+            case TelephonyManager.NETWORK_TYPE_IWLAN:
                 return mLastWlanCapableFeatures;
             default:
                 return mLastWwanCapableFeatures;
@@ -443,8 +472,8 @@ public class ImsStats {
                 return TelephonyManager.NETWORK_TYPE_UNKNOWN;
             case REGISTRATION_TECH_LTE:
                 return TelephonyManager.NETWORK_TYPE_LTE;
-            case REGISTRATION_TECH_CROSS_SIM:
             case REGISTRATION_TECH_IWLAN:
+            case REGISTRATION_TECH_CROSS_SIM:
                 return TelephonyManager.NETWORK_TYPE_IWLAN;
             case REGISTRATION_TECH_NR:
                 return TelephonyManager.NETWORK_TYPE_NR;
@@ -460,6 +489,7 @@ public class ImsStats {
         dest.carrierId = source.carrierId;
         dest.simSlotIndex = source.simSlotIndex;
         dest.rat = source.rat;
+        dest.isIwlanCrossSim = source.isIwlanCrossSim;
 
         return dest;
     }
