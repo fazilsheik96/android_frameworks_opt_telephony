@@ -22,7 +22,7 @@ import static android.telephony.CarrierConfigManager.USSD_OVER_CS_PREFERRED;
 import static android.telephony.CarrierConfigManager.USSD_OVER_IMS_ONLY;
 import static android.telephony.CarrierConfigManager.USSD_OVER_IMS_PREFERRED;
 import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_NONE;
-import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCK;
+import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCKS;
 import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_PLMN_BLOCK;
 import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_PLMN_BLOCK_WITH_TIMEOUT;
 import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_RAT_BLOCK;
@@ -63,6 +63,7 @@ import static org.mockito.Mockito.verify;
 
 import android.app.Activity;
 import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
 import android.content.res.Resources;
 import android.net.Uri;
@@ -889,6 +890,37 @@ public class ImsPhoneTest extends TelephonyTest {
     }
 
     @Test
+    @SmallTest
+    public void testSetWfcModeInRoaming() throws Exception {
+        doReturn(true).when(mFeatureFlags).updateRoamingStateToSetWfcMode();
+        doReturn(PhoneConstants.State.IDLE).when(mImsCT).getState();
+        doReturn(true).when(mPhone).isRadioOn();
+
+        // Set CarrierConfigManager to be invalid
+        doReturn(null).when(mContext).getSystemService(Context.CARRIER_CONFIG_SERVICE);
+
+        //Roaming - data registration only on LTE
+        Message m = getServiceStateChangedMessage(getServiceStateDataOnly(
+                ServiceState.RIL_RADIO_TECHNOLOGY_LTE, ServiceState.STATE_IN_SERVICE, true));
+        // Inject the message synchronously instead of waiting for the thread to do it.
+        mImsPhoneUT.handleMessage(m);
+        m.recycle();
+
+        verify(mImsManager, never()).setWfcMode(anyInt(), eq(true));
+
+        // Set CarrierConfigManager to be valid
+        doReturn(mCarrierConfigManager).when(mContext)
+                .getSystemService(Context.CARRIER_CONFIG_SERVICE);
+
+        m = getServiceStateChangedMessage(getServiceStateDataOnly(
+                ServiceState.RIL_RADIO_TECHNOLOGY_LTE, ServiceState.STATE_IN_SERVICE, true));
+        mImsPhoneUT.handleMessage(m);
+        m.recycle();
+
+        verify(mImsManager, times(1)).setWfcMode(anyInt(), eq(true));
+    }
+
+    @Test
     public void testNonNullTrackersInImsPhone() throws Exception {
         assertNotNull(mImsPhoneUT.getEmergencyNumberTracker());
         assertNotNull(mImsPhoneUT.getServiceStateTracker());
@@ -1601,13 +1633,13 @@ public class ImsPhoneTest extends TelephonyTest {
 
         // unregistered with rat block clear
         registrationCallback.onUnregistered(reasonInfo,
-                SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCK,
+                SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCKS,
                 REGISTRATION_TECH_LTE);
         regInfo = mSimulatedCommands.getImsRegistrationInfo();
 
         assertTrue(regInfo[0] == RegistrationManager.REGISTRATION_STATE_NOT_REGISTERED
                 && regInfo[1] == REGISTRATION_TECH_LTE
-                && regInfo[2] == SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCK);
+                && regInfo[2] == SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCKS);
 
         // reset the registration info saved in the SimulatedCommands
         mSimulatedCommands.updateImsRegistrationInfo(0, 0, 0, 0, null);
@@ -1617,13 +1649,13 @@ public class ImsPhoneTest extends TelephonyTest {
 
         // verfies that duplicated notification with the same suggested action is invoked
         registrationCallback.onUnregistered(reasonInfo,
-                SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCK,
+                SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCKS,
                 REGISTRATION_TECH_LTE);
         regInfo = mSimulatedCommands.getImsRegistrationInfo();
 
         assertTrue(regInfo[0] == RegistrationManager.REGISTRATION_STATE_NOT_REGISTERED
                 && regInfo[1] == REGISTRATION_TECH_LTE
-                && regInfo[2] == SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCK);
+                && regInfo[2] == SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCKS);
     }
 
     @Test
