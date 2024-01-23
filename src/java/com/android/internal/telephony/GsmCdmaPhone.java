@@ -249,6 +249,7 @@ public class GsmCdmaPhone extends Phone {
 
     private boolean mIsNullCipherAndIntegritySupported = false;
     private boolean mIsIdentifierDisclosureTransparencySupported = false;
+    private boolean mIsNullCipherNotificationSupported = false;
 
     // Create Cfu (Call forward unconditional) so that dialing number &
     // mOnComplete (Message object passed by client) can be packed &
@@ -522,10 +523,10 @@ public class GsmCdmaPhone extends Phone {
 
         mCi.registerForImeiMappingChanged(this, EVENT_IMEI_MAPPING_CHANGED, null);
 
-        if (mFeatureFlags.enableIdentifierDisclosureTransparency()) {
+        if (mFeatureFlags.enableIdentifierDisclosureTransparencyUnsolEvents()) {
             logi(
-                    "enable_identifier_disclosure_transparency is on. Registering for cellular "
-                            + "identifier disclosures from phone "
+                    "enable_identifier_disclosure_transparency_unsol_events is on. Registering for "
+                            + "cellular identifier disclosures from phone "
                             + getPhoneId());
             mIdentifierDisclosureNotifier =
                     mTelephonyComponentFactory
@@ -3198,6 +3199,7 @@ public class GsmCdmaPhone extends Phone {
         handleNullCipherEnabledChange();
         mCi.setSuppServiceNotifications(true, null);
         handleIdentifierDisclosureNotificationPreferenceChange();
+        handleNullCipherNotificationPreferenceChanged();
     }
 
     private void handleRadioOn() {
@@ -3724,7 +3726,7 @@ public class GsmCdmaPhone extends Phone {
                 }
 
                 CellularIdentifierDisclosure disclosure = (CellularIdentifierDisclosure) ar.result;
-                if (mFeatureFlags.enableIdentifierDisclosureTransparency()
+                if (mFeatureFlags.enableIdentifierDisclosureTransparencyUnsolEvents()
                         && mIdentifierDisclosureNotifier != null
                         && disclosure != null) {
                     mIdentifierDisclosureNotifier.addDisclosure(disclosure);
@@ -3744,6 +3746,12 @@ public class GsmCdmaPhone extends Phone {
                     SecurityAlgorithmUpdate update = (SecurityAlgorithmUpdate) ar.result;
                     mNullCipherNotifier.onSecurityAlgorithmUpdate(getPhoneId(), update);
                 }
+                break;
+
+            case EVENT_SET_SECURITY_ALGORITHMS_UPDATED_ENABLED_DONE:
+                logd("EVENT_SET_SECURITY_ALGORITHMS_UPDATED_ENABLED_DONE");
+                ar = (AsyncResult) msg.obj;
+                mIsNullCipherNotificationSupported = doesResultIndicateModemSupport(ar);
                 break;
 
             default:
@@ -5255,19 +5263,46 @@ public class GsmCdmaPhone extends Phone {
     public void handleIdentifierDisclosureNotificationPreferenceChange() {
         if (!mFeatureFlags.enableIdentifierDisclosureTransparency()) {
             logi("Not handling identifier disclosure preference change. Feature flag "
-                    + "ENABLE_IDENTIFIER_DISCLOSURE_TRANSPARENCY disabled");
+                    + "enable_identifier_disclosure_transparency disabled");
             return;
         }
         boolean prefEnabled = getIdentifierDisclosureNotificationsPreferenceEnabled();
 
-        if (prefEnabled) {
+        // The notifier is tied to handling unsolicited updates from the modem, not the
+        // enable/disable API, so we only toggle the enable state if the unsol events feature
+        // flag is enabled.
+        if (mFeatureFlags.enableIdentifierDisclosureTransparencyUnsolEvents()) {
+          if (prefEnabled) {
             mIdentifierDisclosureNotifier.enable();
-        } else {
+          } else {
             mIdentifierDisclosureNotifier.disable();
+          }
+        } else {
+            logi("Not toggling enable state for disclosure notifier. Feature flag "
+                    + "enable_identifier_disclosure_transparency_unsol_events is disabled");
         }
 
         mCi.setCellularIdentifierTransparencyEnabled(prefEnabled,
                 obtainMessage(EVENT_SET_IDENTIFIER_DISCLOSURE_ENABLED_DONE));
+    }
+
+    @Override
+    public void handleNullCipherNotificationPreferenceChanged() {
+        if (!mFeatureFlags.enableModemCipherTransparency()) {
+            logi("Not handling null cipher notification preference change. Feature flag "
+                    + "enable_modem_cipher_transparency disabled");
+            return;
+        }
+        boolean prefEnabled = getNullCipherNotificationsPreferenceEnabled();
+
+        if (prefEnabled) {
+            mNullCipherNotifier.enable();
+        } else {
+            mNullCipherNotifier.disable();
+        }
+
+        mCi.setSecurityAlgorithmsUpdatedEnabled(prefEnabled,
+                obtainMessage(EVENT_SET_SECURITY_ALGORITHMS_UPDATED_ENABLED_DONE));
     }
 
     @Override
@@ -5278,5 +5313,10 @@ public class GsmCdmaPhone extends Phone {
     @Override
     public boolean isIdentifierDisclosureTransparencySupported() {
         return mIsIdentifierDisclosureTransparencySupported;
+    }
+
+    @Override
+    public boolean isNullCipherNotificationSupported() {
+        return mIsNullCipherNotificationSupported;
     }
 }

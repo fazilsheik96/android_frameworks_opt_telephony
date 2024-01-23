@@ -23,6 +23,7 @@ import static com.android.internal.telephony.Phone.EVENT_IMS_DEREGISTRATION_TRIG
 import static com.android.internal.telephony.Phone.EVENT_RADIO_AVAILABLE;
 import static com.android.internal.telephony.Phone.EVENT_SET_IDENTIFIER_DISCLOSURE_ENABLED_DONE;
 import static com.android.internal.telephony.Phone.EVENT_SET_NULL_CIPHER_AND_INTEGRITY_DONE;
+import static com.android.internal.telephony.Phone.EVENT_SET_SECURITY_ALGORITHMS_UPDATED_ENABLED_DONE;
 import static com.android.internal.telephony.Phone.EVENT_SRVCC_STATE_CHANGED;
 import static com.android.internal.telephony.Phone.EVENT_UICC_APPS_ENABLEMENT_STATUS_CHANGED;
 import static com.android.internal.telephony.TelephonyTestUtils.waitForMs;
@@ -2803,7 +2804,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testCellularIdentifierDisclosureFlagOff() {
-        when(mFeatureFlags.enableIdentifierDisclosureTransparency()).thenReturn(false);
+        when(mFeatureFlags.enableIdentifierDisclosureTransparencyUnsolEvents()).thenReturn(false);
 
         GsmCdmaPhone phoneUT =
                 new GsmCdmaPhone(
@@ -2825,7 +2826,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testCellularIdentifierDisclosureFlagOn() {
-        when(mFeatureFlags.enableIdentifierDisclosureTransparency()).thenReturn(true);
+        when(mFeatureFlags.enableIdentifierDisclosureTransparencyUnsolEvents()).thenReturn(true);
 
         Phone phoneUT =
                 new GsmCdmaPhone(
@@ -2848,7 +2849,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testCellularIdentifierDisclosure_disclosureEventAddedToNotifier() {
-        when(mFeatureFlags.enableIdentifierDisclosureTransparency()).thenReturn(true);
+        when(mFeatureFlags.enableIdentifierDisclosureTransparencyUnsolEvents()).thenReturn(true);
 
         Phone phoneUT =
                 new GsmCdmaPhone(
@@ -2879,7 +2880,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testCellularIdentifierDisclosure_disclosureEventNull() {
-        when(mFeatureFlags.enableIdentifierDisclosureTransparency()).thenReturn(true);
+        when(mFeatureFlags.enableIdentifierDisclosureTransparencyUnsolEvents()).thenReturn(true);
 
         Phone phoneUT =
                 new GsmCdmaPhone(
@@ -2944,7 +2945,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         sendRadioAvailableToPhone(phoneUT);
         verify(mMockCi, times(1)).setCellularIdentifierTransparencyEnabled(anyBoolean(),
                 any(Message.class));
-        sendIdentifierDisclosureEnabledSuccessToPhone(phoneUT);
+        sendRequestSuccessToPhone(phoneUT, EVENT_SET_IDENTIFIER_DISCLOSURE_ENABLED_DONE);
 
         assertTrue(phoneUT.isIdentifierDisclosureTransparencySupported());
     }
@@ -2991,6 +2992,73 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         verify(mNullCipherNotifier, times(1)).onSecurityAlgorithmUpdate(eq(0), eq(update));
     }
 
+    @Test
+    public void testNullCipherNotification_noModemCallOnRadioAvailable_FlagOff() {
+        when(mFeatureFlags.enableModemCipherTransparency()).thenReturn(false);
+        GsmCdmaPhone phoneUT = makeNewPhoneUT();
+        assertFalse(phoneUT.isNullCipherNotificationSupported());
+
+        sendRadioAvailableToPhone(phoneUT);
+
+        verify(mMockCi, never()).setSecurityAlgorithmsUpdatedEnabled(anyBoolean(),
+                any(Message.class));
+        assertFalse(phoneUT.isNullCipherNotificationSupported());
+    }
+
+    @Test
+    public void testNullCipherNotification_unsupportedByModemOnRadioAvailable() {
+        when(mFeatureFlags.enableModemCipherTransparency()).thenReturn(true);
+        GsmCdmaPhone phoneUT = makeNewPhoneUT();
+        assertFalse(phoneUT.isNullCipherNotificationSupported());
+
+        sendRadioAvailableToPhone(phoneUT);
+        verify(mMockCi, times(1)).setSecurityAlgorithmsUpdatedEnabled(anyBoolean(),
+                any(Message.class));
+        sendRequestNotSupportedToPhone(phoneUT, EVENT_SET_SECURITY_ALGORITHMS_UPDATED_ENABLED_DONE);
+
+        assertFalse(phoneUT.isNullCipherNotificationSupported());
+    }
+
+    @Test
+    public void testNullCipherNotification_supportedByModem() {
+        when(mFeatureFlags.enableModemCipherTransparency()).thenReturn(true);
+        GsmCdmaPhone phoneUT = makeNewPhoneUT();
+        assertFalse(phoneUT.isNullCipherNotificationSupported());
+
+        sendRadioAvailableToPhone(phoneUT);
+        verify(mMockCi, times(1)).setSecurityAlgorithmsUpdatedEnabled(anyBoolean(),
+                any(Message.class));
+        sendRequestSuccessToPhone(phoneUT, EVENT_SET_SECURITY_ALGORITHMS_UPDATED_ENABLED_DONE);
+
+        assertTrue(phoneUT.isNullCipherNotificationSupported());
+    }
+
+    @Test
+    public void testNullCipherNotification_preferenceEnabled() {
+        when(mFeatureFlags.enableModemCipherTransparency()).thenReturn(true);
+        GsmCdmaPhone phoneUT = makeNewPhoneUT();
+
+        setNullCipherNotificationPreferenceEnabled(true);
+        phoneUT.handleNullCipherNotificationPreferenceChanged();
+
+        verify(mNullCipherNotifier, times(1)).enable();
+        verify(mMockCi, times(1)).setSecurityAlgorithmsUpdatedEnabled(eq(true),
+                any(Message.class));
+    }
+
+    @Test
+    public void testNullCipherNotification_preferenceDisabled() {
+        when(mFeatureFlags.enableModemCipherTransparency()).thenReturn(true);
+        GsmCdmaPhone phoneUT = makeNewPhoneUT();
+
+        setNullCipherNotificationPreferenceEnabled(false);
+        phoneUT.handleNullCipherNotificationPreferenceChanged();
+
+        verify(mNullCipherNotifier, times(1)).disable();
+        verify(mMockCi, times(1)).setSecurityAlgorithmsUpdatedEnabled(eq(false),
+                any(Message.class));
+    }
+
     private void sendRadioAvailableToPhone(GsmCdmaPhone phone) {
         phone.sendMessage(phone.obtainMessage(EVENT_RADIO_AVAILABLE,
                 new AsyncResult(null, new int[]{ServiceState.RIL_RADIO_TECHNOLOGY_GSM}, null)));
@@ -3003,10 +3071,17 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         processAllMessages();
     }
 
-    private void sendIdentifierDisclosureEnabledSuccessToPhone(GsmCdmaPhone phone) {
-        phone.sendMessage(phone.obtainMessage(EVENT_SET_IDENTIFIER_DISCLOSURE_ENABLED_DONE,
-                new AsyncResult(null, null, null)));
+    private void sendRequestSuccessToPhone(GsmCdmaPhone phone, int eventId) {
+        phone.sendMessage(phone.obtainMessage(eventId, new AsyncResult(null, null, null)));
         processAllMessages();
+    }
+
+    private void setNullCipherNotificationPreferenceEnabled(boolean enabled) {
+        SharedPreferences sharedPreferences =
+                PreferenceManager.getDefaultSharedPreferences(mContext);
+        SharedPreferences.Editor editor = sharedPreferences.edit();
+        editor.putBoolean(Phone.PREF_NULL_CIPHER_NOTIFICATIONS_ENABLED, enabled);
+        editor.apply();
     }
 
     private GsmCdmaPhone makeNewPhoneUT() {
