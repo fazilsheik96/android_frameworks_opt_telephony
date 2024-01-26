@@ -2961,7 +2961,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testSecurityAlgorithmUpdateFlagOn() {
-        when(mFeatureFlags.enableModemCipherTransparency()).thenReturn(true);
+        when(mFeatureFlags.enableModemCipherTransparencyUnsolEvents()).thenReturn(true);
 
         Phone phoneUT = makeNewPhoneUT();
 
@@ -2974,7 +2974,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testSecurityAlgorithm_updateAddedToNotifier() {
-        when(mFeatureFlags.enableModemCipherTransparency()).thenReturn(true);
+        when(mFeatureFlags.enableModemCipherTransparencyUnsolEvents()).thenReturn(true);
         Phone phoneUT = makeNewPhoneUT();
         SecurityAlgorithmUpdate update =
                 new SecurityAlgorithmUpdate(
@@ -3036,6 +3036,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     @Test
     public void testNullCipherNotification_preferenceEnabled() {
         when(mFeatureFlags.enableModemCipherTransparency()).thenReturn(true);
+        when(mFeatureFlags.enableModemCipherTransparencyUnsolEvents()).thenReturn(true);
         GsmCdmaPhone phoneUT = makeNewPhoneUT();
 
         setNullCipherNotificationPreferenceEnabled(true);
@@ -3049,6 +3050,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
     @Test
     public void testNullCipherNotification_preferenceDisabled() {
         when(mFeatureFlags.enableModemCipherTransparency()).thenReturn(true);
+        when(mFeatureFlags.enableModemCipherTransparencyUnsolEvents()).thenReturn(true);
         GsmCdmaPhone phoneUT = makeNewPhoneUT();
 
         setNullCipherNotificationPreferenceEnabled(false);
