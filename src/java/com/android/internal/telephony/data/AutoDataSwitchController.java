@@ -38,6 +38,7 @@ import android.provider.Settings;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.NetworkRegistrationInfo.RegistrationState;
+import android.telephony.ServiceState;
 import android.telephony.SignalStrength;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
@@ -48,6 +49,7 @@ import android.util.LocalLog;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.flags.FeatureFlags;
+import com.android.internal.telephony.flags.FeatureFlagsImpl;
 import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.util.NotificationChannelController;
@@ -126,7 +128,7 @@ public class AutoDataSwitchController extends Handler {
 
     private final @NonNull LocalLog mLocalLog = new LocalLog(128);
     private final @NonNull Context mContext;
-    private final @NonNull FeatureFlags mFlags;
+    private static @NonNull FeatureFlags sFeatureFlags = new FeatureFlagsImpl();
     private final @NonNull SubscriptionManagerService mSubscriptionManagerService;
     private final @NonNull PhoneSwitcher mPhoneSwitcher;
     private final @NonNull AutoDataSwitchControllerCallback mPhoneSwitcherCallback;
@@ -173,7 +175,10 @@ public class AutoDataSwitchController extends Handler {
          * How preferred the current phone is.
          */
         enum UsableState {
-            HOME(1), ROAMING_ENABLED(0), NOT_USABLE(-1);
+            HOME(2),
+            ROAMING_ENABLED(1),
+            NON_TERRESTRIAL(0),
+            NOT_USABLE(-1);
             /**
              * The higher the score, the more preferred.
              * HOME is preferred over ROAMING assuming roaming is metered.
@@ -186,8 +191,7 @@ public class AutoDataSwitchController extends Handler {
         /** The phone */
         @NonNull private final Phone mPhone;
         /** Data registration state of the phone */
-        @RegistrationState private int mDataRegState = NetworkRegistrationInfo
-                .REGISTRATION_STATE_NOT_REGISTERED_OR_SEARCHING;
+        @RegistrationState private int mDataRegState;
         /** Current Telephony display info of the phone */
         @NonNull private TelephonyDisplayInfo mDisplayInfo;
         /** Signal strength of the phone */
@@ -196,6 +200,10 @@ public class AutoDataSwitchController extends Handler {
         private boolean mListeningForEvents;
         private PhoneSignalStatus(@NonNull Phone phone) {
             this.mPhone = phone;
+            this.mDataRegState = phone.getServiceState().getNetworkRegistrationInfo(
+                            NetworkRegistrationInfo.DOMAIN_PS,
+                            AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
+                    .getRegistrationState();
             this.mDisplayInfo = phone.getDisplayInfoController().getTelephonyDisplayInfo();
             this.mSignalStrength = phone.getSignalStrength();
         }
@@ -214,12 +222,24 @@ public class AutoDataSwitchController extends Handler {
          * @return The current usable state of the phone.
          */
         private UsableState getUsableState() {
+            ServiceState serviceState = mPhone.getServiceState();
+            boolean isUsingNonTerrestrialNetwork = sFeatureFlags.carrierEnabledSatelliteFlag()
+                    && (serviceState != null) && serviceState.isUsingNonTerrestrialNetwork();
+
             switch (mDataRegState) {
                 case NetworkRegistrationInfo.REGISTRATION_STATE_HOME:
+                    if (isUsingNonTerrestrialNetwork) {
+                        return UsableState.NON_TERRESTRIAL;
+                    }
                     return UsableState.HOME;
                 case NetworkRegistrationInfo.REGISTRATION_STATE_ROAMING:
-                    return mPhone.getDataRoamingEnabled()
-                            ? UsableState.ROAMING_ENABLED : UsableState.NOT_USABLE;
+                    if (mPhone.getDataRoamingEnabled()) {
+                        if (isUsingNonTerrestrialNetwork) {
+                            return UsableState.NON_TERRESTRIAL;
+                        }
+                        return UsableState.ROAMING_ENABLED;
+                    }
+                    return UsableState.NOT_USABLE;
                 default:
                     return UsableState.NOT_USABLE;
             }
@@ -275,7 +295,7 @@ public class AutoDataSwitchController extends Handler {
             @NonNull AutoDataSwitchControllerCallback phoneSwitcherCallback) {
         super(looper);
         mContext = context;
-        mFlags = featureFlags;
+        sFeatureFlags = featureFlags;
         mSubscriptionManagerService = SubscriptionManagerService.getInstance();
         mPhoneSwitcher = phoneSwitcher;
         mPhoneSwitcherCallback = phoneSwitcherCallback;
@@ -599,7 +619,7 @@ public class AutoDataSwitchController extends Handler {
             boolean backToDefault = false;
             boolean needValidation = true;
 
-            if (mFlags.autoSwitchAllowRoaming()) {
+            if (sFeatureFlags.autoSwitchAllowRoaming()) {
                 if (mDefaultNetworkIsOnNonCellular) {
                     debugMessage.append(", back to default as default network")
                             .append(" is active on nonCellular transport");
@@ -719,7 +739,7 @@ public class AutoDataSwitchController extends Handler {
             return INVALID_PHONE_INDEX;
         }
 
-        if (mFlags.autoSwitchAllowRoaming()) {
+        if (sFeatureFlags.autoSwitchAllowRoaming()) {
             // check whether primary and secondary signal status are worth switching
             if (!isRatSignalStrengthBasedSwitchEnabled()
                     && isHomeService(mPhonesSignalStatus[defaultPhoneId].mDataRegState)) {
@@ -741,7 +761,7 @@ public class AutoDataSwitchController extends Handler {
 
             Phone secondaryDataPhone = null;
             PhoneSignalStatus candidatePhoneStatus = mPhonesSignalStatus[phoneId];
-            if (mFlags.autoSwitchAllowRoaming()) {
+            if (sFeatureFlags.autoSwitchAllowRoaming()) {
                 PhoneSignalStatus.UsableState currentUsableState =
                         mPhonesSignalStatus[defaultPhoneId].getUsableState();
                 PhoneSignalStatus.UsableState candidatePhoneUsableRank =
@@ -811,7 +831,7 @@ public class AutoDataSwitchController extends Handler {
      * @return {@code true} If the feature of switching base on RAT and signal strength is enabled.
      */
     private boolean isRatSignalStrengthBasedSwitchEnabled() {
-        return mFlags.autoDataSwitchRatSs() && mScoreTolerance >= 0;
+        return sFeatureFlags.autoDataSwitchRatSs() && mScoreTolerance >= 0;
     }
 
     /**
