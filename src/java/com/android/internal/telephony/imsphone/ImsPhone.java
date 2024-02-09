@@ -24,7 +24,7 @@ import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_NONE;
 import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_PLMN_BLOCK;
 import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_PLMN_BLOCK_WITH_TIMEOUT;
 import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_RAT_BLOCK;
-import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCK;
+import static android.telephony.ims.RegistrationManager.SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCKS;
 import static android.telephony.ims.stub.ImsRegistrationImplBase.REGISTRATION_TECH_NONE;
 
 import static com.android.internal.telephony.CommandsInterface.CB_FACILITY_BAIC;
@@ -2490,7 +2490,9 @@ public class ImsPhone extends ImsPhoneBase {
         }
         if (mCT.getState() == PhoneConstants.State.IDLE) {
             if (DBG) logd("updateRoamingState now: " + newRoamingState);
-            mLastKnownRoamingState = newRoamingState;
+            if (!mFeatureFlags.updateRoamingStateToSetWfcMode()) {
+                mLastKnownRoamingState = newRoamingState;
+            }
             CarrierConfigManager configManager = (CarrierConfigManager)
                     getContext().getSystemService(Context.CARRIER_CONFIG_SERVICE);
             // Don't set wfc mode if carrierconfig has not loaded. It will be set by GsmCdmaPhone
@@ -2499,6 +2501,9 @@ public class ImsPhone extends ImsPhoneBase {
                     configManager.getConfigForSubId(getSubId()))) {
                 ImsManager imsManager = mImsManagerFactory.create(mContext, mPhoneId);
                 imsManager.setWfcMode(imsManager.getWfcMode(newRoamingState), newRoamingState);
+                if (mFeatureFlags.updateRoamingStateToSetWfcMode()) {
+                    mLastKnownRoamingState = newRoamingState;
+                }
             }
         } else {
             if (DBG) logd("updateRoamingState postponed: " + newRoamingState);
@@ -2622,7 +2627,7 @@ public class ImsPhone extends ImsPhoneBase {
                     suggestedModemAction = suggestedAction;
                 } else if (mFeatureFlags.addRatRelatedSuggestedActionToImsRegistration()) {
                     if ((suggestedAction == SUGGESTED_ACTION_TRIGGER_RAT_BLOCK)
-                            || (suggestedAction == SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCK)) {
+                            || (suggestedAction == SUGGESTED_ACTION_TRIGGER_CLEAR_RAT_BLOCKS)) {
                         suggestedModemAction = suggestedAction;
                     }
                 }

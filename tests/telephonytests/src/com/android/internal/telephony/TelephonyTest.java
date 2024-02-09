@@ -114,6 +114,7 @@ import com.android.internal.telephony.imsphone.ImsExternalCallTracker;
 import com.android.internal.telephony.imsphone.ImsNrSaModeHandler;
 import com.android.internal.telephony.imsphone.ImsPhone;
 import com.android.internal.telephony.imsphone.ImsPhoneCallTracker;
+import com.android.internal.telephony.metrics.DefaultNetworkMonitor;
 import com.android.internal.telephony.metrics.DeviceStateHelper;
 import com.android.internal.telephony.metrics.ImsStats;
 import com.android.internal.telephony.metrics.MetricsCollector;
@@ -123,6 +124,7 @@ import com.android.internal.telephony.metrics.SmsStats;
 import com.android.internal.telephony.metrics.VoiceCallSessionStats;
 import com.android.internal.telephony.satellite.SatelliteController;
 import com.android.internal.telephony.security.CellularIdentifierDisclosureNotifier;
+import com.android.internal.telephony.security.NullCipherNotifier;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.test.SimulatedCommands;
 import com.android.internal.telephony.test.SimulatedCommandsVerifier;
@@ -264,6 +266,7 @@ public abstract class TelephonyTest {
     protected CarrierPrivilegesTracker mCarrierPrivilegesTracker;
     protected VoiceCallSessionStats mVoiceCallSessionStats;
     protected PersistAtomsStorage mPersistAtomsStorage;
+    protected DefaultNetworkMonitor mDefaultNetworkMonitor;
     protected MetricsCollector mMetricsCollector;
     protected SmsStats mSmsStats;
     protected TelephonyAnalytics mTelephonyAnalytics;
@@ -283,6 +286,7 @@ public abstract class TelephonyTest {
     protected DeviceStateHelper mDeviceStateHelper;
     protected CellularIdentifierDisclosureNotifier mIdentifierDisclosureNotifier;
     protected DomainSelectionResolver mDomainSelectionResolver;
+    protected NullCipherNotifier mNullCipherNotifier;
 
     // Initialized classes
     protected ActivityManager mActivityManager;
@@ -537,6 +541,7 @@ public abstract class TelephonyTest {
         mCarrierPrivilegesTracker = Mockito.mock(CarrierPrivilegesTracker.class);
         mVoiceCallSessionStats = Mockito.mock(VoiceCallSessionStats.class);
         mPersistAtomsStorage = Mockito.mock(PersistAtomsStorage.class);
+        mDefaultNetworkMonitor = Mockito.mock(DefaultNetworkMonitor.class);
         mMetricsCollector = Mockito.mock(MetricsCollector.class);
         mSmsStats = Mockito.mock(SmsStats.class);
         mTelephonyAnalytics = Mockito.mock(TelephonyAnalytics.class);
@@ -556,6 +561,7 @@ public abstract class TelephonyTest {
         mDeviceStateHelper = Mockito.mock(DeviceStateHelper.class);
         mIdentifierDisclosureNotifier = Mockito.mock(CellularIdentifierDisclosureNotifier.class);
         mDomainSelectionResolver = Mockito.mock(DomainSelectionResolver.class);
+        mNullCipherNotifier = Mockito.mock(NullCipherNotifier.class);
 
         TelephonyManager.disableServiceHandleCaching();
         PropertyInvalidatedCache.disableForTestMode();
@@ -659,7 +665,7 @@ public abstract class TelephonyTest {
                 .makeNitzStateMachine(nullable(GsmCdmaPhone.class));
         doReturn(mLocaleTracker).when(mTelephonyComponentFactory)
                 .makeLocaleTracker(nullable(Phone.class), nullable(NitzStateMachine.class),
-                        nullable(Looper.class));
+                        nullable(Looper.class), any(FeatureFlags.class));
         doReturn(mEriManager).when(mTelephonyComponentFactory)
                 .makeEriManager(nullable(Phone.class), anyInt());
         doReturn(mLinkBandwidthEstimator).when(mTelephonyComponentFactory)
@@ -672,6 +678,9 @@ public abstract class TelephonyTest {
         doReturn(mIdentifierDisclosureNotifier)
                 .when(mTelephonyComponentFactory)
                 .makeIdentifierDisclosureNotifier();
+        doReturn(mNullCipherNotifier)
+                .when(mTelephonyComponentFactory)
+                .makeNullCipherNotifier();
 
         //mPhone
         doReturn(mContext).when(mPhone).getContext();
@@ -889,6 +898,7 @@ public abstract class TelephonyTest {
         // Metrics
         doReturn(null).when(mContext).getFileStreamPath(anyString());
         doReturn(mPersistAtomsStorage).when(mMetricsCollector).getAtomsStorage();
+        doReturn(mDefaultNetworkMonitor).when(mMetricsCollector).getDefaultNetworkMonitor();
         doReturn(mWifiManager).when(mContext).getSystemService(eq(Context.WIFI_SERVICE));
         doReturn(mDeviceStateHelper).when(mMetricsCollector).getDeviceStateHelper();
         doReturn(CELLULAR_SERVICE_STATE__FOLD_STATE__STATE_UNKNOWN)

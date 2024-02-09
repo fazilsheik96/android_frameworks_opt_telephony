@@ -32,6 +32,7 @@ import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.hardware.radio.modem.ImeiInfo;
 import android.net.Uri;
@@ -267,7 +268,9 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     protected static final int EVENT_IMEI_MAPPING_CHANGED = 71;
     protected static final int EVENT_CELL_IDENTIFIER_DISCLOSURE = 72;
     protected static final int EVENT_SET_IDENTIFIER_DISCLOSURE_ENABLED_DONE = 73;
-    protected static final int EVENT_LAST = EVENT_SET_IDENTIFIER_DISCLOSURE_ENABLED_DONE;
+    protected static final int EVENT_SECURITY_ALGORITHM_UPDATE = 74;
+    protected static final int EVENT_SET_SECURITY_ALGORITHMS_UPDATED_ENABLED_DONE = 75;
+    protected static final int EVENT_LAST = EVENT_SET_SECURITY_ALGORITHMS_UPDATED_ENABLED_DONE;
 
     // For shared prefs.
     private static final String GSM_ROAMING_LIST_OVERRIDE_PREFIX = "gsm_roaming_list_";
@@ -310,6 +313,9 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
 
     public static final String PREF_IDENTIFIER_DISCLOSURE_NOTIFICATIONS_ENABLED =
             "pref_identifier_disclosure_notifications_enabled";
+
+    public static final String PREF_NULL_CIPHER_NOTIFICATIONS_ENABLED =
+            "pref_null_cipher_notifications_enabled";
 
     protected final FeatureFlags mFeatureFlags;
 
@@ -1097,9 +1103,20 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     public void notifySmsSent(String destinationAddress) {
         TelephonyManager m = (TelephonyManager) getContext().getSystemService(
                 Context.TELEPHONY_SERVICE);
-        if (m != null && m.isEmergencyNumber(destinationAddress)) {
-            mLocalLog.log("Emergency SMS detected, recording time.");
-            mTimeLastEmergencySmsSentMs = SystemClock.elapsedRealtime();
+        if (!mFeatureFlags.enforceTelephonyFeatureMappingForPublicApis()) {
+            if (m != null && m.isEmergencyNumber(destinationAddress)) {
+                mLocalLog.log("Emergency SMS detected, recording time.");
+                mTimeLastEmergencySmsSentMs = SystemClock.elapsedRealtime();
+            }
+        } else {
+            if (mContext.getPackageManager() != null
+                    && mContext.getPackageManager().hasSystemFeature(
+                            PackageManager.FEATURE_TELEPHONY_CALLING)) {
+                if (m != null && m.isEmergencyNumber(destinationAddress)) {
+                    mLocalLog.log("Emergency SMS detected, recording time.");
+                    mTimeLastEmergencySmsSentMs = SystemClock.elapsedRealtime();
+                }
+            }
         }
     }
 
@@ -4162,6 +4179,21 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     public void queryCLIP(Message onComplete) {
     }
 
+    /**
+     * Set C_IWLAN timer use to delay deactivating data call when mobile data UI is off or
+     * roaming UI is off when device is in roaming.
+     */
+    public void setCiwlanTimerToDealayDeactivateDataCall(long ciwlanTimer) {
+    }
+
+    /**
+     * Get C_IWLAN timer use to delay deactivating data call when mobile data UI is off or
+     * roaming UI is off when device is in roaming.
+     */
+    public long getCiwlanTimerToDealayDeactivateDataCall() {
+        return -1;
+    }
+
     /*
      * Returns the subscription id.
      */
@@ -5280,6 +5312,28 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
      * Override to handle an update to the cellular identifier disclosure transparency preference.
      */
     public void handleIdentifierDisclosureNotificationPreferenceChange() {
+    }
+
+    /**
+     * @return whether this Phone interacts with a modem that supports the null cipher
+     * notification feature.
+     */
+    public boolean isNullCipherNotificationSupported() {
+        return false;
+    }
+
+    /**
+     * @return whether the global null cipher notifications preference is enabled.
+     */
+    public boolean getNullCipherNotificationsPreferenceEnabled() {
+        SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(getContext());
+        return sp.getBoolean(PREF_NULL_CIPHER_NOTIFICATIONS_ENABLED, false);
+    }
+
+    /**
+     * Override to handle an update to the null cipher notification preference.
+     */
+    public void handleNullCipherNotificationPreferenceChanged() {
     }
 
     /**

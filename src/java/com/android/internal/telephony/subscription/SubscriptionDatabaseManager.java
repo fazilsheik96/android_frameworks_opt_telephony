@@ -281,7 +281,10 @@ public class SubscriptionDatabaseManager extends Handler {
                     SubscriptionInfoInternal::getSatelliteAttachEnabledForCarrier),
             new AbstractMap.SimpleImmutableEntry<>(
                     SimInfo.COLUMN_IS_NTN,
-                    SubscriptionInfoInternal::getOnlyNonTerrestrialNetwork)
+                    SubscriptionInfoInternal::getOnlyNonTerrestrialNetwork),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_SERVICE_CAPABILITIES,
+                    SubscriptionInfoInternal::getServiceCapabilities)
     );
 
     /**
@@ -412,7 +415,10 @@ public class SubscriptionDatabaseManager extends Handler {
                     SubscriptionDatabaseManager::setSatelliteAttachEnabledForCarrier),
             new AbstractMap.SimpleImmutableEntry<>(
                     SimInfo.COLUMN_IS_NTN,
-                    SubscriptionDatabaseManager::setNtn)
+                    SubscriptionDatabaseManager::setNtn),
+            new AbstractMap.SimpleImmutableEntry<>(
+                    SimInfo.COLUMN_SERVICE_CAPABILITIES,
+                    SubscriptionDatabaseManager::setServiceCapabilities)
     );
 
     /**
@@ -2056,7 +2062,7 @@ public class SubscriptionDatabaseManager extends Handler {
      */
     public void setGroupDisabled(int subId, boolean isGroupDisabled) {
         // group disabled does not have a corresponding SimInfo column. So we only update the cache.
-
+        boolean isChanged = false;
         // Grab the write lock so no other threads can read or write the cache.
         mReadWriteLock.writeLock().lock();
         try {
@@ -2065,12 +2071,31 @@ public class SubscriptionDatabaseManager extends Handler {
                 throw new IllegalArgumentException("setGroupDisabled: Subscription doesn't exist. "
                         + "subId=" + subId);
             }
+            isChanged = subInfoCache.isGroupDisabled() != isGroupDisabled;
             mAllSubscriptionInfoInternalCache.put(subId,
                     new SubscriptionInfoInternal.Builder(subInfoCache)
                             .setGroupDisabled(isGroupDisabled).build());
         } finally {
             mReadWriteLock.writeLock().unlock();
         }
+
+        if (isChanged) {
+            log("setGroupDisabled value changed, firing the callback");
+            mCallback.invokeFromExecutor(() -> mCallback.onSubscriptionChanged(subId));
+        }
+    }
+
+    /**
+     * Set service capabilities the subscription support.
+     * @param subId Subscription id.
+     * @param capabilities Service capabilities bitmasks
+     */
+    public void setServiceCapabilities(int subId, int capabilities) {
+        if (!mFeatureFlags.dataOnlyCellularService()) {
+            return;
+        }
+        writeDatabaseAndCacheHelper(subId, SimInfo.COLUMN_SERVICE_CAPABILITIES,
+                capabilities, SubscriptionInfoInternal.Builder::setServiceCapabilities);
     }
 
     /**
@@ -2302,7 +2327,10 @@ public class SubscriptionDatabaseManager extends Handler {
                         SimInfo.COLUMN_SATELLITE_ENABLED)))
                 .setSatelliteAttachEnabledForCarrier(cursor.getInt(
                         cursor.getColumnIndexOrThrow(
-                                SimInfo.COLUMN_SATELLITE_ATTACH_ENABLED_FOR_CARRIER)));
+                                SimInfo.COLUMN_SATELLITE_ATTACH_ENABLED_FOR_CARRIER)))
+                .setServiceCapabilities(cursor.getInt(
+                        cursor.getColumnIndexOrThrow(
+                                SimInfo.COLUMN_SERVICE_CAPABILITIES)));
         if (mFeatureFlags.oemEnabledSatelliteFlag()) {
             builder.setOnlyNonTerrestrialNetwork(cursor.getInt(cursor.getColumnIndexOrThrow(
                     SimInfo.COLUMN_IS_NTN)));

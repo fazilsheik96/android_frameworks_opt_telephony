@@ -86,6 +86,7 @@ import android.telephony.LinkCapacityEstimate;
 import android.telephony.NetworkScanRequest;
 import android.telephony.PhoneNumberUtils;
 import android.telephony.RadioAccessFamily;
+import android.telephony.SecurityAlgorithmUpdate;
 import android.telephony.ServiceState;
 import android.telephony.ServiceState.RilRadioTechnology;
 import android.telephony.SubscriptionInfo;
@@ -118,6 +119,7 @@ import com.android.internal.telephony.imsphone.ImsPhoneMmiCode;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
 import com.android.internal.telephony.metrics.VoiceCallSessionStats;
 import com.android.internal.telephony.security.CellularIdentifierDisclosureNotifier;
+import com.android.internal.telephony.security.NullCipherNotifier;
 import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
 import com.android.internal.telephony.subscription.SubscriptionManagerService.SubscriptionManagerServiceCallback;
 import com.android.internal.telephony.test.SimulatedRadioControl;
@@ -229,6 +231,9 @@ public class GsmCdmaPhone extends Phone {
 
     private int mPrecisePhoneType;
 
+    // mEcmTimerResetRegistrants are informed after Ecm timer is canceled or re-started
+    private final RegistrantList mEcmTimerResetRegistrants = new RegistrantList();
+
     private final RegistrantList mVolteSilentRedialRegistrants = new RegistrantList();
     private DialArgs mDialArgs = null;
     private final RegistrantList mEmergencyDomainSelectedRegistrants = new RegistrantList();
@@ -244,6 +249,7 @@ public class GsmCdmaPhone extends Phone {
 
     private boolean mIsNullCipherAndIntegritySupported = false;
     private boolean mIsIdentifierDisclosureTransparencySupported = false;
+    private boolean mIsNullCipherNotificationSupported = false;
 
     // Create Cfu (Call forward unconditional) so that dialing number &
     // mOnComplete (Message object passed by client) can be packed &
@@ -293,6 +299,7 @@ public class GsmCdmaPhone extends Phone {
     private final CallWaitingController mCallWaitingController;
 
     private CellularIdentifierDisclosureNotifier mIdentifierDisclosureNotifier;
+    private NullCipherNotifier mNullCipherNotifier;
 
     // Set via Carrier Config
     private boolean mIsN1ModeAllowedByCarrier = true;
@@ -516,10 +523,10 @@ public class GsmCdmaPhone extends Phone {
 
         mCi.registerForImeiMappingChanged(this, EVENT_IMEI_MAPPING_CHANGED, null);
 
-        if (mFeatureFlags.enableIdentifierDisclosureTransparency()) {
+        if (mFeatureFlags.enableIdentifierDisclosureTransparencyUnsolEvents()) {
             logi(
-                    "enable_identifier_disclosure_transparency is on. Registering for cellular "
-                            + "identifier disclosures from phone "
+                    "enable_identifier_disclosure_transparency_unsol_events is on. Registering for "
+                            + "cellular identifier disclosures from phone "
                             + getPhoneId());
             mIdentifierDisclosureNotifier =
                     mTelephonyComponentFactory
@@ -527,6 +534,19 @@ public class GsmCdmaPhone extends Phone {
                             .makeIdentifierDisclosureNotifier();
             mCi.registerForCellularIdentifierDisclosures(
                     this, EVENT_CELL_IDENTIFIER_DISCLOSURE, null);
+        }
+
+        if (mFeatureFlags.enableModemCipherTransparencyUnsolEvents()) {
+            logi(
+                    "enable_modem_cipher_transparency_unsol_events is on. Registering for security "
+                            + "algorithm updates from phone "
+                            + getPhoneId());
+            mNullCipherNotifier =
+                    mTelephonyComponentFactory
+                            .inject(NullCipherNotifier.class.getName())
+                            .makeNullCipherNotifier();
+            mCi.registerForSecurityAlgorithmUpdates(
+                    this, EVENT_SECURITY_ALGORITHM_UPDATE, null);
         }
 
         initializeCarrierApps();
@@ -3181,6 +3201,7 @@ public class GsmCdmaPhone extends Phone {
         handleNullCipherEnabledChange();
         mCi.setSuppServiceNotifications(true, null);
         handleIdentifierDisclosureNotificationPreferenceChange();
+        handleNullCipherNotificationPreferenceChanged();
     }
 
     private void handleRadioOn() {
@@ -3707,7 +3728,7 @@ public class GsmCdmaPhone extends Phone {
                 }
 
                 CellularIdentifierDisclosure disclosure = (CellularIdentifierDisclosure) ar.result;
-                if (mFeatureFlags.enableIdentifierDisclosureTransparency()
+                if (mFeatureFlags.enableIdentifierDisclosureTransparencyUnsolEvents()
                         && mIdentifierDisclosureNotifier != null
                         && disclosure != null) {
                     mIdentifierDisclosureNotifier.addDisclosure(disclosure);
@@ -3718,6 +3739,22 @@ public class GsmCdmaPhone extends Phone {
                 logd("EVENT_SET_IDENTIFIER_DISCLOSURE_ENABLED_DONE");
                 ar = (AsyncResult) msg.obj;
                 mIsIdentifierDisclosureTransparencySupported = doesResultIndicateModemSupport(ar);
+                break;
+
+            case EVENT_SECURITY_ALGORITHM_UPDATE:
+                logd("EVENT_SECURITY_ALGORITHM_UPDATE phoneId = " + getPhoneId());
+                if (mFeatureFlags.enableModemCipherTransparencyUnsolEvents()
+                        && mNullCipherNotifier != null) {
+                    ar = (AsyncResult) msg.obj;
+                    SecurityAlgorithmUpdate update = (SecurityAlgorithmUpdate) ar.result;
+                    mNullCipherNotifier.onSecurityAlgorithmUpdate(getPhoneId(), update);
+                }
+                break;
+
+            case EVENT_SET_SECURITY_ALGORITHMS_UPDATED_ENABLED_DONE:
+                logd("EVENT_SET_SECURITY_ALGORITHMS_UPDATED_ENABLED_DONE");
+                ar = (AsyncResult) msg.obj;
+                mIsNullCipherNotificationSupported = doesResultIndicateModemSupport(ar);
                 break;
 
             default:
@@ -4720,6 +4757,10 @@ public class GsmCdmaPhone extends Phone {
         return country.toUpperCase(Locale.ROOT);
     }
 
+    public void notifyEcbmTimerReset(Boolean flag) {
+        mEcmTimerResetRegistrants.notifyResult(flag);
+    }
+
     private static final int[] VOICE_PS_CALL_RADIO_TECHNOLOGY = {
             ServiceState.RIL_RADIO_TECHNOLOGY_LTE,
             ServiceState.RIL_RADIO_TECHNOLOGY_LTE_CA,
@@ -4783,6 +4824,23 @@ public class GsmCdmaPhone extends Phone {
     private void onVoiceRegStateOrRatChanged(int vrs, int vrat) {
         logd("onVoiceRegStateOrRatChanged");
         mCT.dispatchCsCallRadioTech(getCsCallRadioTech(vrs, vrat));
+    }
+
+    /**
+     * Registration point for Ecm timer reset
+     *
+     * @param h handler to notify
+     * @param what User-defined message code
+     * @param obj placed in Message.obj
+     */
+    @Override
+    public void registerForEcmTimerReset(Handler h, int what, Object obj) {
+        mEcmTimerResetRegistrants.addUnique(h, what, obj);
+    }
+
+    @Override
+    public void unregisterForEcmTimerReset(Handler h) {
+        mEcmTimerResetRegistrants.remove(h);
     }
 
     @Override
@@ -5208,19 +5266,54 @@ public class GsmCdmaPhone extends Phone {
     public void handleIdentifierDisclosureNotificationPreferenceChange() {
         if (!mFeatureFlags.enableIdentifierDisclosureTransparency()) {
             logi("Not handling identifier disclosure preference change. Feature flag "
-                    + "ENABLE_IDENTIFIER_DISCLOSURE_TRANSPARENCY disabled");
+                    + "enable_identifier_disclosure_transparency disabled");
             return;
         }
         boolean prefEnabled = getIdentifierDisclosureNotificationsPreferenceEnabled();
 
-        if (prefEnabled) {
+        // The notifier is tied to handling unsolicited updates from the modem, not the
+        // enable/disable API, so we only toggle the enable state if the unsol events feature
+        // flag is enabled.
+        if (mFeatureFlags.enableIdentifierDisclosureTransparencyUnsolEvents()) {
+          if (prefEnabled) {
             mIdentifierDisclosureNotifier.enable();
-        } else {
+          } else {
             mIdentifierDisclosureNotifier.disable();
+          }
+        } else {
+            logi("Not toggling enable state for disclosure notifier. Feature flag "
+                    + "enable_identifier_disclosure_transparency_unsol_events is disabled");
         }
 
         mCi.setCellularIdentifierTransparencyEnabled(prefEnabled,
                 obtainMessage(EVENT_SET_IDENTIFIER_DISCLOSURE_ENABLED_DONE));
+    }
+
+    @Override
+    public void handleNullCipherNotificationPreferenceChanged() {
+        if (!mFeatureFlags.enableModemCipherTransparency()) {
+            logi("Not handling null cipher notification preference change. Feature flag "
+                    + "enable_modem_cipher_transparency disabled");
+            return;
+        }
+        boolean prefEnabled = getNullCipherNotificationsPreferenceEnabled();
+
+        // The notifier is tied to handling unsolicited updates from the modem, not the
+        // enable/disable API.
+        if (mFeatureFlags.enableModemCipherTransparencyUnsolEvents()) {
+            if (prefEnabled) {
+                mNullCipherNotifier.enable();
+            } else {
+                mNullCipherNotifier.disable();
+            }
+        } else {
+            logi(
+                    "Not toggling enable state for cipher notifier. Feature flag "
+                            + "enable_modem_cipher_transparency_unsol_events is disabled.");
+        }
+
+        mCi.setSecurityAlgorithmsUpdatedEnabled(prefEnabled,
+                obtainMessage(EVENT_SET_SECURITY_ALGORITHMS_UPDATED_ENABLED_DONE));
     }
 
     @Override
@@ -5231,5 +5324,10 @@ public class GsmCdmaPhone extends Phone {
     @Override
     public boolean isIdentifierDisclosureTransparencySupported() {
         return mIsIdentifierDisclosureTransparencySupported;
+    }
+
+    @Override
+    public boolean isNullCipherNotificationSupported() {
+        return mIsNullCipherNotificationSupported;
     }
 }
