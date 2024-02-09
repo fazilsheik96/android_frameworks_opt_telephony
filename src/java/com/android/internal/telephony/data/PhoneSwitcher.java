@@ -800,10 +800,13 @@ public class PhoneSwitcher extends Handler {
                         mEmergencyOverride.mPendingOriginatingCall = false;
                     }
                 }
-                // Always update data modem via data during call code path, because
-                // mAutoSelectedDataSubId doesn't know about any data switch due to voice call
-                evaluateIfImmediateDataSwitchIsNeeded("precise call state changed",
-                        DataSwitch.Reason.DATA_SWITCH_REASON_IN_CALL);
+                //Evaluate and perform DDS switch if modem not capable of  Smart temp DDS.
+                if (shouldEvaluateAfterCallStateChange) {
+                    // Always update data modem via data during call code path, because
+                    // mAutoSelectedDataSubId doesn't know about any data switch due to voice call
+                    evaluateIfImmediateDataSwitchIsNeeded("precise call state changed",
+                            DataSwitch.Reason.DATA_SWITCH_REASON_IN_CALL);
+                }
                 if (!isAnyVoiceCallActiveOnDevice()) {
                     // consider auto switch on hang up all voice call
                     mAutoDataSwitchController.evaluateAutoDataSwitch(
