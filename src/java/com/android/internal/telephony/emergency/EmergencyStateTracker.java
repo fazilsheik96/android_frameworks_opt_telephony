@@ -84,7 +84,9 @@ public class EmergencyStateTracker {
      * Timeout before we continue with the emergency call without waiting for DDS switch response
      * from the modem.
      */
-    private static final int DEFAULT_DATA_SWITCH_TIMEOUT_MS = 1000;
+    private static final int DEFAULT_DATA_SWITCH_TIMEOUT_MS = 1 * 1000;
+    @VisibleForTesting
+    public static final int DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS = 3 * 1000;
     /** Default value for if Emergency Callback Mode is supported. */
     private static final boolean DEFAULT_EMERGENCY_CALLBACK_MODE_SUPPORTED = true;
     /** Default Emergency Callback Mode exit timeout value. */
@@ -645,8 +647,7 @@ public class EmergencyStateTracker {
         setEmergencyModeInProgress(true);
 
         Message m = mHandler.obtainMessage(msg, Integer.valueOf(emergencyType));
-        if ((mIsTestEmergencyNumber && emergencyType == EMERGENCY_TYPE_CALL)
-                || (mIsTestEmergencyNumberForSms && emergencyType == EMERGENCY_TYPE_SMS)) {
+        if (mIsTestEmergencyNumberForSms && emergencyType == EMERGENCY_TYPE_SMS) {
             Rlog.d(TAG, "TestEmergencyNumber for " + emergencyTypeToString(emergencyType)
                     + ": Skipping setting emergency mode on modem.");
             // Send back a response for the command, but with null information
@@ -1227,6 +1228,11 @@ public class EmergencyStateTracker {
                 mRadioOnHelper = new RadioOnHelper(mContext);
             }
 
+            final Phone phoneForEmergency = phone;
+            final String expectedCallId = mOngoingCallId;
+            final int waitForInServiceTimeout =
+                    needToTurnOnRadio ? DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS : 0;
+            Rlog.i(TAG, "turnOnRadioAndSwitchDds: timeout=" + waitForInServiceTimeout);
             mRadioOnHelper.triggerRadioOnAndListen(new RadioOnStateListener.Callback() {
                 @Override
                 public void onComplete(RadioOnStateListener listener, boolean isRadioReady) {
@@ -1241,25 +1247,33 @@ public class EmergencyStateTracker {
                             completeEmergencyMode(emergencyType, DisconnectCause.POWER_OFF);
                         }
                     } else {
+                        if (!Objects.equals(mOngoingCallId, expectedCallId)) {
+                            Rlog.i(TAG, "onComplete " + expectedCallId + " canceled.");
+                            return;
+                        }
                         switchDdsAndSetEmergencyMode(phone, emergencyType);
                     }
                 }
 
                 @Override
                 public boolean isOkToCall(Phone phone, int serviceState, boolean imsVoiceCapable) {
-                    // We currently only look to make sure that the radio is on before dialing. We
-                    // should be able to make emergency calls at any time after the radio has been
-                    // powered on and isn't in the UNAVAILABLE state, even if it is reporting the
-                    // OUT_OF_SERVICE state.
+                    // Wait for normal service state or timeout if required.
+                    if (phone == phoneForEmergency
+                            && waitForInServiceTimeout > 0
+                            && !isNetworkRegistered(phone)) {
+                        return false;
+                    }
                     return phone.getServiceStateTracker().isRadioOn()
                             && !satelliteController.isSatelliteEnabled();
                 }
 
                 @Override
                 public boolean onTimeout(Phone phone, int serviceState, boolean imsVoiceCapable) {
-                    return true;
+                    // onTimeout shall be called only with the Phone for emergency
+                    return phone.getServiceStateTracker().isRadioOn()
+                            && !satelliteController.isSatelliteEnabled();
                 }
-            }, !isTestEmergencyNumber, phone, isTestEmergencyNumber, 0);
+            }, !isTestEmergencyNumber, phone, isTestEmergencyNumber, waitForInServiceTimeout);
         } else {
             switchDdsAndSetEmergencyMode(phone, emergencyType);
         }
@@ -1410,6 +1424,27 @@ public class EmergencyStateTracker {
     private boolean isAvailableForEmergencyCalls(Phone phone) {
         return ServiceState.STATE_IN_SERVICE == phone.getServiceState().getState()
                 || phone.getServiceState().isEmergencyOnly();
+    }
+
+    private static boolean isNetworkRegistered(Phone phone) {
+        ServiceState ss = phone.getServiceStateTracker().getServiceState();
+        if (ss != null) {
+            NetworkRegistrationInfo nri = ss.getNetworkRegistrationInfo(
+                    NetworkRegistrationInfo.DOMAIN_PS,
+                    AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
+            if (nri != null && nri.isNetworkRegistered()) {
+                // PS is IN_SERVICE state.
+                return true;
+            }
+            nri = ss.getNetworkRegistrationInfo(
+                    NetworkRegistrationInfo.DOMAIN_CS,
+                    AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
+            if (nri != null && nri.isNetworkRegistered()) {
+                // CS is IN_SERVICE state.
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

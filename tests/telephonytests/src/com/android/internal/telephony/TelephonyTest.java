@@ -124,6 +124,7 @@ import com.android.internal.telephony.metrics.SmsStats;
 import com.android.internal.telephony.metrics.VoiceCallSessionStats;
 import com.android.internal.telephony.satellite.SatelliteController;
 import com.android.internal.telephony.security.CellularIdentifierDisclosureNotifier;
+import com.android.internal.telephony.security.CellularNetworkSecuritySafetySource;
 import com.android.internal.telephony.security.NullCipherNotifier;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.test.SimulatedCommands;
@@ -284,6 +285,7 @@ public abstract class TelephonyTest {
     protected ServiceStateStats mServiceStateStats;
     protected SatelliteController mSatelliteController;
     protected DeviceStateHelper mDeviceStateHelper;
+    protected CellularNetworkSecuritySafetySource mSafetySource;
     protected CellularIdentifierDisclosureNotifier mIdentifierDisclosureNotifier;
     protected DomainSelectionResolver mDomainSelectionResolver;
     protected NullCipherNotifier mNullCipherNotifier;
@@ -559,6 +561,7 @@ public abstract class TelephonyTest {
         mServiceStateStats = Mockito.mock(ServiceStateStats.class);
         mSatelliteController = Mockito.mock(SatelliteController.class);
         mDeviceStateHelper = Mockito.mock(DeviceStateHelper.class);
+        mSafetySource = Mockito.mock(CellularNetworkSecuritySafetySource.class);
         mIdentifierDisclosureNotifier = Mockito.mock(CellularIdentifierDisclosureNotifier.class);
         mDomainSelectionResolver = Mockito.mock(DomainSelectionResolver.class);
         mNullCipherNotifier = Mockito.mock(NullCipherNotifier.class);
@@ -634,7 +637,7 @@ public abstract class TelephonyTest {
                         nullable(IccCardStatus.class), anyInt(), nullable(UiccCard.class),
                         nullable(Object.class), any(FeatureFlags.class));
         doReturn(mCT).when(mTelephonyComponentFactory)
-                .makeGsmCdmaCallTracker(nullable(GsmCdmaPhone.class));
+                .makeGsmCdmaCallTracker(nullable(GsmCdmaPhone.class), any(FeatureFlags.class));
         doReturn(mIccPhoneBookIntManager).when(mTelephonyComponentFactory)
                 .makeIccPhoneBookInterfaceManager(nullable(Phone.class));
         doReturn(mDisplayInfoController).when(mTelephonyComponentFactory)
@@ -675,6 +678,8 @@ public abstract class TelephonyTest {
                         any(DataServiceManager.class), any(Looper.class),
                         any(FeatureFlags.class),
                         any(DataProfileManager.DataProfileManagerCallback.class));
+        doReturn(mSafetySource).when(mTelephonyComponentFactory)
+                .makeCellularNetworkSecuritySafetySource(any(Context.class));
         doReturn(mIdentifierDisclosureNotifier)
                 .when(mTelephonyComponentFactory)
                 .makeIdentifierDisclosureNotifier();

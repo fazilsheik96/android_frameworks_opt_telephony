@@ -1288,8 +1288,6 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
         }
     }
 
-    private @NonNull final FeatureFlags mFeatureFlags;
-
     //***** Events
 
 
@@ -1302,8 +1300,9 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
     @VisibleForTesting
     public ImsPhoneCallTracker(ImsPhone phone, ConnectorFactory factory, Executor executor,
             FeatureFlags featureFlags) {
+        super(featureFlags);
+
         this.mPhone = phone;
-        mFeatureFlags = featureFlags;
         mTelephonyManager = (TelephonyManager) mPhone.getContext()
                 .getSystemService(Context.TELEPHONY_SERVICE);
         mConnectorFactory = factory;

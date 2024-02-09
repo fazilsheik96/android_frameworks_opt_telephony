@@ -21,6 +21,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -285,7 +286,9 @@ public class NetworkTypeControllerTest extends TelephonyTest {
 
         doReturn(NetworkRegistrationInfo.NR_STATE_NOT_RESTRICTED).when(mServiceState).getNrState();
         setPhysicalLinkStatus(false);
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null,
+                        mPhone.getServiceStateTracker().getPhysicalChannelConfigList(), null));
         mNetworkTypeController.sendMessage(3 /* EVENT_SERVICE_STATE_CHANGED */);
         processAllMessages();
         assertEquals("not_restricted_rrc_idle", getCurrentState().getName());
@@ -335,7 +338,9 @@ public class NetworkTypeControllerTest extends TelephonyTest {
 
         doReturn(NetworkRegistrationInfo.NR_STATE_NOT_RESTRICTED).when(mServiceState).getNrState();
         setPhysicalLinkStatus(true);
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null,
+                        mPhone.getServiceStateTracker().getPhysicalChannelConfigList(), null));
         mNetworkTypeController.sendMessage(3 /* EVENT_SERVICE_STATE_CHANGED */);
         processAllMessages();
         assertEquals("not_restricted_rrc_con", getCurrentState().getName());
@@ -621,32 +626,37 @@ public class NetworkTypeControllerTest extends TelephonyTest {
         physicalChannelConfigs.add(pcc2);
         doReturn(physicalChannelConfigs).when(mSST).getPhysicalChannelConfigList();
 
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null, physicalChannelConfigs, null));
         processAllMessages();
         assertEquals("connected_mmwave", getCurrentState().getName());
 
         // bands and bandwidths should stay ratcheted even if an empty PCC list is sent
         doReturn(new ArrayList<>()).when(mSST).getPhysicalChannelConfigList();
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null, new ArrayList<>(), null));
         processAllMessages();
         assertEquals("connected_mmwave", getCurrentState().getName());
 
         // bands and bandwidths should stay ratcheted as long as anchor NR cell is the same
         physicalChannelConfigs.remove(pcc2);
         doReturn(physicalChannelConfigs).when(mSST).getPhysicalChannelConfigList();
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null, physicalChannelConfigs, null));
         processAllMessages();
         assertEquals("connected_mmwave", getCurrentState().getName());
 
         // bands and bandwidths should no longer be ratcheted if anchor NR cell changes
         // add pcc3 to front of list to ensure anchor NR cell changes from 1 -> 3
         physicalChannelConfigs.add(0, pcc3);
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null, physicalChannelConfigs, null));
         processAllMessages();
         assertEquals("connected", getCurrentState().getName());
 
         physicalChannelConfigs.add(pcc2);
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null, physicalChannelConfigs, null));
         processAllMessages();
         assertEquals("connected_mmwave", getCurrentState().getName());
     }
@@ -680,20 +690,23 @@ public class NetworkTypeControllerTest extends TelephonyTest {
         physicalChannelConfigs.add(pcc2);
         doReturn(physicalChannelConfigs).when(mSST).getPhysicalChannelConfigList();
 
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null, physicalChannelConfigs, null));
         processAllMessages();
         assertEquals("connected_mmwave", getCurrentState().getName());
 
         // bands and bandwidths should stay ratcheted even if an empty PCC list is sent
         doReturn(new ArrayList<>()).when(mSST).getPhysicalChannelConfigList();
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null, new ArrayList<>(), null));
         processAllMessages();
         assertEquals("connected_mmwave", getCurrentState().getName());
 
         // bands and bandwidths should change if PCC list changes
         physicalChannelConfigs.remove(pcc2);
         doReturn(physicalChannelConfigs).when(mSST).getPhysicalChannelConfigList();
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null, physicalChannelConfigs, null));
         processAllMessages();
         assertEquals("connected", getCurrentState().getName());
     }
@@ -729,19 +742,22 @@ public class NetworkTypeControllerTest extends TelephonyTest {
         physicalChannelConfigs.add(pcc2);
         doReturn(physicalChannelConfigs).when(mSST).getPhysicalChannelConfigList();
 
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null, physicalChannelConfigs, null));
         processAllMessages();
         assertEquals("connected_mmwave", getCurrentState().getName());
 
         // bands and bandwidths should not stay the same even if an empty PCC list is sent
         doReturn(new ArrayList<>()).when(mSST).getPhysicalChannelConfigList();
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null, new ArrayList<>(), null));
         processAllMessages();
         assertEquals("connected", getCurrentState().getName());
 
         // bands and bandwidths should change if PCC list changes
         doReturn(physicalChannelConfigs).when(mSST).getPhysicalChannelConfigList();
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null, physicalChannelConfigs, null));
         processAllMessages();
         assertEquals("connected_mmwave", getCurrentState().getName());
     }
@@ -769,7 +785,9 @@ public class NetworkTypeControllerTest extends TelephonyTest {
         testTransitionToCurrentStateNrConnectedMmwave();
         doReturn(NetworkRegistrationInfo.NR_STATE_NOT_RESTRICTED).when(mServiceState).getNrState();
         setPhysicalLinkStatus(true);
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null,
+                        mPhone.getServiceStateTracker().getPhysicalChannelConfigList(), null));
         mNetworkTypeController.sendMessage(3 /* EVENT_SERVICE_STATE_CHANGED */);
 
         processAllMessages();
@@ -806,7 +824,9 @@ public class NetworkTypeControllerTest extends TelephonyTest {
 
         doReturn(true).when(mServiceState).isUsingCarrierAggregation();
         doReturn(new int[] {30000}).when(mServiceState).getCellBandwidths();
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null,
+                        mPhone.getServiceStateTracker().getPhysicalChannelConfigList(), null));
         mNetworkTypeController.sendMessage(3 /* EVENT_SERVICE_STATE_CHANGED */);
         processAllMessages();
         assertEquals(TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_LTE_CA,
@@ -834,7 +854,9 @@ public class NetworkTypeControllerTest extends TelephonyTest {
         // LTE -> LTE+
         doReturn(true).when(mServiceState).isUsingCarrierAggregation();
         doReturn(new int[] {30000}).when(mServiceState).getCellBandwidths();
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null,
+                        mPhone.getServiceStateTracker().getPhysicalChannelConfigList(), null));
         mNetworkTypeController.sendMessage(3 /* EVENT_SERVICE_STATE_CHANGED */);
         processAllMessages();
         assertEquals(TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_LTE_CA,
@@ -862,7 +884,9 @@ public class NetworkTypeControllerTest extends TelephonyTest {
         // LTE -> LTE+
         doReturn(true).when(mServiceState).isUsingCarrierAggregation();
         doReturn(new int[] {30000}).when(mServiceState).getCellBandwidths();
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null,
+                        mPhone.getServiceStateTracker().getPhysicalChannelConfigList(), null));
         mNetworkTypeController.sendMessage(3 /* EVENT_SERVICE_STATE_CHANGED */);
         processAllMessages();
         assertEquals(TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_LTE_CA,
@@ -891,7 +915,9 @@ public class NetworkTypeControllerTest extends TelephonyTest {
         testTransitionToCurrentStateLteConnectedSupportPhysicalChannelConfig1_6();
         doReturn(ServiceState.FREQUENCY_RANGE_MMWAVE).when(mServiceState).getNrFrequencyRange();
         setPhysicalLinkStatus(false);
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null,
+                        mPhone.getServiceStateTracker().getPhysicalChannelConfigList(), null));
         mNetworkTypeController.sendMessage(3 /* EVENT_SERVICE_STATE_CHANGED */);
         processAllMessages();
         assertEquals("not_restricted_rrc_idle", getCurrentState().getName());
@@ -978,6 +1004,54 @@ public class NetworkTypeControllerTest extends TelephonyTest {
 
         assertEquals("legacy", getCurrentState().getName());
         assertEquals(TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA,
+                mNetworkTypeController.getOverrideNetworkType());
+        assertTrue(mNetworkTypeController.areAnyTimersActive());
+
+        // timer expires
+        moveTimeForward(10 * 1000);
+        processAllMessages();
+
+        assertEquals("legacy", getCurrentState().getName());
+        assertEquals(TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE,
+                mNetworkTypeController.getOverrideNetworkType());
+        assertFalse(mNetworkTypeController.areAnyTimersActive());
+    }
+
+    @Test
+    public void testPrimaryTimerNetworkTypeChanged() throws Exception {
+        doAnswer(invocation -> {
+            doReturn(new TelephonyDisplayInfo(
+                    mNetworkTypeController.getDataNetworkType(),
+                    mNetworkTypeController.getOverrideNetworkType(),
+                    false)).when(mDisplayInfoController).getTelephonyDisplayInfo();
+            return null;
+        }).when(mDisplayInfoController).updateTelephonyDisplayInfo();
+        mNetworkRegistrationInfo = new NetworkRegistrationInfo.Builder()
+                .setAccessNetworkTechnology(TelephonyManager.NETWORK_TYPE_NR)
+                .setRegistrationState(NetworkRegistrationInfo.REGISTRATION_STATE_HOME)
+                .build();
+        doReturn(mNetworkRegistrationInfo).when(mServiceState).getNetworkRegistrationInfo(
+                anyInt(), anyInt());
+        mBundle.putString(CarrierConfigManager.KEY_5G_ICON_DISPLAY_GRACE_PERIOD_STRING,
+                "connected_mmwave,any,10;connected,any,10;not_restricted_rrc_con,any,10");
+        sendCarrierConfigChanged();
+
+        assertEquals("connected", getCurrentState().getName());
+        assertEquals(TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE,
+                mNetworkTypeController.getOverrideNetworkType());
+
+        // trigger 10 second timer after disconnecting from NR advanced
+        mNetworkRegistrationInfo = new NetworkRegistrationInfo.Builder()
+                .setAccessNetworkTechnology(TelephonyManager.NETWORK_TYPE_LTE)
+                .setRegistrationState(NetworkRegistrationInfo.REGISTRATION_STATE_HOME)
+                .build();
+        doReturn(mNetworkRegistrationInfo).when(mServiceState).getNetworkRegistrationInfo(
+                anyInt(), anyInt());
+        mNetworkTypeController.sendMessage(3 /* EVENT_SERVICE_STATE_CHANGED */);
+        processAllMessages();
+
+        assertEquals("legacy", getCurrentState().getName());
+        assertEquals(TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE,
                 mNetworkTypeController.getOverrideNetworkType());
         assertTrue(mNetworkTypeController.areAnyTimersActive());
 
@@ -1369,7 +1443,8 @@ public class NetworkTypeControllerTest extends TelephonyTest {
                 .setNetworkType(TelephonyManager.NETWORK_TYPE_NR)
                 .setCellConnectionStatus(CellInfo.CONNECTION_PRIMARY_SERVING)
                 .build());
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null, physicalChannelConfigs, null));
         processAllMessages();
 
         assertEquals("connected", getCurrentState().getName());
@@ -1379,7 +1454,8 @@ public class NetworkTypeControllerTest extends TelephonyTest {
 
         // switch to connected_rrc_idle
         physicalChannelConfigs.clear();
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null, physicalChannelConfigs, null));
         processAllMessages();
 
         assertEquals("connected_rrc_idle", getCurrentState().getName());
@@ -1438,7 +1514,8 @@ public class NetworkTypeControllerTest extends TelephonyTest {
                 .setNetworkType(TelephonyManager.NETWORK_TYPE_NR)
                 .setCellConnectionStatus(CellInfo.CONNECTION_PRIMARY_SERVING)
                 .build());
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null, physicalChannelConfigs, null));
         processAllMessages();
 
         assertEquals("connected", getCurrentState().getName());
@@ -1448,7 +1525,8 @@ public class NetworkTypeControllerTest extends TelephonyTest {
 
         // switch to connected_rrc_idle
         physicalChannelConfigs.clear();
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null, physicalChannelConfigs, null));
         processAllMessages();
 
         assertEquals("connected_rrc_idle", getCurrentState().getName());
@@ -1473,7 +1551,8 @@ public class NetworkTypeControllerTest extends TelephonyTest {
                 .setCellConnectionStatus(CellInfo.CONNECTION_PRIMARY_SERVING)
                 .setBand(41)
                 .build());
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null, physicalChannelConfigs, null));
 
         // secondary timer expires
         moveTimeForward(30 * 1000);
@@ -1517,7 +1596,8 @@ public class NetworkTypeControllerTest extends TelephonyTest {
                 .setNetworkType(TelephonyManager.NETWORK_TYPE_NR)
                 .setCellConnectionStatus(CellInfo.CONNECTION_PRIMARY_SERVING)
                 .build());
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null, physicalChannelConfigs, null));
         processAllMessages();
 
         assertEquals("connected", getCurrentState().getName());
@@ -1527,7 +1607,8 @@ public class NetworkTypeControllerTest extends TelephonyTest {
 
         // switch to connected_rrc_idle
         physicalChannelConfigs.clear();
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null, physicalChannelConfigs, null));
         processAllMessages();
 
         assertEquals("connected_rrc_idle", getCurrentState().getName());
@@ -1552,7 +1633,8 @@ public class NetworkTypeControllerTest extends TelephonyTest {
                 .setNetworkType(TelephonyManager.NETWORK_TYPE_NR)
                 .setCellConnectionStatus(CellInfo.CONNECTION_PRIMARY_SERVING)
                 .build());
-        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */);
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null, physicalChannelConfigs, null));
         processAllMessages();
 
         assertEquals("connected_rrc_idle", getCurrentState().getName());
