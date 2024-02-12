@@ -16,6 +16,7 @@
 
 package com.android.internal.telephony.satellite;
 
+import static android.provider.Settings.ACTION_SATELLITE_SETTING;
 import static android.telephony.CarrierConfigManager.KEY_CARRIER_SUPPORTED_SATELLITE_SERVICES_PER_PROVIDER_BUNDLE;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ATTACH_SUPPORTED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_CONNECTION_HYSTERESIS_SEC_INT;
@@ -33,6 +34,10 @@ import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_SUCC
 import android.annotation.ArrayRes;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.bluetooth.BluetoothAdapter;
 import android.content.BroadcastReceiver;
 import android.content.ContentResolver;
@@ -42,6 +47,7 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.res.Resources;
 import android.database.ContentObserver;
+import android.net.Uri;
 import android.net.wifi.WifiManager;
 import android.nfc.NfcAdapter;
 import android.os.AsyncResult;
@@ -62,6 +68,7 @@ import android.os.ResultReceiver;
 import android.os.ServiceSpecificException;
 import android.os.SystemClock;
 import android.os.SystemProperties;
+import android.os.UserHandle;
 import android.provider.Settings;
 import android.telephony.CarrierConfigManager;
 import android.telephony.Rlog;
@@ -334,6 +341,16 @@ public class SatelliteController extends Handler {
      * carrierPlmnList. */
     @GuardedBy("mSupportedSatelliteServicesLock")
     private final SparseArray<List<String>> mMergedPlmnListPerCarrier = new SparseArray<>();
+
+    /** Key used to read/write satellite system notification done in shared preferences. */
+    private static final String SATELLITE_SYSTEM_NOTIFICATION_DONE_KEY =
+            "satellite_system_notification_done_key";
+    // The notification tag used when showing a notification. The combination of notification tag
+    // and notification id should be unique within the phone app.
+    private static final String NOTIFICATION_TAG = "SatelliteController";
+    private static final int NOTIFICATION_ID = 1;
+    private static final String NOTIFICATION_CHANNEL = "satelliteChannel";
+    private static final String NOTIFICATION_CHANNEL_ID = "satellite";
 
     /**
      * @return The singleton instance of SatelliteController.
@@ -1077,7 +1094,7 @@ public class SatelliteController extends Handler {
                         logd("pollPendingSatelliteDatagram result: " + result);
                     }
                 };
-                pollPendingSatelliteDatagrams(
+                pollPendingDatagrams(
                         SubscriptionManager.DEFAULT_SUBSCRIPTION_ID, internalCallback);
                 break;
 
@@ -1701,16 +1718,16 @@ public class SatelliteController extends Handler {
      * @param callback The callback that was passed to
      * {@link #registerForSatelliteModemStateChanged(int, ISatelliteModemStateCallback)}.
      */
-    public void unregisterForSatelliteModemStateChanged(int subId,
+    public void unregisterForModemStateChanged(int subId,
             @NonNull ISatelliteModemStateCallback callback) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("unregisterForSatelliteModemStateChanged: oemEnabledSatelliteFlag is disabled");
+            logd("unregisterForModemStateChanged: oemEnabledSatelliteFlag is disabled");
             return;
         }
         if (mSatelliteSessionController != null) {
             mSatelliteSessionController.unregisterForSatelliteModemStateChanged(callback);
         } else {
-            loge("unregisterForSatelliteModemStateChanged: mSatelliteSessionController"
+            loge("unregisterForModemStateChanged: mSatelliteSessionController"
                     + " is not initialized yet");
         }
     }
@@ -1723,16 +1740,16 @@ public class SatelliteController extends Handler {
      *
      * @return The {@link SatelliteManager.SatelliteResult} result of the operation.
      */
-    @SatelliteManager.SatelliteResult public int registerForSatelliteDatagram(int subId,
+    @SatelliteManager.SatelliteResult public int registerForIncomingDatagram(int subId,
             @NonNull ISatelliteDatagramCallback callback) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("registerForSatelliteDatagram: oemEnabledSatelliteFlag is disabled");
+            logd("registerForIncomingDatagram: oemEnabledSatelliteFlag is disabled");
             return SatelliteManager.SATELLITE_RESULT_NOT_SUPPORTED;
         }
         if (!mSatelliteModemInterface.isSatelliteServiceSupported()) {
             return SatelliteManager.SATELLITE_RESULT_NOT_SUPPORTED;
         }
-        logd("registerForSatelliteDatagram: callback=" + callback);
+        logd("registerForIncomingDatagram: callback=" + callback);
         return mDatagramController.registerForSatelliteDatagram(subId, callback);
     }
 
@@ -1742,18 +1759,18 @@ public class SatelliteController extends Handler {
      *
      * @param subId The subId of the subscription to unregister for incoming satellite datagrams.
      * @param callback The callback that was passed to
-     *                 {@link #registerForSatelliteDatagram(int, ISatelliteDatagramCallback)}.
+     *                 {@link #registerForIncomingDatagram(int, ISatelliteDatagramCallback)}.
      */
-    public void unregisterForSatelliteDatagram(int subId,
+    public void unregisterForIncomingDatagram(int subId,
             @NonNull ISatelliteDatagramCallback callback) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("unregisterForSatelliteDatagram: oemEnabledSatelliteFlag is disabled");
+            logd("unregisterForIncomingDatagram: oemEnabledSatelliteFlag is disabled");
             return;
         }
         if (!mSatelliteModemInterface.isSatelliteServiceSupported()) {
             return;
         }
-        logd("unregisterForSatelliteDatagram: callback=" + callback);
+        logd("unregisterForIncomingDatagram: callback=" + callback);
         mDatagramController.unregisterForSatelliteDatagram(subId, callback);
     }
 
@@ -1768,7 +1785,7 @@ public class SatelliteController extends Handler {
      * @param subId The subId of the subscription used for receiving datagrams.
      * @param callback The callback to get {@link SatelliteManager.SatelliteResult} of the request.
      */
-    public void pollPendingSatelliteDatagrams(int subId, @NonNull IIntegerConsumer callback) {
+    public void pollPendingDatagrams(int subId, @NonNull IIntegerConsumer callback) {
         Consumer<Integer> result = FunctionalUtils.ignoreRemoteException(callback::accept);
         int error = evaluateOemSatelliteRequestAllowed(true);
         if (error != SATELLITE_RESULT_SUCCESS) {
@@ -1796,7 +1813,7 @@ public class SatelliteController extends Handler {
      *                                 full screen mode.
      * @param callback The callback to get {@link SatelliteManager.SatelliteResult} of the request.
      */
-    public void sendSatelliteDatagram(int subId, @SatelliteManager.DatagramType int datagramType,
+    public void sendDatagram(int subId, @SatelliteManager.DatagramType int datagramType,
             SatelliteDatagram datagram, boolean needFullScreenPointingUI,
             @NonNull IIntegerConsumer callback) {
         logd("sendSatelliteDatagram: subId: " + subId + " datagramType: " + datagramType
@@ -1882,14 +1899,14 @@ public class SatelliteController extends Handler {
      * @param reason Reason for disallowing satellite communication for carrier.
      * @param callback The callback to get the result of the request.
      */
-    public void addSatelliteAttachRestrictionForCarrier(int subId,
+    public void addAttachRestrictionForCarrier(int subId,
             @SatelliteManager.SatelliteCommunicationRestrictionReason int reason,
             @NonNull IIntegerConsumer callback) {
-        if (DBG) logd("addSatelliteAttachRestrictionForCarrier(" + subId + ", " + reason + ")");
+        if (DBG) logd("addAttachRestrictionForCarrier(" + subId + ", " + reason + ")");
         Consumer<Integer> result = FunctionalUtils.ignoreRemoteException(callback::accept);
         if (!mFeatureFlags.carrierEnabledSatelliteFlag()) {
             result.accept(SatelliteManager.SATELLITE_RESULT_REQUEST_NOT_SUPPORTED);
-            logd("addSatelliteAttachRestrictionForCarrier: carrierEnabledSatelliteFlag is "
+            logd("addAttachRestrictionForCarrier: carrierEnabledSatelliteFlag is "
                     + "disabled");
             return;
         }
@@ -1921,14 +1938,14 @@ public class SatelliteController extends Handler {
      * @param reason Reason for disallowing satellite communication.
      * @param callback The callback to get the result of the request.
      */
-    public void removeSatelliteAttachRestrictionForCarrier(int subId,
+    public void removeAttachRestrictionForCarrier(int subId,
             @SatelliteManager.SatelliteCommunicationRestrictionReason int reason,
             @NonNull IIntegerConsumer callback) {
-        if (DBG) logd("removeSatelliteAttachRestrictionForCarrier(" + subId + ", " + reason + ")");
+        if (DBG) logd("removeAttachRestrictionForCarrier(" + subId + ", " + reason + ")");
         Consumer<Integer> result = FunctionalUtils.ignoreRemoteException(callback::accept);
         if (!mFeatureFlags.carrierEnabledSatelliteFlag()) {
             result.accept(SatelliteManager.SATELLITE_RESULT_REQUEST_NOT_SUPPORTED);
-            logd("removeSatelliteAttachRestrictionForCarrier: carrierEnabledSatelliteFlag is "
+            logd("removeAttachRestrictionForCarrier: carrierEnabledSatelliteFlag is "
                     + "disabled");
             return;
         }
@@ -1951,15 +1968,15 @@ public class SatelliteController extends Handler {
 
     /**
      * Get reasons for disallowing satellite communication, as requested by
-     * {@link #addSatelliteAttachRestrictionForCarrier(int, int, IIntegerConsumer)}.
+     * {@link #addAttachRestrictionForCarrier(int, int, IIntegerConsumer)}.
      *
      * @param subId The subId of the subscription to request for.
      *
      * @return Set of reasons for disallowing satellite attach for carrier.
      */
-    @NonNull public Set<Integer> getSatelliteAttachRestrictionReasonsForCarrier(int subId) {
+    @NonNull public Set<Integer> getAttachRestrictionReasonsForCarrier(int subId) {
         if (!mFeatureFlags.carrierEnabledSatelliteFlag()) {
-            logd("getSatelliteAttachRestrictionReasonsForCarrier: carrierEnabledSatelliteFlag is "
+            logd("getAttachRestrictionReasonsForCarrier: carrierEnabledSatelliteFlag is "
                     + "disabled");
             return new HashSet<>();
         }
@@ -2057,9 +2074,9 @@ public class SatelliteController extends Handler {
      *
      * @return The {@link SatelliteManager.SatelliteResult} result of the operation.
      */
-    @SatelliteManager.SatelliteResult public int registerForSatelliteCapabilitiesChanged(
+    @SatelliteManager.SatelliteResult public int registerForCapabilitiesChanged(
             int subId, @NonNull ISatelliteCapabilitiesCallback callback) {
-        if (DBG) logd("registerForSatelliteCapabilitiesChanged()");
+        if (DBG) logd("registerForCapabilitiesChanged()");
 
         int error = evaluateOemSatelliteRequestAllowed(true);
         if (error != SATELLITE_RESULT_SUCCESS) return error;
@@ -2075,11 +2092,11 @@ public class SatelliteController extends Handler {
      * @param subId The id of the subscription to unregister for listening satellite capabilities
      * changed event.
      * @param callback The callback that was passed to
-     * {@link #registerForSatelliteCapabilitiesChanged(int, ISatelliteCapabilitiesCallback)}
+     * {@link #registerForCapabilitiesChanged(int, ISatelliteCapabilitiesCallback)}
      */
-    public void unregisterForSatelliteCapabilitiesChanged(
+    public void unregisterForCapabilitiesChanged(
             int subId, @NonNull ISatelliteCapabilitiesCallback callback) {
-        if (DBG) logd("unregisterForSatelliteCapabilitiesChanged()");
+        if (DBG) logd("unregisterForCapabilitiesChanged()");
 
         int error = evaluateOemSatelliteRequestAllowed(true);
         if (error == SATELLITE_RESULT_SUCCESS) {
@@ -2342,9 +2359,9 @@ public class SatelliteController extends Handler {
      * @return The list of satellite PLMNs used for connecting to satellite networks.
      */
     @NonNull
-    public List<String> getAllSatellitePlmnsForCarrier(int subId) {
+    public List<String> getSatellitePlmnsForCarrier(int subId) {
         if (!mFeatureFlags.carrierEnabledSatelliteFlag()) {
-            logd("getAllSatellitePlmnsForCarrier: carrierEnabledSatelliteFlag is disabled");
+            logd("getSatellitePlmnsForCarrier: carrierEnabledSatelliteFlag is disabled");
             return new ArrayList<>();
         }
         synchronized (mSupportedSatelliteServicesLock) {
@@ -2527,10 +2544,10 @@ public class SatelliteController extends Handler {
 
             // TODO b/322143408 store entitlement status in telephony db.
             if (mSatelliteEntitlementStatusPerCarrier.get(subId, false)) {
-                removeSatelliteAttachRestrictionForCarrier(subId,
+                removeAttachRestrictionForCarrier(subId,
                         SATELLITE_COMMUNICATION_RESTRICTION_REASON_ENTITLEMENT, callback);
             } else {
-                addSatelliteAttachRestrictionForCarrier(subId,
+                addAttachRestrictionForCarrier(subId,
                         SATELLITE_COMMUNICATION_RESTRICTION_REASON_ENTITLEMENT, callback);
             }
         }
@@ -2754,7 +2771,7 @@ public class SatelliteController extends Handler {
             registerForPendingDatagramCount();
             registerForSatelliteModemStateChanged();
             registerForNtnSignalStrengthChanged();
-            registerForSatelliteCapabilitiesChanged();
+            registerForCapabilitiesChanged();
 
             requestIsSatelliteProvisioned(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
                     new ResultReceiver(this) {
@@ -2840,9 +2857,9 @@ public class SatelliteController extends Handler {
         }
     }
 
-    private void registerForSatelliteCapabilitiesChanged() {
+    private void registerForCapabilitiesChanged() {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("registerForSatelliteCapabilitiesChanged: oemEnabledSatelliteFlag is disabled");
+            logd("registerForCapabilitiesChanged: oemEnabledSatelliteFlag is disabled");
             return;
         }
 
@@ -3347,7 +3364,7 @@ public class SatelliteController extends Handler {
      * <ul>
      * <li>Users want to enable it.</li>
      * <li>There is no satellite communication restriction, which is added by
-     * {@link #addSatelliteAttachRestrictionForCarrier(int, int, IIntegerConsumer)}</li>
+     * {@link #addAttachRestrictionForCarrier(int, int, IIntegerConsumer)}</li>
      * <li>The carrier config {@link
      * android.telephony.CarrierConfigManager#KEY_SATELLITE_ATTACH_SUPPORTED_BOOL} is set to
      * {@code true}.</li>
@@ -3462,6 +3479,7 @@ public class SatelliteController extends Handler {
 
     private void handleEventServiceStateChanged() {
         handleServiceStateForSatelliteConnectionViaCarrier();
+        determineSystemNotification();
     }
 
     private void handleServiceStateForSatelliteConnectionViaCarrier() {
@@ -3596,6 +3614,78 @@ public class SatelliteController extends Handler {
 
         mDatagramController.setShouldSendDatagramToModemInDemoMode(shouldSendToModemInDemoMode);
         return true;
+    }
+
+    private void determineSystemNotification() {
+        if (isUsingNonTerrestrialNetworkViaCarrier()) {
+            if (mSharedPreferences == null) {
+                try {
+                    mSharedPreferences = mContext.getSharedPreferences(SATELLITE_SHARED_PREF,
+                            Context.MODE_PRIVATE);
+                } catch (Exception e) {
+                    loge("Cannot get default shared preferences: " + e);
+                }
+            }
+            if (mSharedPreferences == null) {
+                loge("handleEventServiceStateChanged: Cannot get default shared preferences");
+                return;
+            }
+            if (!mSharedPreferences.getBoolean(SATELLITE_SYSTEM_NOTIFICATION_DONE_KEY, false)) {
+                showSatelliteSystemNotification();
+                mSharedPreferences.edit().putBoolean(SATELLITE_SYSTEM_NOTIFICATION_DONE_KEY,
+                        true).apply();
+            }
+        }
+    }
+
+    private void showSatelliteSystemNotification() {
+        logd("showSatelliteSystemNotification");
+        final NotificationChannel notificationChannel = new NotificationChannel(
+                NOTIFICATION_CHANNEL_ID,
+                NOTIFICATION_CHANNEL,
+                NotificationManager.IMPORTANCE_DEFAULT
+        );
+        notificationChannel.setSound(null, null);
+        NotificationManager notificationManager = mContext.getSystemService(
+                NotificationManager.class);
+        notificationManager.createNotificationChannel(notificationChannel);
+
+        Notification.Builder notificationBuilder = new Notification.Builder(mContext)
+                .setContentTitle(mContext.getResources().getString(
+                        R.string.satellite_notification_title))
+                .setContentText(mContext.getResources().getString(
+                        R.string.satellite_notification_summary))
+                .setSmallIcon(R.drawable.ic_satellite_alt_24px)
+                .setChannelId(NOTIFICATION_CHANNEL_ID)
+                .setAutoCancel(true)
+                .setColor(mContext.getColor(
+                        com.android.internal.R.color.system_notification_accent_color))
+                .setVisibility(Notification.VISIBILITY_PUBLIC);
+
+        // Add action to invoke `What to expect` dialog of Messaging application.
+        Intent intentOpenMessage = new Intent(Intent.ACTION_VIEW);
+        intentOpenMessage.setData(Uri.parse("sms:"));
+        // TODO : b/322733285 add putExtra to invoke "What to expect" dialog.
+        PendingIntent pendingIntentOpenMessage = PendingIntent.getActivity(mContext, 0,
+                intentOpenMessage, PendingIntent.FLAG_IMMUTABLE);
+
+        Notification.Action actionOpenMessage = new Notification.Action.Builder(0,
+                mContext.getResources().getString(R.string.satellite_notification_open_message),
+                pendingIntentOpenMessage).build();
+        notificationBuilder.addAction(actionOpenMessage);
+
+        // Add action to invoke Satellite setting activity in Settings.
+        Intent intentSatelliteSetting = new Intent(ACTION_SATELLITE_SETTING);
+        PendingIntent pendingIntentSatelliteSetting = PendingIntent.getActivity(mContext, 0,
+                intentSatelliteSetting, PendingIntent.FLAG_IMMUTABLE);
+
+        Notification.Action actionOpenSatelliteSetting = new Notification.Action.Builder(null,
+                mContext.getResources().getString(R.string.satellite_notification_how_it_works),
+                pendingIntentSatelliteSetting).build();
+        notificationBuilder.addAction(actionOpenSatelliteSetting);
+
+        notificationManager.notifyAsUser(NOTIFICATION_TAG, NOTIFICATION_ID,
+                notificationBuilder.build(), UserHandle.ALL);
     }
 
     private static void logd(@NonNull String log) {
