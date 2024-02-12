@@ -63,6 +63,7 @@ import com.android.internal.telephony.imsphone.ImsPhoneCallTracker;
 import com.android.internal.telephony.nitz.NitzStateMachineImpl;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
 import com.android.internal.telephony.security.CellularIdentifierDisclosureNotifier;
+import com.android.internal.telephony.security.CellularNetworkSecuritySafetySource;
 import com.android.internal.telephony.security.NullCipherNotifier;
 import com.android.internal.telephony.uicc.IccCardStatus;
 import com.android.internal.telephony.uicc.UiccCard;
@@ -296,9 +297,15 @@ public class TelephonyComponentFactory {
         return sInstance;
     }
 
-    public GsmCdmaCallTracker makeGsmCdmaCallTracker(GsmCdmaPhone phone) {
+    /**
+     * Create a new GsmCdmaCallTracker
+     * @param phone GsmCdmaPhone
+     * @param featureFlags Telephony feature flag
+     */
+    public GsmCdmaCallTracker makeGsmCdmaCallTracker(GsmCdmaPhone phone,
+            @NonNull FeatureFlags featureFlags) {
         Rlog.d(LOG_TAG, "makeGsmCdmaCallTracker");
-        return new GsmCdmaCallTracker(phone);
+        return new GsmCdmaCallTracker(phone, featureFlags);
     }
 
     public SmsStorageMonitor makeSmsStorageMonitor(Phone phone) {
@@ -636,6 +643,12 @@ public class TelephonyComponentFactory {
             @NonNull DataNetworkController dataNetworkController, @NonNull Looper looper,
             @NonNull DataSettingsManager.DataSettingsManagerCallback callback) {
         return new DataSettingsManager(phone, dataNetworkController, looper, callback);
+    }
+
+    /** Create CellularNetworkSecuritySafetySource. */
+    public CellularNetworkSecuritySafetySource makeCellularNetworkSecuritySafetySource(
+            Context context) {
+        return CellularNetworkSecuritySafetySource.getInstance(context);
     }
 
     public DataConfigManager makeDataConfigManager(Phone phone, Looper looper, FeatureFlags featureFlags) {
