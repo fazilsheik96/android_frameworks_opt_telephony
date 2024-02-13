@@ -306,10 +306,10 @@ import android.net.LinkAddress;
 import android.net.LinkProperties;
 import android.os.SystemClock;
 import android.service.carrier.CarrierIdentifier;
-import android.telephony.CarrierInfo;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.Annotation;
 import android.telephony.BarringInfo;
+import android.telephony.CarrierInfo;
 import android.telephony.CarrierRestrictionRules;
 import android.telephony.CellConfigLte;
 import android.telephony.CellIdentity;
@@ -336,7 +336,7 @@ import android.telephony.CellSignalStrengthWcdma;
 import android.telephony.CellularIdentifierDisclosure;
 import android.telephony.ClosedSubscriberGroupInfo;
 import android.telephony.DomainSelectionService;
-import android.telephony.EmergencyRegResult;
+import android.telephony.EmergencyRegistrationResult;
 import android.telephony.LinkCapacityEstimate;
 import android.telephony.ModemInfo;
 import android.telephony.NetworkRegistrationInfo;
@@ -4549,13 +4549,13 @@ public class RILUtils {
     }
 
     /**
-     * Convert EmergencyRegResult.aidl to EmergencyRegResult.
+     * Convert EmergencyRegResult.aidl to EmergencyRegistrationResult.
      * @param halResult EmergencyRegResult.aidl in HAL.
-     * @return Converted EmergencyRegResult.
+     * @return Converted EmergencyRegistrationResult.
      */
-    public static EmergencyRegResult convertHalEmergencyRegResult(
+    public static EmergencyRegistrationResult convertHalEmergencyRegResult(
             android.hardware.radio.network.EmergencyRegResult halResult) {
-        return new EmergencyRegResult(
+        return new EmergencyRegistrationResult(
                 halResult.accessNetwork,
                 convertHalRegState(halResult.regState),
                 halResult.emcDomain,

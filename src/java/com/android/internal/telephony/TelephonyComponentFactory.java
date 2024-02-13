@@ -687,8 +687,9 @@ public class TelephonyComponentFactory {
     }
 
     /** Create CellularIdentifierDisclosureNotifier. */
-    public CellularIdentifierDisclosureNotifier makeIdentifierDisclosureNotifier() {
-        return CellularIdentifierDisclosureNotifier.getInstance();
+    public CellularIdentifierDisclosureNotifier makeIdentifierDisclosureNotifier(
+            CellularNetworkSecuritySafetySource safetySource) {
+        return CellularIdentifierDisclosureNotifier.getInstance(safetySource);
     }
 
     /** Create NullCipherNotifier. */

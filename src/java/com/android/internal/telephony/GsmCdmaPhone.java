@@ -16,10 +16,7 @@
 
 package com.android.internal.telephony;
 
-import static android.telephony.NetworkRegistrationInfo.DOMAIN_CS;
-import static android.telephony.NetworkRegistrationInfo.DOMAIN_CS_PS;
 import static android.telephony.NetworkRegistrationInfo.DOMAIN_PS;
-import static android.telephony.NetworkRegistrationInfo.DOMAIN_UNKNOWN;
 
 import static com.android.internal.telephony.CommandException.Error.GENERIC_FAILURE;
 import static com.android.internal.telephony.CommandException.Error.SIM_BUSY;
@@ -75,7 +72,6 @@ import android.telecom.VideoProfile;
 import android.telephony.AccessNetworkConstants.TransportType;
 import android.telephony.Annotation.DataActivityType;
 import android.telephony.Annotation.RadioPowerState;
-import android.telephony.AnomalyReporter;
 import android.telephony.BarringInfo;
 import android.telephony.CarrierConfigManager;
 import android.telephony.CellBroadcastIdRange;
@@ -153,7 +149,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
-import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -548,7 +543,7 @@ public class GsmCdmaPhone extends Phone {
             mIdentifierDisclosureNotifier =
                     mTelephonyComponentFactory
                             .inject(CellularIdentifierDisclosureNotifier.class.getName())
-                            .makeIdentifierDisclosureNotifier();
+                            .makeIdentifierDisclosureNotifier(mSafetySource);
             mCi.registerForCellularIdentifierDisclosures(
                     this, EVENT_CELL_IDENTIFIER_DISCLOSURE, null);
         }
@@ -1521,24 +1516,6 @@ public class GsmCdmaPhone extends Phone {
         boolean useImsForPsAttachedCall = useImsForPsAttachedCall();
 
         Bundle extras = dialArgs.intentExtras;
-        if (extras != null && extras.containsKey(PhoneConstants.EXTRA_COMPARE_DOMAIN)) {
-            int domain = extras.getInt(PhoneConstants.EXTRA_DIAL_DOMAIN);
-            if (!isEmergency && (!isMmiCode || isPotentialUssdCode)) {
-                if ((domain == DOMAIN_PS && !useImsForCall)
-                        || (domain == DOMAIN_CS && useImsForCall)
-                        || domain == DOMAIN_UNKNOWN || domain == DOMAIN_CS_PS) {
-                    loge("[Anomaly] legacy-useImsForCall:" + useImsForCall
-                            + ", NCDS-domain:" + domain);
-
-                    AnomalyReporter.reportAnomaly(
-                            UUID.fromString("bfae6c2e-ca2f-4121-b167-9cad26a3b353"),
-                            "Domain selection results don't match. useImsForCall:"
-                                    + useImsForCall + ", NCDS-domain:" + domain);
-                }
-            }
-            extras.remove(PhoneConstants.EXTRA_COMPARE_DOMAIN);
-        }
-
         // Only when the domain selection service is supported, EXTRA_DIAL_DOMAIN extra shall exist.
         if (extras != null && extras.containsKey(PhoneConstants.EXTRA_DIAL_DOMAIN)) {
             int domain = extras.getInt(PhoneConstants.EXTRA_DIAL_DOMAIN);
@@ -3766,7 +3743,7 @@ public class GsmCdmaPhone extends Phone {
                 if (mFeatureFlags.enableIdentifierDisclosureTransparencyUnsolEvents()
                         && mIdentifierDisclosureNotifier != null
                         && disclosure != null) {
-                    mIdentifierDisclosureNotifier.addDisclosure(getSubId(), disclosure);
+                    mIdentifierDisclosureNotifier.addDisclosure(mContext, getSubId(), disclosure);
                 }
                 break;
 
@@ -5310,11 +5287,11 @@ public class GsmCdmaPhone extends Phone {
         // enable/disable API, so we only toggle the enable state if the unsol events feature
         // flag is enabled.
         if (mFeatureFlags.enableIdentifierDisclosureTransparencyUnsolEvents()) {
-          if (prefEnabled) {
-            mIdentifierDisclosureNotifier.enable();
-          } else {
-            mIdentifierDisclosureNotifier.disable();
-          }
+            if (prefEnabled) {
+                mIdentifierDisclosureNotifier.enable(mContext);
+            } else {
+                mIdentifierDisclosureNotifier.disable(mContext);
+            }
         } else {
             logi("Not toggling enable state for disclosure notifier. Feature flag "
                     + "enable_identifier_disclosure_transparency_unsol_events is disabled");
