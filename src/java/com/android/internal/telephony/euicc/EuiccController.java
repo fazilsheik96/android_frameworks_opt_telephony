@@ -72,6 +72,7 @@ import com.android.internal.telephony.uicc.UiccSlot;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Stack;
@@ -79,6 +80,7 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 /** Backing implementation of {@link android.telephony.euicc.EuiccManager}. */
 public class EuiccController extends IEuiccController.Stub {
@@ -121,6 +123,7 @@ public class EuiccController extends IEuiccController.Stub {
     // the phone process, 3) values are updated remotely by server flags.
     private List<String> mSupportedCountries;
     private List<String> mUnsupportedCountries;
+    private List<Integer> mPsimConversionSupportedCarrierIds;
 
     /** Initialize the instance. Should only be called once. */
     public static EuiccController init(Context context, FeatureFlags featureFlags) {
@@ -245,6 +248,36 @@ public class EuiccController extends IEuiccController.Stub {
             }
 
             return blockingGetEidFromEuiccService(cardId);
+        } finally {
+            Binder.restoreCallingIdentity(token);
+        }
+    }
+
+    /**
+     * Return the available memory in bytes of the eUICC.
+     *
+     * <p>For API simplicity, this call blocks until completion; while it requires an IPC to load,
+     * that IPC should generally be fast, and the available memory shouldn't be needed in the normal
+     * course of operation.
+     */
+    @Override
+    public long getAvailableMemoryInBytes(int cardId, String callingPackage) {
+        boolean callerCanReadPhoneStatePrivileged = callerCanReadPhoneStatePrivileged();
+        boolean callerCanReadPhoneState = callerCanReadPhoneState();
+        mAppOpsManager.checkPackage(Binder.getCallingUid(), callingPackage);
+        long token = Binder.clearCallingIdentity();
+        try {
+            if (!callerCanReadPhoneStatePrivileged
+                    && !callerCanReadPhoneState
+                    && !canManageSubscriptionOnTargetSim(
+                            cardId, callingPackage, false, TelephonyManager.INVALID_PORT_INDEX)) {
+                throw new SecurityException(
+                        "Must have READ_PHONE_STATE permission or READ_PRIVILEGED_PHONE_STATE"
+                            + " permission or carrier privileges to read the available memory for"
+                            + "cardId="
+                                + cardId);
+            }
+            return blockingGetAvailableMemoryInBytesFromEuiccService(cardId);
         } finally {
             Binder.restoreCallingIdentity(token);
         }
@@ -1747,6 +1780,27 @@ public class EuiccController extends IEuiccController.Stub {
         return awaitResult(latch, eidRef);
     }
 
+    private long blockingGetAvailableMemoryInBytesFromEuiccService(int cardId) {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Long> memoryRef =
+                new AtomicReference<>(EuiccManager.EUICC_MEMORY_FIELD_UNAVAILABLE);
+        mConnector.getAvailableMemoryInBytes(
+                cardId,
+                new EuiccConnector.GetAvailableMemoryInBytesCommandCallback() {
+                    @Override
+                    public void onGetAvailableMemoryInBytesComplete(long availableMemoryInBytes) {
+                        memoryRef.set(availableMemoryInBytes);
+                        latch.countDown();
+                    }
+
+                    @Override
+                    public void onEuiccServiceUnavailable() {
+                        latch.countDown();
+                    }
+                });
+        return awaitResult(latch, memoryRef);
+    }
+
     private @OtaStatus int blockingGetOtaStatusFromEuiccService(int cardId) {
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<Integer> statusRef =
@@ -1954,6 +2008,11 @@ public class EuiccController extends IEuiccController.Stub {
                 == PackageManager.PERMISSION_GRANTED;
     }
 
+    private boolean callerCanReadPhoneState() {
+        return mContext.checkCallingOrSelfPermission(Manifest.permission.READ_PHONE_STATE)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
     private boolean callerCanWriteEmbeddedSubscriptions() {
         return mContext.checkCallingOrSelfPermission(
                 Manifest.permission.WRITE_EMBEDDED_SUBSCRIPTIONS)
@@ -2071,6 +2130,34 @@ public class EuiccController extends IEuiccController.Stub {
         Log.i(TAG, "isCompatChangeEnabled changeId: " + changeId
                 + " changeEnabled: " + changeEnabled);
         return changeEnabled;
+    }
+
+
+    @Override
+    public void setPsimConversionSupportedCarriers(int[] carrierIds) {
+        if (!callerCanWriteEmbeddedSubscriptions()) {
+            throw new SecurityException(
+                    "Must have WRITE_EMBEDDED_SUBSCRIPTIONS to "
+                            + "set pSIM conversion supported carriers");
+        }
+        mPsimConversionSupportedCarrierIds = Arrays.stream(carrierIds).boxed()
+                .collect(Collectors.toList());
+    }
+
+
+
+    @Override
+    public boolean isPsimConversionSupported(int carrierId) {
+        if (!callerCanWriteEmbeddedSubscriptions()) {
+            throw new SecurityException(
+                    "Must have WRITE_EMBEDDED_SUBSCRIPTIONS "
+                            + "to check if the carrier is supported pSIM conversion");
+        }
+        if (mPsimConversionSupportedCarrierIds == null
+                || mPsimConversionSupportedCarrierIds.isEmpty()) {
+            return false;
+        }
+        return mPsimConversionSupportedCarrierIds.contains(carrierId);
     }
 
     /**
