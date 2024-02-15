@@ -631,9 +631,11 @@ public class UiccController extends Handler {
                         //DSDS -> SS config change, PhoneId 1 is not valid.
                         //If UiccCard is Still Present Corresponding phone Id 1,
                         //Dispose UiccCard.
-                        if (DBG) log("Uicc Slot is NULL for Phone ID " + phoneId);
+                        if (DBG) log("UICC slot null for phoneId " + phoneId);
                         uiccSlot = mUiccSlots[phoneId];
-                        uiccSlot.onRadioStateUnavailable(INVALID_PHONE_ID);
+                        if (uiccSlot != null) {
+                            uiccSlot.onRadioStateUnavailable(INVALID_PHONE_ID);
+                        }
                     }
                     mIccChangedRegistrants.notifyRegistrants(new AsyncResult(null, phoneId, null));
                     break;
