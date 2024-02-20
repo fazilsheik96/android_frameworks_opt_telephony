@@ -877,6 +877,14 @@ public class DataConfigManager extends Handler {
     }
 
     /**
+     * @return the data limit in bytes that can be used for esim bootstrap usage.
+     */
+    public long getEsimBootStrapMaxDataLimitBytes() {
+        return mResources.getInteger(
+                com.android.internal.R.integer.config_esim_bootstrap_data_limit_bytes);
+    }
+
+    /**
      * Update the TCP buffer sizes from the resource overlays.
      */
     private void updateTcpBuffers() {
@@ -1065,6 +1073,16 @@ public class DataConfigManager extends Handler {
     public long getAutoDataSwitchAvailabilityStabilityTimeThreshold() {
         return mResources.getInteger(com.android.internal.R.integer
                 .auto_data_switch_availability_stability_time_threshold_millis);
+    }
+
+    /**
+     * @return Time threshold in ms to define a internet connection performance status to be stable
+     * (e.g. LTE + 4 signal strength, UMTS + 2 signal strength), while -1 indicates
+     * auto switch feature based on RAT/SS is disabled.
+     */
+    public long getAutoDataSwitchPerformanceStabilityTimeThreshold() {
+        return mResources.getInteger(com.android.internal.R.integer
+                .auto_data_switch_performance_stability_time_threshold_millis);
     }
 
     /**
@@ -1411,6 +1429,17 @@ public class DataConfigManager extends Handler {
     }
 
     /**
+     * @return Indicating whether the retry timer from setup data call response for data throttling
+     * should be honored for emergency network request. By default this is off, meaning emergency
+     * network requests will ignore the previous retry timer passed in from setup data call
+     * response.
+     */
+    public boolean shouldHonorRetryTimerForEmergencyNetworkRequest() {
+        return mResources.getBoolean(
+                com.android.internal.R.bool.config_honor_data_retry_timer_for_emergency_network);
+    }
+
+    /**
      * Log debug messages.
      * @param s debug messages
      */
@@ -1453,6 +1482,8 @@ public class DataConfigManager extends Handler {
         pw.increaseIndent();
         mDataHandoverRetryRules.forEach(pw::println);
         pw.decreaseIndent();
+        pw.println("shouldHonorRetryTimerForEmergencyNetworkRequest="
+                + shouldHonorRetryTimerForEmergencyNetworkRequest());
         pw.println("mSetupDataCallAnomalyReport=" + mSetupDataCallAnomalyReportThreshold);
         pw.println("mNetworkUnwantedAnomalyReport=" + mNetworkUnwantedAnomalyReportThreshold);
         pw.println("mImsReleaseRequestAnomalyReport=" + mImsReleaseRequestAnomalyReportThreshold);
@@ -1469,6 +1500,8 @@ public class DataConfigManager extends Handler {
                 + Arrays.toString(value)));
         pw.println("getAutoDataSwitchAvailabilityStabilityTimeThreshold="
                 + getAutoDataSwitchAvailabilityStabilityTimeThreshold());
+        pw.println("getAutoDataSwitchPerformanceStabilityTimeThreshold="
+                + getAutoDataSwitchPerformanceStabilityTimeThreshold());
         pw.println("getAutoDataSwitchValidationMaxRetry=" + getAutoDataSwitchValidationMaxRetry());
         pw.decreaseIndent();
         pw.println("Metered APN types=" + mMeteredApnTypes.stream()

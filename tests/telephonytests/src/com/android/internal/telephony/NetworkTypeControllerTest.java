@@ -958,15 +958,32 @@ public class NetworkTypeControllerTest extends TelephonyTest {
 
     @Test
     public void testEventRadioOffOrUnavailable() throws Exception {
-        testTransitionToCurrentStateNrConnected();
-        assertEquals(TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_NSA,
-                mNetworkTypeController.getOverrideNetworkType());
+        mBundle.putBoolean(CarrierConfigManager.KEY_RATCHET_NR_ADVANCED_BANDWIDTH_IF_RRC_IDLE_BOOL,
+                true);
+        testTransitionToCurrentStateNrConnectedMmwaveWithAdditionalBandAndNoMmwaveNrNsa();
 
+        // Radio off
         doReturn(NetworkRegistrationInfo.NR_STATE_NONE).when(mServiceState).getNrState();
         mNetworkTypeController.sendMessage(9 /* EVENT_RADIO_OFF_OR_UNAVAILABLE */);
         processAllMessages();
+
+        assertEquals("legacy", getCurrentState().getName());
         assertEquals(TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE,
                 mNetworkTypeController.getOverrideNetworkType());
+
+        // NR connected: Primary serving NR PCC with cell ID = 1, band = none
+        PhysicalChannelConfig pcc = new PhysicalChannelConfig.Builder()
+                .setNetworkType(TelephonyManager.NETWORK_TYPE_NR)
+                .setPhysicalCellId(1)
+                .setCellConnectionStatus(CellInfo.CONNECTION_PRIMARY_SERVING)
+                .build();
+
+        mNetworkTypeController.sendMessage(11 /* EVENT_PHYSICAL_CHANNEL_CONFIGS_CHANGED */,
+                new AsyncResult(null, List.of(pcc), null));
+        doReturn(NetworkRegistrationInfo.NR_STATE_CONNECTED).when(mServiceState).getNrState();
+        mNetworkTypeController.sendMessage(3 /* EVENT_SERVICE_STATE_CHANGED */);
+        processAllMessages();
+        assertEquals("connected", getCurrentState().getName());
     }
 
     @Test
@@ -1757,6 +1774,38 @@ public class NetworkTypeControllerTest extends TelephonyTest {
         assertEquals(TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_ADVANCED,
                 mNetworkTypeController.getOverrideNetworkType());
         assertTrue(mNetworkTypeController.areAnyTimersActive());
+    }
+
+    @Test
+    public void testNrTimerResetWhenPlmnChanged() throws Exception {
+        testTransitionToCurrentStateNrConnectedMmwave();
+        mBundle.putString(CarrierConfigManager.KEY_5G_ICON_DISPLAY_GRACE_PERIOD_STRING,
+                "connected_mmwave,any,10;connected,any,10;not_restricted_rrc_con,any,10");
+        mBundle.putString(CarrierConfigManager.KEY_5G_ICON_DISPLAY_SECONDARY_GRACE_PERIOD_STRING,
+                "connected_mmwave,any,30");
+        sendCarrierConfigChanged();
+
+        // should trigger 10 second primary timer
+        doReturn(NetworkRegistrationInfo.NR_STATE_NONE).when(mServiceState).getNrState();
+        doReturn(ServiceState.FREQUENCY_RANGE_UNKNOWN).when(mServiceState).getNrFrequencyRange();
+        mNetworkTypeController.sendMessage(3 /* EVENT_SERVICE_STATE_CHANGED */);
+        processAllMessages();
+
+        assertEquals("legacy", getCurrentState().getName());
+        assertEquals(TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NR_ADVANCED,
+                mNetworkTypeController.getOverrideNetworkType());
+        assertTrue(mNetworkTypeController.areAnyTimersActive());
+
+        // PLMN changed, should cancel any active timers
+        ServiceState newSS = mock(ServiceState.class);
+        doReturn("different plmn").when(newSS).getOperatorAlpha();
+        doReturn(newSS).when(mSST).getServiceState();
+        mNetworkTypeController.sendMessage(3 /* EVENT_SERVICE_STATE_CHANGED */);
+        processAllMessages();
+
+        assertEquals(TelephonyDisplayInfo.OVERRIDE_NETWORK_TYPE_NONE,
+                mNetworkTypeController.getOverrideNetworkType());
+        assertFalse(mNetworkTypeController.areAnyTimersActive());
     }
 
     private void setPhysicalLinkStatus(boolean state) {
