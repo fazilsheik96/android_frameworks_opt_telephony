@@ -353,6 +353,11 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
         assertThat(subInfo.getSimSlotIndex()).isEqualTo(0);
         assertThat(subInfo.getSubscriptionType()).isEqualTo(
                 SubscriptionManager.SUBSCRIPTION_TYPE_LOCAL_SIM);
+
+        // Invalid slot index should trigger IllegalArgumentException
+        assertThrows(IllegalArgumentException.class,
+                () -> mSubscriptionManagerServiceUT.addSubInfo(FAKE_ICCID1, FAKE_CARRIER_NAME1,
+                        2, SubscriptionManager.SUBSCRIPTION_TYPE_LOCAL_SIM));
     }
 
     @Test
@@ -410,6 +415,23 @@ public class SubscriptionManagerServiceTest extends TelephonyTest {
                 .getSubscriptionInfoInternal(1);
         assertThat(subInfo).isNotNull();
         assertThat(subInfo.getCarrierId()).isEqualTo(FAKE_CARRIER_ID2);
+        verify(mMockedSubscriptionManagerServiceCallback).onSubscriptionChanged(eq(1));
+    }
+
+    @Test
+    public void testSetAdminOwned() {
+        mContextFixture.addCallingOrSelfPermission(Manifest.permission.MODIFY_PHONE_STATE);
+        mSubscriptionManagerServiceUT.addSubInfo(FAKE_ICCID1, FAKE_CARRIER_NAME1,
+                0, SubscriptionManager.SUBSCRIPTION_TYPE_LOCAL_SIM);
+        processAllMessages();
+        String groupOwner = "test";
+
+        mSubscriptionManagerServiceUT.setGroupOwner(1, groupOwner);
+
+        SubscriptionInfoInternal subInfo = mSubscriptionManagerServiceUT
+                .getSubscriptionInfoInternal(1);
+        assertThat(subInfo).isNotNull();
+        assertThat(subInfo.getGroupOwner()).isEqualTo(groupOwner);
         verify(mMockedSubscriptionManagerServiceCallback).onSubscriptionChanged(eq(1));
     }
 
