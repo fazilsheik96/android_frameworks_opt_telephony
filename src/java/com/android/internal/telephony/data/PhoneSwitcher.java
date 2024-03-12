@@ -419,7 +419,7 @@ public class PhoneSwitcher extends Handler {
         return sPhoneSwitcher;
     }
 
-    private boolean updatesIfPhoneInVoiceCallChanged() {
+    protected boolean updatesIfPhoneInVoiceCallChanged() {
         int oldPhoneIdInVoiceCall = mPhoneIdInVoiceCall;
         // If there's no active call, the value will become INVALID_PHONE_INDEX
         // and internet data will be switched back to system selected or user selected
@@ -2047,7 +2047,7 @@ public class PhoneSwitcher extends Handler {
         return false;
     }
 
-    private boolean isInCall(Phone phone) {
+    protected boolean isInCall(Phone phone) {
         if ((phone != null) && (phone.getState() != PhoneConstants.State.IDLE)) return true;
         return false;
     }
