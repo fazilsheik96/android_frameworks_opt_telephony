@@ -556,7 +556,7 @@ public class GsmCdmaPhone extends Phone {
             mNullCipherNotifier =
                     mTelephonyComponentFactory
                             .inject(NullCipherNotifier.class.getName())
-                            .makeNullCipherNotifier();
+                            .makeNullCipherNotifier(mSafetySource);
             mCi.registerForSecurityAlgorithmUpdates(
                     this, EVENT_SECURITY_ALGORITHM_UPDATE, null);
         }
@@ -3759,7 +3759,7 @@ public class GsmCdmaPhone extends Phone {
                         && mNullCipherNotifier != null) {
                     ar = (AsyncResult) msg.obj;
                     SecurityAlgorithmUpdate update = (SecurityAlgorithmUpdate) ar.result;
-                    mNullCipherNotifier.onSecurityAlgorithmUpdate(getPhoneId(), update);
+                    mNullCipherNotifier.onSecurityAlgorithmUpdate(mContext, getSubId(), update);
                 }
                 break;
 
@@ -5314,9 +5314,9 @@ public class GsmCdmaPhone extends Phone {
         // enable/disable API.
         if (mFeatureFlags.enableModemCipherTransparencyUnsolEvents()) {
             if (prefEnabled) {
-                mNullCipherNotifier.enable();
+                mNullCipherNotifier.enable(mContext);
             } else {
-                mNullCipherNotifier.disable();
+                mNullCipherNotifier.disable(mContext);
             }
         } else {
             logi(
