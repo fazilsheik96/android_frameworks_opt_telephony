@@ -115,6 +115,13 @@ public class SubscriptionInfoInternalTest {
                     .setOnlyNonTerrestrialNetwork(1)
                     .setServiceCapabilities(
                             SubscriptionManager.SERVICE_CAPABILITY_DATA_BITMASK)
+                    .setTransferStatus(1)
+                    .setSatelliteEntitlementStatus(
+                            SubscriptionDatabaseManagerTest
+                                    .FAKE_SATELLITE_ENTITLEMENT_STATUS_ENABLED)
+                    .setSatelliteEntitlementPlmns(
+                            SubscriptionDatabaseManagerTest
+                                    .FAKE_SATELLITE_ENTITLEMENT_PLMNS1)
                     .build();
 
     private final SubscriptionInfoInternal mSubInfoNull =
@@ -141,6 +148,7 @@ public class SubscriptionInfoInternalTest {
                     .setRcsConfig(new byte[0])
                     .setAllowedNetworkTypesForReasons("")
                     .setDeviceToDeviceStatusSharingContacts("")
+                    .setTransferStatus(1)
                     .build();
 
     @Rule
@@ -237,6 +245,13 @@ public class SubscriptionInfoInternalTest {
         assertThat(mSubInfo.getOnlyNonTerrestrialNetwork()).isEqualTo(1);
         assertThat(mSubInfo.getServiceCapabilities()).isEqualTo(
                 SubscriptionManager.SERVICE_CAPABILITY_DATA_BITMASK);
+        assertThat(mSubInfo.getTransferStatus()).isEqualTo(1);
+        assertThat(mSubInfo.getSatelliteEntitlementStatus())
+                .isEqualTo(SubscriptionDatabaseManagerTest
+                        .FAKE_SATELLITE_ENTITLEMENT_STATUS_ENABLED);
+        assertThat(mSubInfo.getSatelliteEntitlementPlmns())
+                .isEqualTo(SubscriptionDatabaseManagerTest
+                        .FAKE_SATELLITE_ENTITLEMENT_PLMNS1);
     }
 
     @Test
@@ -303,6 +318,7 @@ public class SubscriptionInfoInternalTest {
         assertThat(subInfo.isOnlyNonTerrestrialNetwork()).isTrue();
         assertThat(subInfo.getServiceCapabilities()).isEqualTo(
                 Set.of(SubscriptionManager.SERVICE_CAPABILITY_DATA));
+        assertThat(mSubInfo.getTransferStatus()).isEqualTo(1);
     }
 
     @Test

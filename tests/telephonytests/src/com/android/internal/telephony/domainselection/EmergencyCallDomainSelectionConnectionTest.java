@@ -42,16 +42,17 @@ import android.os.Handler;
 import android.os.Message;
 import android.telephony.AccessNetworkConstants.AccessNetworkType;
 import android.telephony.DomainSelectionService;
-import android.telephony.EmergencyRegResult;
+import android.telephony.EmergencyRegistrationResult;
 import android.telephony.NetworkRegistrationInfo;
-import android.telephony.TransportSelectorCallback;
-import android.telephony.WwanSelectorCallback;
 import android.telephony.data.ApnSetting;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
 
 import androidx.test.filters.SmallTest;
 
+import com.android.internal.telephony.ITransportSelectorCallback;
+import com.android.internal.telephony.ITransportSelectorResultCallback;
+import com.android.internal.telephony.IWwanSelectorCallback;
 import com.android.internal.telephony.TelephonyTest;
 import com.android.internal.telephony.data.AccessNetworksManager;
 import com.android.internal.telephony.data.AccessNetworksManager.QualifiedNetworks;
@@ -78,7 +79,7 @@ public class EmergencyCallDomainSelectionConnectionTest extends TelephonyTest {
     private DomainSelectionConnection.DomainSelectionConnectionCallback mConnectionCallback;
     private EmergencyCallDomainSelectionConnection mEcDsc;
     private AccessNetworksManager mAnm;
-    private TransportSelectorCallback mTransportCallback;
+    private ITransportSelectorCallback mTransportCallback;
     private EmergencyStateTracker mEmergencyStateTracker;
 
     @Before
@@ -86,6 +87,7 @@ public class EmergencyCallDomainSelectionConnectionTest extends TelephonyTest {
         super.setUp(this.getClass().getSimpleName());
 
         mDomainSelectionController = Mockito.mock(DomainSelectionController.class);
+        doReturn(true).when(mDomainSelectionController).selectDomain(any(), any());
         mConnectionCallback =
                 Mockito.mock(DomainSelectionConnection.DomainSelectionConnectionCallback.class);
         mEmergencyStateTracker = Mockito.mock(EmergencyStateTracker.class);
@@ -93,6 +95,9 @@ public class EmergencyCallDomainSelectionConnectionTest extends TelephonyTest {
         doReturn(mAnm).when(mPhone).getAccessNetworksManager();
         mEcDsc = new EmergencyCallDomainSelectionConnection(mPhone,
                 mDomainSelectionController, mEmergencyStateTracker);
+        mEcDsc.setTestMode(true);
+        replaceInstance(DomainSelectionConnection.class, "mLooper",
+                mEcDsc, mTestableLooper.getLooper());
         mTransportCallback = mEcDsc.getTransportSelectorCallback();
     }
 
@@ -109,7 +114,7 @@ public class EmergencyCallDomainSelectionConnectionTest extends TelephonyTest {
         replaceInstance(EmergencyCallDomainSelectionConnection.class,
                 "mEmergencyStateTracker", mEcDsc, mEmergencyStateTracker);
 
-        EmergencyRegResult regResult = new EmergencyRegResult(
+        EmergencyRegistrationResult regResult = new EmergencyRegistrationResult(
                 EUTRAN, REGISTRATION_STATE_UNKNOWN,
                 NetworkRegistrationInfo.DOMAIN_PS,
                 true, false, 0, 0, "", "", "");
@@ -117,7 +122,7 @@ public class EmergencyCallDomainSelectionConnectionTest extends TelephonyTest {
         DomainSelectionService.SelectionAttributes attr =
                 EmergencyCallDomainSelectionConnection.getSelectionAttributes(
                         mPhone.getPhoneId(), mPhone.getSubId(), false,
-                        TELECOM_CALL_ID1, "911", 0, null, regResult);
+                        TELECOM_CALL_ID1, "911", false, 0, null, regResult);
 
         CompletableFuture<Integer> future =
                 mEcDsc.createEmergencyConnection(attr, mConnectionCallback);
@@ -125,7 +130,8 @@ public class EmergencyCallDomainSelectionConnectionTest extends TelephonyTest {
         assertNotNull(future);
         assertFalse(future.isDone());
 
-        verify(mDomainSelectionController).selectDomain(any(), any());
+        verify(mDomainSelectionController).selectDomain(any(),
+                any(ITransportSelectorCallback.class));
 
         mTransportCallback.onWlanSelected(true);
 
@@ -157,7 +163,7 @@ public class EmergencyCallDomainSelectionConnectionTest extends TelephonyTest {
         replaceInstance(EmergencyCallDomainSelectionConnection.class,
                 "mEmergencyStateTracker", mEcDsc, mEmergencyStateTracker);
 
-        EmergencyRegResult regResult = new EmergencyRegResult(
+        EmergencyRegistrationResult regResult = new EmergencyRegistrationResult(
                 UTRAN, REGISTRATION_STATE_UNKNOWN,
                 NetworkRegistrationInfo.DOMAIN_CS,
                 true, false, 0, 0, "", "", "");
@@ -165,7 +171,7 @@ public class EmergencyCallDomainSelectionConnectionTest extends TelephonyTest {
         DomainSelectionService.SelectionAttributes attr =
                 EmergencyCallDomainSelectionConnection.getSelectionAttributes(
                         mPhone.getPhoneId(), mPhone.getSubId(), false,
-                        TELECOM_CALL_ID1, "911", 0, null, regResult);
+                        TELECOM_CALL_ID1, "911", false, 0, null, regResult);
 
         CompletableFuture<Integer> future =
                 mEcDsc.createEmergencyConnection(attr, mConnectionCallback);
@@ -173,13 +179,13 @@ public class EmergencyCallDomainSelectionConnectionTest extends TelephonyTest {
         assertNotNull(future);
         assertFalse(future.isDone());
 
-        verify(mDomainSelectionController).selectDomain(any(), any());
+        verify(mDomainSelectionController).selectDomain(any(),
+                any(ITransportSelectorCallback.class));
 
-        WwanSelectorCallback wwanCallback = null;
-        wwanCallback = mTransportCallback.onWwanSelected();
+        IWwanSelectorCallback wwanCallback = onWwanSelected(mTransportCallback);
 
         assertFalse(future.isDone());
-        verify(mEmergencyStateTracker).onEmergencyTransportChanged(
+        verify(mEmergencyStateTracker).onEmergencyTransportChangedAndWait(
                 eq(EmergencyStateTracker.EMERGENCY_TYPE_CALL), eq(MODE_EMERGENCY_WWAN));
 
         wwanCallback.onDomainSelected(DOMAIN_CS, false);
@@ -195,7 +201,7 @@ public class EmergencyCallDomainSelectionConnectionTest extends TelephonyTest {
         replaceInstance(EmergencyCallDomainSelectionConnection.class,
                 "mEmergencyStateTracker", mEcDsc, mEmergencyStateTracker);
 
-        EmergencyRegResult regResult = new EmergencyRegResult(
+        EmergencyRegistrationResult regResult = new EmergencyRegistrationResult(
                 EUTRAN, REGISTRATION_STATE_UNKNOWN,
                 NetworkRegistrationInfo.DOMAIN_PS,
                 true, true, 0, 0, "", "", "");
@@ -203,7 +209,7 @@ public class EmergencyCallDomainSelectionConnectionTest extends TelephonyTest {
         DomainSelectionService.SelectionAttributes attr =
                 EmergencyCallDomainSelectionConnection.getSelectionAttributes(
                         mPhone.getPhoneId(), mPhone.getSubId(), false,
-                        TELECOM_CALL_ID1, "911", 0, null, regResult);
+                        TELECOM_CALL_ID1, "911", false, 0, null, regResult);
 
         CompletableFuture<Integer> future =
                 mEcDsc.createEmergencyConnection(attr, mConnectionCallback);
@@ -211,13 +217,13 @@ public class EmergencyCallDomainSelectionConnectionTest extends TelephonyTest {
         assertNotNull(future);
         assertFalse(future.isDone());
 
-        verify(mDomainSelectionController).selectDomain(any(), any());
+        verify(mDomainSelectionController).selectDomain(any(),
+                any(ITransportSelectorCallback.class));
 
-        WwanSelectorCallback wwanCallback = null;
-        wwanCallback = mTransportCallback.onWwanSelected();
+        IWwanSelectorCallback wwanCallback = onWwanSelected(mTransportCallback);
 
         assertFalse(future.isDone());
-        verify(mEmergencyStateTracker).onEmergencyTransportChanged(
+        verify(mEmergencyStateTracker).onEmergencyTransportChangedAndWait(
                 eq(EmergencyStateTracker.EMERGENCY_TYPE_CALL), eq(MODE_EMERGENCY_WWAN));
 
         wwanCallback.onDomainSelected(DOMAIN_PS, true);
@@ -229,7 +235,7 @@ public class EmergencyCallDomainSelectionConnectionTest extends TelephonyTest {
     @Test
     @SmallTest
     public void testOnSelectionTerminated() throws Exception {
-        EmergencyRegResult regResult = new EmergencyRegResult(
+        EmergencyRegistrationResult regResult = new EmergencyRegistrationResult(
                 EUTRAN, REGISTRATION_STATE_UNKNOWN,
                 NetworkRegistrationInfo.DOMAIN_PS,
                 true, true, 0, 0, "", "", "");
@@ -237,7 +243,7 @@ public class EmergencyCallDomainSelectionConnectionTest extends TelephonyTest {
         DomainSelectionService.SelectionAttributes attr =
                 EmergencyCallDomainSelectionConnection.getSelectionAttributes(
                         mPhone.getPhoneId(), mPhone.getSubId(), false,
-                        TELECOM_CALL_ID1, "911", 0, null, regResult);
+                        TELECOM_CALL_ID1, "911", false, 0, null, regResult);
 
         mEcDsc.createEmergencyConnection(attr, mConnectionCallback);
         mTransportCallback.onSelectionTerminated(ERROR_UNSPECIFIED);
@@ -250,5 +256,19 @@ public class EmergencyCallDomainSelectionConnectionTest extends TelephonyTest {
     public void testCancelSelection() throws Exception {
         mEcDsc.cancelSelection();
         verify(mAnm).unregisterForQualifiedNetworksChanged(any());
+    }
+
+    private IWwanSelectorCallback onWwanSelected(ITransportSelectorCallback transportCallback)
+            throws Exception {
+        ITransportSelectorResultCallback cb = Mockito.mock(ITransportSelectorResultCallback.class);
+        transportCallback.onWwanSelectedAsync(cb);
+        processAllMessages();
+
+        ArgumentCaptor<IWwanSelectorCallback> callbackCaptor =
+                ArgumentCaptor.forClass(IWwanSelectorCallback.class);
+
+        verify(cb).onCompleted(callbackCaptor.capture());
+
+        return callbackCaptor.getValue();
     }
 }

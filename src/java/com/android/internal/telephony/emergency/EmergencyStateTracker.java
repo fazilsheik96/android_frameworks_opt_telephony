@@ -35,6 +35,7 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.PersistableBundle;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.os.UserHandle;
 import android.preference.PreferenceManager;
 import android.provider.Settings;
@@ -43,7 +44,7 @@ import android.telephony.AccessNetworkConstants;
 import android.telephony.Annotation.DisconnectCauses;
 import android.telephony.CarrierConfigManager;
 import android.telephony.DisconnectCause;
-import android.telephony.EmergencyRegResult;
+import android.telephony.EmergencyRegistrationResult;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.PreciseDataConnectionState;
 import android.telephony.ServiceState;
@@ -84,12 +85,16 @@ public class EmergencyStateTracker {
      * Timeout before we continue with the emergency call without waiting for DDS switch response
      * from the modem.
      */
-    private static final int DEFAULT_DATA_SWITCH_TIMEOUT_MS = 1000;
+    private static final int DEFAULT_DATA_SWITCH_TIMEOUT_MS = 1 * 1000;
+    @VisibleForTesting
+    public static final int DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS = 3 * 1000;
     /** Default value for if Emergency Callback Mode is supported. */
     private static final boolean DEFAULT_EMERGENCY_CALLBACK_MODE_SUPPORTED = true;
     /** Default Emergency Callback Mode exit timeout value. */
     private static final long DEFAULT_ECM_EXIT_TIMEOUT_MS = 300000;
     private static final int DEFAULT_EPDN_DISCONNECTION_TIMEOUT_MS = 500;
+
+    private static final int DEFAULT_TRANSPORT_CHANGE_TIMEOUT_MS = 1 * 1000;
 
     /** The emergency types used when setting the emergency mode on modem. */
     @Retention(RetentionPolicy.SOURCE)
@@ -117,7 +122,7 @@ public class EmergencyStateTracker {
     @EmergencyConstants.EmergencyMode
     private int mEmergencyMode = MODE_EMERGENCY_NONE;
     private boolean mWasEmergencyModeSetOnModem;
-    private EmergencyRegResult mLastEmergencyRegResult;
+    private EmergencyRegistrationResult mLastEmergencyRegistrationResult;
     private boolean mIsEmergencyModeInProgress;
     private boolean mIsEmergencyCallStartedDuringEmergencySms;
 
@@ -126,13 +131,13 @@ public class EmergencyStateTracker {
     // A runnable which is used to automatically exit from Ecm after a period of time.
     private final Runnable mExitEcmRunnable = this::exitEmergencyCallbackMode;
     // Tracks emergency calls by callId that have reached {@link Call.State#ACTIVE}.
-    private final Set<String> mActiveEmergencyCalls = new ArraySet<>();
+    private final Set<android.telecom.Connection> mActiveEmergencyCalls = new ArraySet<>();
     private Phone mPhoneToExit;
     private int mPdnDisconnectionTimeoutMs = DEFAULT_EPDN_DISCONNECTION_TIMEOUT_MS;
     private final Object mLock = new Object();
     private Phone mPhone;
-    // Tracks ongoing emergency callId to handle a second emergency call
-    private String mOngoingCallId;
+    // Tracks ongoing emergency connection to handle a second emergency call
+    private android.telecom.Connection mOngoingConnection;
     // Domain of the active emergency call. Assuming here that there will only be one domain active.
     private int mEmergencyCallDomain = NetworkRegistrationInfo.DOMAIN_UNKNOWN;
     private CompletableFuture<Integer> mCallEmergencyModeFuture;
@@ -147,6 +152,8 @@ public class EmergencyStateTracker {
     private Phone mSmsPhone;
     private CompletableFuture<Integer> mSmsEmergencyModeFuture;
     private boolean mIsTestEmergencyNumberForSms;
+
+    private CompletableFuture<Boolean> mEmergencyTransportChangedFuture;
 
     private final android.util.ArrayMap<Integer, Boolean> mNoSimEcbmSupported =
             new android.util.ArrayMap<>();
@@ -286,13 +293,17 @@ public class EmergencyStateTracker {
                     Rlog.v(TAG, "MSG_SET_EMERGENCY_MODE_DONE for "
                             + emergencyTypeToString(emergencyType));
                     if (ar.exception == null) {
-                        mLastEmergencyRegResult = (EmergencyRegResult) ar.result;
+                        mLastEmergencyRegistrationResult = (EmergencyRegistrationResult) ar.result;
                     } else {
-                        mLastEmergencyRegResult = null;
-                        Rlog.w(TAG, "LastEmergencyRegResult not set. AsyncResult.exception: "
+                        mLastEmergencyRegistrationResult = null;
+                        Rlog.w(TAG,
+                                "LastEmergencyRegistrationResult not set. AsyncResult.exception: "
                                 + ar.exception);
                     }
                     setEmergencyModeInProgress(false);
+
+                    // Transport changed from WLAN to WWAN or CALLBACK to WWAN
+                    maybeNotifyTransportChangeCompleted(emergencyType, false);
 
                     if (emergencyType == EMERGENCY_TYPE_CALL) {
                         setIsInEmergencyCall(true);
@@ -496,24 +507,25 @@ public class EmergencyStateTracker {
      * Handles turning on radio and switching DDS.
      *
      * @param phone                 the {@code Phone} on which to process the emergency call.
-     * @param callId                the call id on which to process the emergency call.
+     * @param c                     the {@code Connection} on which to process the emergency call.
      * @param isTestEmergencyNumber whether this is a test emergency number.
      * @return a {@code CompletableFuture} that results in {@code DisconnectCause.NOT_DISCONNECTED}
      *         if emergency call successfully started.
      */
     public CompletableFuture<Integer> startEmergencyCall(@NonNull Phone phone,
-            @NonNull String callId, boolean isTestEmergencyNumber) {
-        Rlog.i(TAG, "startEmergencyCall: phoneId=" + phone.getPhoneId() + ", callId=" + callId);
+            @NonNull android.telecom.Connection c, boolean isTestEmergencyNumber) {
+        Rlog.i(TAG, "startEmergencyCall: phoneId=" + phone.getPhoneId()
+                + ", callId=" + c.getTelecomCallId());
 
         if (mPhone != null) {
             // Create new future to return as to not interfere with any uncompleted futures.
             // Case1) When 2nd emergency call is initiated during an active call on the same phone.
             // Case2) While the device is in ECBM, an emergency call is initiated on the same phone.
             if (isSamePhone(mPhone, phone) && (!mActiveEmergencyCalls.isEmpty() || isInEcm())) {
-                mOngoingCallId = callId;
+                mOngoingConnection = c;
                 mIsTestEmergencyNumber = isTestEmergencyNumber;
                 // Ensure that domain selector requests scan.
-                mLastEmergencyRegResult = new EmergencyRegResult(
+                mLastEmergencyRegistrationResult = new EmergencyRegistrationResult(
                         AccessNetworkConstants.AccessNetworkType.UNKNOWN,
                         NetworkRegistrationInfo.REGISTRATION_STATE_UNKNOWN,
                         NetworkRegistrationInfo.DOMAIN_UNKNOWN, false, false, 0, 0, "", "", "");
@@ -545,13 +557,13 @@ public class EmergencyStateTracker {
             }
 
             mPhone = phone;
-            mOngoingCallId = callId;
+            mOngoingConnection = c;
             mIsTestEmergencyNumber = isTestEmergencyNumber;
             return mCallEmergencyModeFuture;
         }
 
         mPhone = phone;
-        mOngoingCallId = callId;
+        mOngoingConnection = c;
         mIsTestEmergencyNumber = isTestEmergencyNumber;
         turnOnRadioAndSwitchDds(mPhone, EMERGENCY_TYPE_CALL, mIsTestEmergencyNumber);
         return mCallEmergencyModeFuture;
@@ -564,13 +576,13 @@ public class EmergencyStateTracker {
      * Enter ECM only once all active emergency calls have ended. If a call never reached
      * {@link Call.State#ACTIVE}, then no need to enter ECM.
      *
-     * @param callId the call id on which to end the emergency call.
+     * @param c the emergency call disconnected.
      */
-    public void endCall(@NonNull String callId) {
-        boolean wasActive = mActiveEmergencyCalls.remove(callId);
+    public void endCall(@NonNull android.telecom.Connection c) {
+        boolean wasActive = mActiveEmergencyCalls.remove(c);
 
-        if (Objects.equals(mOngoingCallId, callId)) {
-            mOngoingCallId = null;
+        if (Objects.equals(mOngoingConnection, c)) {
+            mOngoingConnection = null;
             mOngoingCallProperties = 0;
         }
 
@@ -578,11 +590,11 @@ public class EmergencyStateTracker {
                 && isEmergencyCallbackModeSupported()) {
             enterEmergencyCallbackMode();
 
-            if (mOngoingCallId == null) {
+            if (mOngoingConnection == null) {
                 mIsEmergencyCallStartedDuringEmergencySms = false;
                 mCallEmergencyModeFuture = null;
             }
-        } else if (mOngoingCallId == null) {
+        } else if (mOngoingConnection == null) {
             if (isInEcm()) {
                 mIsEmergencyCallStartedDuringEmergencySms = false;
                 mCallEmergencyModeFuture = null;
@@ -596,6 +608,9 @@ public class EmergencyStateTracker {
                 clearEmergencyCallInfo();
             }
         }
+
+        // Release any blocked thread immediately
+        maybeNotifyTransportChangeCompleted(EMERGENCY_TYPE_CALL, true);
     }
 
     private void clearEmergencyCallInfo() {
@@ -603,7 +618,7 @@ public class EmergencyStateTracker {
         mIsTestEmergencyNumber = false;
         mIsEmergencyCallStartedDuringEmergencySms = false;
         mCallEmergencyModeFuture = null;
-        mOngoingCallId = null;
+        mOngoingConnection = null;
         mOngoingCallProperties = 0;
         mPhone = null;
     }
@@ -616,10 +631,10 @@ public class EmergencyStateTracker {
                 Rlog.e(TAG, "DDS Switch failed.");
             }
             // Once radio is on and DDS switched, must call setEmergencyMode() before selecting
-            // emergency domain. EmergencyRegResult is required to determine domain and this is the
-            // only API that can receive it before starting domain selection. Once domain selection
-            // is finished, the actual emergency mode will be set when onEmergencyTransportChanged()
-            // is called.
+            // emergency domain. EmergencyRegistrationResult is required to determine domain and
+            // this is the only API that can receive it before starting domain selection.
+            // Once domain selection is finished, the actual emergency mode will be set when
+            // onEmergencyTransportChanged() is called.
             setEmergencyMode(phone, emergencyType, MODE_EMERGENCY_WWAN,
                     MSG_SET_EMERGENCY_MODE_DONE);
         });
@@ -639,14 +654,15 @@ public class EmergencyStateTracker {
                 + emergencyTypeToString(emergencyType));
 
         if (mEmergencyMode == mode) {
+            // Initial transport selection of DomainSelector
+            maybeNotifyTransportChangeCompleted(emergencyType, false);
             return;
         }
         mEmergencyMode = mode;
         setEmergencyModeInProgress(true);
 
         Message m = mHandler.obtainMessage(msg, Integer.valueOf(emergencyType));
-        if ((mIsTestEmergencyNumber && emergencyType == EMERGENCY_TYPE_CALL)
-                || (mIsTestEmergencyNumberForSms && emergencyType == EMERGENCY_TYPE_SMS)) {
+        if (mIsTestEmergencyNumberForSms && emergencyType == EMERGENCY_TYPE_SMS) {
             Rlog.d(TAG, "TestEmergencyNumber for " + emergencyTypeToString(emergencyType)
                     + ": Skipping setting emergency mode on modem.");
             // Send back a response for the command, but with null information
@@ -808,9 +824,72 @@ public class EmergencyStateTracker {
         }
     }
 
-    /** Returns last {@link EmergencyRegResult} as set by {@code setEmergencyMode()}. */
-    public EmergencyRegResult getEmergencyRegResult() {
-        return mLastEmergencyRegResult;
+    /** Returns last {@link EmergencyRegistrationResult} as set by {@code setEmergencyMode()}. */
+    public EmergencyRegistrationResult getEmergencyRegistrationResult() {
+        return mLastEmergencyRegistrationResult;
+    }
+
+    private void waitForTransportChangeCompleted(CompletableFuture<Boolean> future) {
+        if (future != null) {
+            synchronized (future) {
+                if ((mEmergencyMode == MODE_EMERGENCY_NONE)
+                        || mHandler.getLooper().isCurrentThread()) {
+                    // Do not block the Handler's thread
+                    return;
+                }
+                long now = SystemClock.elapsedRealtime();
+                long deadline = now + DEFAULT_TRANSPORT_CHANGE_TIMEOUT_MS;
+                // Guard with while loop to handle spurious wakeups
+                while (!future.isDone() && now < deadline) {
+                    try {
+                        future.wait(deadline - now);
+                    } catch (Exception e) {
+                        Rlog.e(TAG, "waitForTransportChangeCompleted wait e=" + e);
+                    }
+                    now = SystemClock.elapsedRealtime();
+                }
+            }
+        }
+    }
+
+    private void maybeNotifyTransportChangeCompleted(@EmergencyType int emergencyType,
+            boolean enforced) {
+        if (emergencyType != EMERGENCY_TYPE_CALL) {
+            // It's not for the emergency call
+            return;
+        }
+        CompletableFuture<Boolean> future = mEmergencyTransportChangedFuture;
+        if (future != null) {
+            synchronized (future) {
+                if (!future.isDone()
+                        && ((!isEmergencyModeInProgress() && mEmergencyMode == MODE_EMERGENCY_WWAN)
+                                || enforced)) {
+                    future.complete(Boolean.TRUE);
+                    future.notifyAll();
+                }
+            }
+        }
+    }
+
+    /**
+     * Handles emergency transport change by setting new emergency mode.
+     *
+     * @param emergencyType the emergency type to identify an emergency call or SMS
+     * @param mode the new emergency mode
+     */
+    public void onEmergencyTransportChangedAndWait(@EmergencyType int emergencyType,
+            @EmergencyConstants.EmergencyMode int mode) {
+        // Wait for the completion of setting MODE_EMERGENCY_WWAN only for emergency calls
+        if (emergencyType == EMERGENCY_TYPE_CALL && mode == MODE_EMERGENCY_WWAN) {
+            CompletableFuture<Boolean> future = new CompletableFuture<>();
+            synchronized (future) {
+                mEmergencyTransportChangedFuture = future;
+                onEmergencyTransportChanged(emergencyType, mode);
+                waitForTransportChangeCompleted(future);
+            }
+            return;
+        }
+        onEmergencyTransportChanged(emergencyType, mode);
     }
 
     /**
@@ -842,10 +921,10 @@ public class EmergencyStateTracker {
     /**
      * Notify the tracker that the emergency call domain has been updated.
      * @param phoneType The new PHONE_TYPE_* of the call.
-     * @param callId The ID of the call
+     * @param c The connection of the call
      */
-    public void onEmergencyCallDomainUpdated(int phoneType, String callId) {
-        Rlog.d(TAG, "domain update for callId: " + callId);
+    public void onEmergencyCallDomainUpdated(int phoneType, android.telecom.Connection c) {
+        Rlog.d(TAG, "domain update for callId: " + c.getTelecomCallId());
         int domain = -1;
         switch(phoneType) {
             case (PhoneConstants.PHONE_TYPE_CDMA_LTE):
@@ -873,13 +952,13 @@ public class EmergencyStateTracker {
      * Handles emergency call state change.
      *
      * @param state the new call state
-     * @param callId the callId whose state has changed
+     * @param c the call whose state has changed
      */
-    public void onEmergencyCallStateChanged(Call.State state, String callId) {
+    public void onEmergencyCallStateChanged(Call.State state, android.telecom.Connection c) {
         if (state == Call.State.ACTIVE) {
-            mActiveEmergencyCalls.add(callId);
-            if (Objects.equals(mOngoingCallId, callId)) {
-                Rlog.i(TAG, "call connected " + callId);
+            mActiveEmergencyCalls.add(c);
+            if (Objects.equals(mOngoingConnection, c)) {
+                Rlog.i(TAG, "call connected " + c.getTelecomCallId());
                 if (mPhone != null
                         && isVoWiFi(mOngoingCallProperties)
                         && mEmergencyMode == EmergencyConstants.MODE_EMERGENCY_WLAN) {
@@ -894,10 +973,10 @@ public class EmergencyStateTracker {
      * Handles the change of emergency call properties.
      *
      * @param properties the new call properties.
-     * @param callId the callId whose state has changed.
+     * @param c the call whose state has changed.
      */
-    public void onEmergencyCallPropertiesChanged(int properties, String callId) {
-        if (Objects.equals(mOngoingCallId, callId)) {
+    public void onEmergencyCallPropertiesChanged(int properties, android.telecom.Connection c) {
+        if (Objects.equals(mOngoingConnection, c)) {
             mOngoingCallProperties = properties;
         }
     }
@@ -1160,7 +1239,7 @@ public class EmergencyStateTracker {
             if (isInEcm()) {
                 // When the emergency mode is not in MODE_EMERGENCY_CALLBACK,
                 // it needs to notify the emergency callback mode to modem.
-                if (mActiveEmergencyCalls.isEmpty() && mOngoingCallId == null) {
+                if (mActiveEmergencyCalls.isEmpty() && mOngoingConnection == null) {
                     setEmergencyMode(mPhone, EMERGENCY_TYPE_CALL, MODE_EMERGENCY_CALLBACK,
                             MSG_SET_EMERGENCY_CALLBACK_MODE_DONE);
                 }
@@ -1203,8 +1282,8 @@ public class EmergencyStateTracker {
      *
      * <p>
      * Once radio is on and DDS switched, must call setEmergencyMode() before completing the future
-     * and selecting emergency domain. EmergencyRegResult is required to determine domain and
-     * setEmergencyMode() is the only API that can receive it before starting domain selection.
+     * and selecting emergency domain. EmergencyRegistrationResult is required to determine domain
+     * and setEmergencyMode() is the only API that can receive it before starting domain selection.
      * Once domain selection is finished, the actual emergency mode will be set when
      * onEmergencyTransportChanged() is called.
      *
@@ -1227,6 +1306,11 @@ public class EmergencyStateTracker {
                 mRadioOnHelper = new RadioOnHelper(mContext);
             }
 
+            final Phone phoneForEmergency = phone;
+            final android.telecom.Connection expectedConnection = mOngoingConnection;
+            final int waitForInServiceTimeout =
+                    needToTurnOnRadio ? DEFAULT_WAIT_FOR_IN_SERVICE_TIMEOUT_MS : 0;
+            Rlog.i(TAG, "turnOnRadioAndSwitchDds: timeout=" + waitForInServiceTimeout);
             mRadioOnHelper.triggerRadioOnAndListen(new RadioOnStateListener.Callback() {
                 @Override
                 public void onComplete(RadioOnStateListener listener, boolean isRadioReady) {
@@ -1241,25 +1325,34 @@ public class EmergencyStateTracker {
                             completeEmergencyMode(emergencyType, DisconnectCause.POWER_OFF);
                         }
                     } else {
+                        if (!Objects.equals(mOngoingConnection, expectedConnection)) {
+                            Rlog.i(TAG, "onComplete "
+                                    + expectedConnection.getTelecomCallId() + " canceled.");
+                            return;
+                        }
                         switchDdsAndSetEmergencyMode(phone, emergencyType);
                     }
                 }
 
                 @Override
                 public boolean isOkToCall(Phone phone, int serviceState, boolean imsVoiceCapable) {
-                    // We currently only look to make sure that the radio is on before dialing. We
-                    // should be able to make emergency calls at any time after the radio has been
-                    // powered on and isn't in the UNAVAILABLE state, even if it is reporting the
-                    // OUT_OF_SERVICE state.
+                    // Wait for normal service state or timeout if required.
+                    if (phone == phoneForEmergency
+                            && waitForInServiceTimeout > 0
+                            && !isNetworkRegistered(phone)) {
+                        return false;
+                    }
                     return phone.getServiceStateTracker().isRadioOn()
                             && !satelliteController.isSatelliteEnabled();
                 }
 
                 @Override
                 public boolean onTimeout(Phone phone, int serviceState, boolean imsVoiceCapable) {
-                    return true;
+                    // onTimeout shall be called only with the Phone for emergency
+                    return phone.getServiceStateTracker().isRadioOn()
+                            && !satelliteController.isSatelliteEnabled();
                 }
-            }, !isTestEmergencyNumber, phone, isTestEmergencyNumber, 0);
+            }, !isTestEmergencyNumber, phone, isTestEmergencyNumber, waitForInServiceTimeout);
         } else {
             switchDdsAndSetEmergencyMode(phone, emergencyType);
         }
@@ -1410,6 +1503,27 @@ public class EmergencyStateTracker {
     private boolean isAvailableForEmergencyCalls(Phone phone) {
         return ServiceState.STATE_IN_SERVICE == phone.getServiceState().getState()
                 || phone.getServiceState().isEmergencyOnly();
+    }
+
+    private static boolean isNetworkRegistered(Phone phone) {
+        ServiceState ss = phone.getServiceStateTracker().getServiceState();
+        if (ss != null) {
+            NetworkRegistrationInfo nri = ss.getNetworkRegistrationInfo(
+                    NetworkRegistrationInfo.DOMAIN_PS,
+                    AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
+            if (nri != null && nri.isNetworkRegistered()) {
+                // PS is IN_SERVICE state.
+                return true;
+            }
+            nri = ss.getNetworkRegistrationInfo(
+                    NetworkRegistrationInfo.DOMAIN_CS,
+                    AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
+            if (nri != null && nri.isNetworkRegistered()) {
+                // CS is IN_SERVICE state.
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

@@ -16,18 +16,21 @@
 
 package com.android.internal.telephony.security;
 
+import android.content.Context;
 import android.telephony.CellularIdentifierDisclosure;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.telephony.Rlog;
 
+import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Encapsulates logic to emit notifications to the user that their cellular identifiers were
@@ -47,6 +50,7 @@ public class CellularIdentifierDisclosureNotifier {
     private static CellularIdentifierDisclosureNotifier sInstance = null;
     private final long mWindowCloseDuration;
     private final TimeUnit mWindowCloseUnit;
+    private final CellularNetworkSecuritySafetySource mSafetySource;
     private final Object mEnabledLock = new Object();
 
     @GuardedBy("mEnabledLock")
@@ -55,14 +59,16 @@ public class CellularIdentifierDisclosureNotifier {
     // events are strictly serialized.
     private ScheduledExecutorService mSerializedWorkQueue;
 
-    private AtomicInteger mDisclosureCount;
+    // This object should only be accessed from within the thread of mSerializedWorkQueue. Access
+    // outside of that thread would require additional synchronization.
+    private Map<Integer, DisclosureWindow> mWindows;
 
-    // One should only interact with this future from within the work queue's thread.
-    private ScheduledFuture<?> mWhenWindowCloses;
-
-    public CellularIdentifierDisclosureNotifier() {
-        this(Executors.newSingleThreadScheduledExecutor(), DEFAULT_WINDOW_CLOSE_DURATION_IN_MINUTES,
-                TimeUnit.MINUTES);
+    public CellularIdentifierDisclosureNotifier(CellularNetworkSecuritySafetySource safetySource) {
+        this(
+                Executors.newSingleThreadScheduledExecutor(),
+                DEFAULT_WINDOW_CLOSE_DURATION_IN_MINUTES,
+                TimeUnit.MINUTES,
+                safetySource);
     }
 
     /**
@@ -76,18 +82,20 @@ public class CellularIdentifierDisclosureNotifier {
     public CellularIdentifierDisclosureNotifier(
             ScheduledExecutorService notificationQueue,
             long windowCloseDuration,
-            TimeUnit windowCloseUnit) {
+            TimeUnit windowCloseUnit,
+            CellularNetworkSecuritySafetySource safetySource) {
         mSerializedWorkQueue = notificationQueue;
         mWindowCloseDuration = windowCloseDuration;
         mWindowCloseUnit = windowCloseUnit;
-        mDisclosureCount = new AtomicInteger(0);
+        mWindows = new HashMap<>();
+        mSafetySource = safetySource;
     }
 
     /**
-     * Add a CellularIdentifierDisclosure to be tracked by this instance.
-     * If appropriate, this will trigger a user notification.
+     * Add a CellularIdentifierDisclosure to be tracked by this instance. If appropriate, this will
+     * trigger a user notification.
      */
-    public void addDisclosure(CellularIdentifierDisclosure disclosure) {
+    public void addDisclosure(Context context, int subId, CellularIdentifierDisclosure disclosure) {
         Rlog.d(TAG, "Identifier disclosure reported: " + disclosure);
 
         synchronized (mEnabledLock) {
@@ -108,7 +116,7 @@ public class CellularIdentifierDisclosureNotifier {
             // because we know that any actions taken on disabled will be scheduled after this
             // incrementAndNotify call.
             try {
-                mSerializedWorkQueue.execute(incrementAndNotify());
+                mSerializedWorkQueue.execute(incrementAndNotify(context, subId));
             } catch (RejectedExecutionException e) {
                 Rlog.e(TAG, "Failed to schedule incrementAndNotify: " + e.getMessage());
             }
@@ -119,12 +127,12 @@ public class CellularIdentifierDisclosureNotifier {
      * Re-enable if previously disabled. This means that {@code addDisclsoure} will start tracking
      * disclosures again and potentially emitting notifications.
      */
-    public void enable() {
+    public void enable(Context context) {
         synchronized (mEnabledLock) {
             Rlog.d(TAG, "enabled");
             mEnabled = true;
             try {
-                mSerializedWorkQueue.execute(onEnableNotifier());
+                mSerializedWorkQueue.execute(onEnableNotifier(context));
             } catch (RejectedExecutionException e) {
                 Rlog.e(TAG, "Failed to schedule onEnableNotifier: " + e.getMessage());
             }
@@ -136,12 +144,12 @@ public class CellularIdentifierDisclosureNotifier {
      * This can be used to in response to a user disabling the feature to emit notifications.
      * If {@code addDisclosure} is called while in a disabled state, disclosures will be dropped.
      */
-    public void disable() {
+    public void disable(Context context) {
         Rlog.d(TAG, "disabled");
         synchronized (mEnabledLock) {
             mEnabled = false;
             try {
-                mSerializedWorkQueue.execute(onDisableNotifier());
+                mSerializedWorkQueue.execute(onDisableNotifier(context));
             } catch (RejectedExecutionException e) {
                 Rlog.e(TAG, "Failed to schedule onDisableNotifier: " + e.getMessage());
             }
@@ -154,78 +162,202 @@ public class CellularIdentifierDisclosureNotifier {
         }
     }
 
-    @VisibleForTesting
-    public int getCurrentDisclosureCount() {
-        return mDisclosureCount.get();
-    }
-
     /** Get a singleton CellularIdentifierDisclosureNotifier. */
-    public static synchronized CellularIdentifierDisclosureNotifier getInstance() {
+    public static synchronized CellularIdentifierDisclosureNotifier getInstance(
+            CellularNetworkSecuritySafetySource safetySource) {
         if (sInstance == null) {
-            sInstance = new CellularIdentifierDisclosureNotifier();
+            sInstance = new CellularIdentifierDisclosureNotifier(safetySource);
         }
 
         return sInstance;
     }
 
-    private Runnable closeWindow() {
+    private Runnable incrementAndNotify(Context context, int subId) {
         return () -> {
-            Rlog.i(TAG,
-                    "Disclosure window closing. Disclosure count was " + mDisclosureCount.get());
-            mDisclosureCount.set(0);
-        };
-    }
-
-    private Runnable incrementAndNotify() {
-        return () -> {
-            int newCount = mDisclosureCount.incrementAndGet();
-            Rlog.d(TAG, "Emitting notification. New disclosure count " + newCount);
-
-            // To reset the timer for our window, we first cancel an existing timer.
-            boolean cancelled = cancelWindowCloseFuture();
-            Rlog.d(TAG, "Result of attempting to cancel window closing future: " + cancelled);
-
-            try {
-                mWhenWindowCloses =
-                        mSerializedWorkQueue.schedule(
-                                closeWindow(), mWindowCloseDuration, mWindowCloseUnit);
-            } catch (RejectedExecutionException e) {
-                Rlog.e(TAG, "Failed to schedule closeWindow: " + e.getMessage());
+            DisclosureWindow window = mWindows.get(subId);
+            if (window == null) {
+                window = new DisclosureWindow(subId);
+                mWindows.put(subId, window);
             }
+
+            window.increment(context, this);
+
+            int disclosureCount = window.getDisclosureCount();
+
+            Rlog.d(
+                    TAG,
+                    "Emitting notification for subId: "
+                            + subId
+                            + ". New disclosure count "
+                            + disclosureCount);
+
+            mSafetySource.setIdentifierDisclosure(
+                    context,
+                    subId,
+                    disclosureCount,
+                    window.getFirstOpen(),
+                    window.getCurrentEnd());
         };
     }
 
-    private Runnable onDisableNotifier() {
+    private Runnable onDisableNotifier(Context context) {
         return () -> {
-            mDisclosureCount.set(0);
-            cancelWindowCloseFuture();
             Rlog.d(TAG, "On disable notifier");
+            for (DisclosureWindow window : mWindows.values()) {
+                window.close();
+            }
+            mSafetySource.setIdentifierDisclosureIssueEnabled(context, false);
         };
     }
 
-    private Runnable onEnableNotifier() {
+    private Runnable onEnableNotifier(Context context) {
         return () -> {
             Rlog.i(TAG, "On enable notifier");
+            mSafetySource.setIdentifierDisclosureIssueEnabled(context, true);
         };
     }
 
     /**
-     * A helper to cancel the Future that is in charge of closing the disclosure window. This must
-     * only be called from within the single-threaded executor. Calling this method leaves a
-     * completed or cancelled future in mWhenWindowCloses.
-     *
-     * @return boolean indicating whether or not the Future was actually cancelled. If false, this
-     * likely indicates that the disclosure window has already closed.
+     * Get the disclosure count for a given subId. NOTE: This method is not thread safe. Without
+     * external synchronization, one should only call it if there are no pending tasks on the
+     * Executor passed into this class.
      */
-    private boolean cancelWindowCloseFuture() {
-        if (mWhenWindowCloses == null) {
-            return false;
+    @VisibleForTesting
+    public int getCurrentDisclosureCount(int subId) {
+        DisclosureWindow window = mWindows.get(subId);
+        if (window != null) {
+            return window.getDisclosureCount();
         }
 
-        // While we choose not to interrupt a running Future (we pass `false` to the `cancel`
-        // call), we shouldn't ever actually need this functionality because all the work on the
-        // queue is serialized on a single thread. Nothing about the `closeWindow` call is ready
-        // to handle interrupts, though, so this seems like a safer choice.
-        return mWhenWindowCloses.cancel(false);
+        return 0;
+    }
+
+    /**
+     * Get the open time for a given subId. NOTE: This method is not thread safe. Without
+     * external synchronization, one should only call it if there are no pending tasks on the
+     * Executor passed into this class.
+     */
+    @VisibleForTesting
+    public Instant getFirstOpen(int subId) {
+        DisclosureWindow window = mWindows.get(subId);
+        if (window != null) {
+            return window.getFirstOpen();
+        }
+
+        return null;
+    }
+
+    /**
+     * Get the current end time for a given subId. NOTE: This method is not thread safe. Without
+     * external synchronization, one should only call it if there are no pending tasks on the
+     * Executor passed into this class.
+     */
+    @VisibleForTesting
+    public Instant getCurrentEnd(int subId) {
+        DisclosureWindow window = mWindows.get(subId);
+        if (window != null) {
+            return window.getCurrentEnd();
+        }
+
+        return null;
+    }
+
+    /**
+     * A helper class that maintains all state associated with the disclosure window for a single
+     * subId. No methods are thread safe. Callers must implement all synchronization.
+     */
+    private class DisclosureWindow {
+        private int mDisclosureCount;
+        private Instant mWindowFirstOpen;
+        private Instant mLastEvent;
+        private ScheduledFuture<?> mWhenWindowCloses;
+
+        private int mSubId;
+
+        DisclosureWindow(int subId) {
+            mDisclosureCount = 0;
+            mWindowFirstOpen = null;
+            mLastEvent = null;
+            mSubId = subId;
+            mWhenWindowCloses = null;
+        }
+
+        void increment(Context context, CellularIdentifierDisclosureNotifier notifier) {
+
+            mDisclosureCount++;
+
+            Instant now = Instant.now();
+            if (mDisclosureCount == 1) {
+                // Our window was opened for the first time
+                mWindowFirstOpen = now;
+            }
+
+            mLastEvent = now;
+
+            cancelWindowCloseFuture();
+
+            try {
+                mWhenWindowCloses =
+                        notifier.mSerializedWorkQueue.schedule(
+                                closeWindowRunnable(context),
+                                notifier.mWindowCloseDuration,
+                                notifier.mWindowCloseUnit);
+            } catch (RejectedExecutionException e) {
+                Rlog.e(
+                        TAG,
+                        "Failed to schedule closeWindow for subId "
+                                + mSubId
+                                + " :  "
+                                + e.getMessage());
+            }
+        }
+
+        int getDisclosureCount() {
+            return mDisclosureCount;
+        }
+
+        Instant getFirstOpen() {
+            return mWindowFirstOpen;
+        }
+
+        Instant getCurrentEnd() {
+            return mLastEvent;
+        }
+
+        void close() {
+            mDisclosureCount = 0;
+            mWindowFirstOpen = null;
+            mLastEvent = null;
+
+            if (mWhenWindowCloses == null) {
+                return;
+            }
+            mWhenWindowCloses = null;
+        }
+
+        private Runnable closeWindowRunnable(Context context) {
+            return () -> {
+                Rlog.i(
+                        TAG,
+                        "Disclosure window closing for subId "
+                                + mSubId
+                                + ". Disclosure count was "
+                                + getDisclosureCount());
+                close();
+                mSafetySource.clearIdentifierDisclosure(context, mSubId);
+            };
+        }
+
+        private boolean cancelWindowCloseFuture() {
+            if (mWhenWindowCloses == null) {
+                return false;
+            }
+
+            // Pass false to not interrupt a running Future. Nothing about our notifier is ready
+            // for this type of preemption.
+            return mWhenWindowCloses.cancel(false);
+        }
+
     }
 }
+

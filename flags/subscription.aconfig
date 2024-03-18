@@ -20,3 +20,24 @@ flag {
   description: "Supports customized cellular service capabilities per subscription."
   bug: "296097429"
 }
+
+flag {
+  name: "data_only_service_allow_emergency_call_only"
+  namespace: "telephony"
+  description: "Support emergency call only for data only cellular service."
+  bug: "296097429"
+}
+
+flag {
+  name: "support_psim_to_esim_conversion"
+  namespace: "telephony"
+  description: "Support the psim to esim conversion."
+  bug: "315073761"
+}
+
+flag {
+  name: "subscription_user_association_query"
+  namespace: "telephony"
+  description: "Supports querying if a subscription is associated with the caller"
+  bug: "325045841"
+}

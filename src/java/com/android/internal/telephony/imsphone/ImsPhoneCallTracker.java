@@ -1288,8 +1288,6 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
         }
     }
 
-    private @NonNull final FeatureFlags mFeatureFlags;
-
     //***** Events
 
 
@@ -1302,8 +1300,9 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
     @VisibleForTesting
     public ImsPhoneCallTracker(ImsPhone phone, ConnectorFactory factory, Executor executor,
             FeatureFlags featureFlags) {
+        super(featureFlags);
+
         this.mPhone = phone;
-        mFeatureFlags = featureFlags;
         mTelephonyManager = (TelephonyManager) mPhone.getContext()
                 .getSystemService(Context.TELEPHONY_SERVICE);
         mConnectorFactory = factory;
@@ -4914,13 +4913,15 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
         public void onCallQualityChanged(ImsCall imsCall, CallQuality callQuality) {
             // convert ServiceState.radioTech to TelephonyManager.NetworkType constant
             mPhone.onCallQualityChanged(callQuality, imsCall.getNetworkType());
-            String callId = imsCall.getSession().getCallId();
-            CallQualityMetrics cqm = mCallQualityMetrics.get(callId);
-            if (cqm == null) {
-                cqm = new CallQualityMetrics(mPhone);
+            if (imsCall.getSession() != null) {
+                String callId = imsCall.getSession().getCallId();
+                CallQualityMetrics cqm = mCallQualityMetrics.get(callId);
+                if (cqm == null) {
+                    cqm = new CallQualityMetrics(mPhone);
+                }
+                cqm.saveCallQuality(callQuality);
+                mCallQualityMetrics.put(callId, cqm);
             }
-            cqm.saveCallQuality(callQuality);
-            mCallQualityMetrics.put(callId, cqm);
 
             ImsPhoneConnection conn = findConnection(imsCall);
             if (conn != null) {

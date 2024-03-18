@@ -273,6 +273,11 @@ public class AccessNetworksManager extends Handler {
                     .mapToObj(AccessNetworkType::toString).collect(Collectors.joining(","))
                     + "]");
 
+            handleQualifiedNetworksChanged(apnTypes, qualifiedNetworkTypes, false);
+        }
+
+        private void handleQualifiedNetworksChanged(
+                int apnTypes, int[] qualifiedNetworkTypes, boolean forceReconnect) {
             if (Arrays.stream(qualifiedNetworkTypes).anyMatch(accessNetwork
                     -> !DataUtils.isValidAccessNetwork(accessNetwork))) {
                 loge("Invalid access networks " + Arrays.toString(qualifiedNetworkTypes));
@@ -313,8 +318,9 @@ public class AccessNetworksManager extends Handler {
                                     AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
                             mAccessNetworksManagerCallbacks.forEach(callback ->
                                     callback.invokeFromExecutor(() ->
-                                            callback.onPreferredTransportChanged(DataUtils
-                                                    .apnTypeToNetworkCapability(apnType))));
+                                            callback.onPreferredTransportChanged(
+                                                    DataUtils.apnTypeToNetworkCapability(apnType),
+                                                    forceReconnect)));
                         }
                     } else {
                         mAvailableNetworks.put(apnType, qualifiedNetworkTypes);
@@ -336,7 +342,7 @@ public class AccessNetworksManager extends Handler {
             }
 
             if (!qualifiedNetworksList.isEmpty()) {
-                setPreferredTransports(qualifiedNetworksList);
+                setPreferredTransports(qualifiedNetworksList, forceReconnect);
                 mQualifiedNetworksChangedRegistrants.notifyResult(qualifiedNetworksList);
             }
         }
@@ -377,6 +383,17 @@ public class AccessNetworksManager extends Handler {
                 }
             });
         }
+
+        @Override
+        public void onReconnectQualifedNetworkType(int apnTypes, int qualifiedNetworkType) {
+            if (mFeatureFlags.reconnectQualifiedNetwork()) {
+                log("onReconnectQualifedNetworkType: apnTypes = ["
+                        + ApnSetting.getApnTypesStringFromBitmask(apnTypes)
+                        + "], networks = [" + AccessNetworkType.toString(qualifiedNetworkType)
+                        + "]");
+                handleQualifiedNetworksChanged(apnTypes, new int[]{qualifiedNetworkType}, true);
+            }
+        }
     }
 
     private void onEmergencyDataNetworkPreferredTransportChanged(
@@ -410,8 +427,10 @@ public class AccessNetworksManager extends Handler {
          * Called when preferred transport changed.
          *
          * @param networkCapability The network capability.
+         * @param forceReconnect whether enforce reconnection to the preferred transport type.
          */
-        public abstract void onPreferredTransportChanged(@NetCapability int networkCapability);
+        public abstract void onPreferredTransportChanged(
+                @NetCapability int networkCapability, boolean forceReconnect);
     }
 
     /**
@@ -682,7 +701,8 @@ public class AccessNetworksManager extends Handler {
                 : AccessNetworkConstants.TRANSPORT_TYPE_WWAN;
     }
 
-    private void setPreferredTransports(@NonNull List<QualifiedNetworks> networksList) {
+    private void setPreferredTransports(
+            @NonNull List<QualifiedNetworks> networksList, boolean forceReconnect) {
         for (QualifiedNetworks networks : networksList) {
             if (networks.qualifiedNetworks.length > 0) {
                 int transport = getTransportFromAccessNetwork(networks.qualifiedNetworks[0]);
@@ -690,11 +710,13 @@ public class AccessNetworksManager extends Handler {
                     mPreferredTransports.put(networks.apnType, transport);
                     mAccessNetworksManagerCallbacks.forEach(callback ->
                             callback.invokeFromExecutor(() ->
-                                    callback.onPreferredTransportChanged(DataUtils
-                                            .apnTypeToNetworkCapability(networks.apnType))));
+                                    callback.onPreferredTransportChanged(
+                                            DataUtils.apnTypeToNetworkCapability(networks.apnType),
+                                            forceReconnect)));
                     logl("setPreferredTransports: apnType="
                             + ApnSetting.getApnTypeString(networks.apnType) + ", transport="
-                            + AccessNetworkConstants.transportTypeToString(transport));
+                            + AccessNetworkConstants.transportTypeToString(transport)
+                            + (forceReconnect ? ", forceReconnect:true" : ""));
                 }
             }
         }
@@ -720,7 +742,7 @@ public class AccessNetworksManager extends Handler {
      * Get the  preferred transport by network capability.
      *
      * @param networkCapability The network capability. (Note that only APN-type capabilities are
-     * supported.
+     * supported.)
      * @return The preferred transport.
      */
     public @TransportType int getPreferredTransportByNetworkCapability(
@@ -739,7 +761,7 @@ public class AccessNetworksManager extends Handler {
      * @return {@code true} if there is any APN is on IWLAN, otherwise {@code false}.
      */
     public boolean isAnyApnOnIwlan() {
-        for (int apnType : AccessNetworksManager.SUPPORTED_APN_TYPES) {
+        for (int apnType : SUPPORTED_APN_TYPES) {
             if (getPreferredTransport(apnType) == AccessNetworkConstants.TRANSPORT_TYPE_WLAN) {
                 return true;
             }

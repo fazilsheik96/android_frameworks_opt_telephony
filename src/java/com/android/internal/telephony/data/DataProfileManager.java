@@ -34,6 +34,7 @@ import android.telephony.Annotation;
 import android.telephony.Annotation.NetworkType;
 import android.telephony.AnomalyReporter;
 import android.telephony.CarrierConfigManager;
+import android.telephony.NetworkRegistrationInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.telephony.TelephonyManager.SimState;
@@ -281,7 +282,8 @@ public class DataProfileManager extends Handler {
                 if (apn != null) {
                     allApnSettings.add(apn);
                     isInternetSupported |= apn.canHandleType(ApnSetting.TYPE_DEFAULT);
-                    if (mDataConfigManager.isApnConfigAnomalyReportEnabled()) {
+                    if (mDataConfigManager.isApnConfigAnomalyReportEnabled()
+                            && apn.getEditedStatus() == Telephony.Carriers.UNEDITED) {
                         checkApnSetting(apn);
                     }
                 }
@@ -838,8 +840,13 @@ public class DataProfileManager extends Handler {
                 })
                 .collect(Collectors.toList());
         if (dataProfiles.size() == 0) {
+            String ntnReason = "";
+            if (mFeatureFlags.carrierEnabledSatelliteFlag()) {
+                ntnReason = " and infrastructure for "
+                        + NetworkRegistrationInfo.isNonTerrestrialNetworkToString(isNtn);
+            }
             log("Can't find any data profile for network type "
-                    + TelephonyManager.getNetworkTypeName(networkType));
+                    + TelephonyManager.getNetworkTypeName(networkType) + ntnReason);
             return null;
         }
 

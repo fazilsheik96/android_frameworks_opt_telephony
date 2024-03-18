@@ -20,6 +20,8 @@ import android.annotation.CallbackExecutor;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.app.usage.NetworkStats;
+import android.app.usage.NetworkStatsManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -30,6 +32,7 @@ import android.net.NetworkCapabilities;
 import android.net.NetworkPolicyManager;
 import android.net.NetworkPolicyManager.SubscriptionCallback;
 import android.net.NetworkRequest;
+import android.net.NetworkTemplate;
 import android.net.Uri;
 import android.os.AsyncResult;
 import android.os.Handler;
@@ -67,6 +70,7 @@ import android.telephony.data.DataCallResponse.HandoverFailureMode;
 import android.telephony.data.DataCallResponse.LinkStatus;
 import android.telephony.data.DataProfile;
 import android.telephony.data.DataServiceCallback;
+import android.telephony.data.QosBearerSession;
 import android.telephony.ims.ImsException;
 import android.telephony.ims.ImsManager;
 import android.telephony.ims.ImsReasonInfo;
@@ -241,6 +245,18 @@ public class DataNetworkController extends Handler {
      */
     private static final long REEVALUATE_UNSATISFIED_NETWORK_REQUESTS_AFTER_DETACHED_DELAY_MILLIS =
             TimeUnit.SECONDS.toMillis(1);
+
+    /**
+     * The delay in milliseconds to re-evaluate existing data networks for bootstrap sim data usage
+     * limit.
+     */
+    private static final long REEVALUATE_BOOTSTRAP_SIM_DATA_USAGE_MILLIS =
+            TimeUnit.SECONDS.toMillis(60);
+
+    /**
+     * bootstrap sim total data usage bytes
+     */
+    private long mBootStrapSimTotalDataUsageBytes = 0L;
 
     protected final Phone mPhone;
     private final String mLogTag;
@@ -636,6 +652,13 @@ public class DataNetworkController extends Handler {
          * @param simState The current SIM state
          */
         public void onSimStateChanged(@SimState int simState) {}
+
+        /**
+         * Called when QosBearerSessions changed.
+         *
+         * @param qosBearerSessions The latest QOS bearer sessions.
+         */
+        public void onQosSessionsChanged(@NonNull List<QosBearerSession> qosBearerSessions) {}
     }
 
     /**
@@ -992,13 +1015,16 @@ public class DataNetworkController extends Handler {
 
         mAccessNetworksManager.registerCallback(new AccessNetworksManagerCallback(this::post) {
             @Override
-            public void onPreferredTransportChanged(@NetCapability int capability) {
+            public void onPreferredTransportChanged(
+                    @NetCapability int capability, boolean forceReconnect) {
                 int preferredTransport = mAccessNetworksManager
                         .getPreferredTransportByNetworkCapability(capability);
                 logl("onPreferredTransportChanged: "
                         + DataUtils.networkCapabilityToString(capability) + " preferred on "
-                        + AccessNetworkConstants.transportTypeToString(preferredTransport));
-                DataNetworkController.this.onEvaluatePreferredTransport(capability);
+                        + AccessNetworkConstants.transportTypeToString(preferredTransport)
+                        + (forceReconnect ? "forceReconnect:true" : ""));
+
+                DataNetworkController.this.onEvaluatePreferredTransport(capability, forceReconnect);
                 if (!hasMessages(EVENT_REEVALUATE_UNSATISFIED_NETWORK_REQUESTS)) {
                     sendMessage(obtainMessage(EVENT_REEVALUATE_UNSATISFIED_NETWORK_REQUESTS,
                             DataEvaluationReason.PREFERRED_TRANSPORT_CHANGED));
@@ -1186,7 +1212,7 @@ public class DataNetworkController extends Handler {
                 }
                 break;
             case EVENT_EVALUATE_PREFERRED_TRANSPORT:
-                onEvaluatePreferredTransport(msg.arg1);
+                onEvaluatePreferredTransport(msg.arg1, msg.arg2 != 0 /* forceReconnect */);
                 break;
             case EVENT_SUBSCRIPTION_PLANS_CHANGED:
                 SubscriptionPlan[] plans = (SubscriptionPlan[]) msg.obj;
@@ -1555,11 +1581,27 @@ public class DataNetworkController extends Handler {
 
         // Bypass all checks for emergency network request.
         if (networkRequest.hasCapability(NetworkCapabilities.NET_CAPABILITY_EIMS)) {
-            evaluation.addDataAllowedReason(DataAllowedReason.EMERGENCY_REQUEST);
-            evaluation.setCandidateDataProfile(mDataProfileManager.getDataProfileForNetworkRequest(
+            DataProfile emergencyProfile = mDataProfileManager.getDataProfileForNetworkRequest(
                     networkRequest, getDataNetworkType(transport),
                     mServiceState.isUsingNonTerrestrialNetwork(),
-                    isEsimBootStrapProvisioningActivated(), true));
+                    isEsimBootStrapProvisioningActivated(), true);
+
+            // Check if the profile is being throttled.
+            if (mDataConfigManager.shouldHonorRetryTimerForEmergencyNetworkRequest()
+                    && emergencyProfile != null
+                    && mDataRetryManager.isDataProfileThrottled(emergencyProfile, transport)) {
+                evaluation.addDataDisallowedReason(DataDisallowedReason.DATA_THROTTLED);
+                log("Emergency network request is throttled by the previous setup data "
+                            + "call response.");
+                log(evaluation.toString());
+                networkRequest.setEvaluation(evaluation);
+                return evaluation;
+            }
+
+            evaluation.addDataAllowedReason(DataAllowedReason.EMERGENCY_REQUEST);
+            if (emergencyProfile != null) {
+                evaluation.setCandidateDataProfile(emergencyProfile);
+            }
             networkRequest.setEvaluation(evaluation);
             log(evaluation.toString());
             return evaluation;
@@ -1738,7 +1780,14 @@ public class DataNetworkController extends Handler {
         }
 
         if (!evaluation.containsDisallowedReasons()) {
-            evaluation.setCandidateDataProfile(dataProfile);
+            if (transport == AccessNetworkConstants.TRANSPORT_TYPE_WWAN
+                    && isEsimBootStrapProvisioningActivated()
+                    && isEsimBootStrapMaxDataLimitReached()) {
+                log("BootStrap Sim Data Usage limit reached");
+                evaluation.addDataDisallowedReason(DataDisallowedReason.DATA_LIMIT_REACHED);
+            } else {
+                evaluation.setCandidateDataProfile(dataProfile);
+            }
         }
 
         networkRequest.setEvaluation(evaluation);
@@ -1775,6 +1824,61 @@ public class DataNetworkController extends Handler {
         if (mSimState != TelephonyManager.SIM_STATE_LOADED) {
             evaluation.addDataDisallowedReason(DataDisallowedReason.SIM_NOT_READY);
         }
+    }
+
+    /**
+     * This method
+     *  - At evaluation network request and evaluation data network determines, if
+     *    bootstrap sim current data usage reached bootstrap sim max data limit allowed set
+     *    at {@link DataConfigManager#getEsimBootStrapMaxDataLimitBytes()}
+     *  - Query the current data usage at {@link #getDataUsage()}
+     *
+     * @return true, if bootstrap sim data limit is reached
+     *         else false, if bootstrap sim max data limit allowed set is -1(Unlimited) or current
+     *         bootstrap sim total data usage is less than bootstrap sim max data limit allowed.
+     *
+     */
+    private boolean isEsimBootStrapMaxDataLimitReached() {
+        long esimBootStrapMaxDataLimitBytes =
+                mDataConfigManager.getEsimBootStrapMaxDataLimitBytes();
+
+        if (esimBootStrapMaxDataLimitBytes < 0L) {
+            return false;
+        }
+
+        log("current bootstrap sim data Usage: " + mBootStrapSimTotalDataUsageBytes);
+        if (mBootStrapSimTotalDataUsageBytes >= esimBootStrapMaxDataLimitBytes) {
+            return true;
+        } else {
+            mBootStrapSimTotalDataUsageBytes = getDataUsage();
+            return mBootStrapSimTotalDataUsageBytes >= esimBootStrapMaxDataLimitBytes;
+        }
+    }
+
+    /**
+     * Query network usage statistics summaries based on {@link
+     * NetworkStatsManager#querySummaryForDevice(NetworkTemplate, long, long)}
+     *
+     * @return Data usage in bytes for the connected networks related to the current subscription
+     */
+    private long getDataUsage() {
+        NetworkStatsManager networkStatsManager =
+                        mPhone.getContext().getSystemService(NetworkStatsManager.class);
+
+        if (networkStatsManager != null) {
+            final NetworkTemplate.Builder builder =
+                    new NetworkTemplate.Builder(NetworkTemplate.MATCH_MOBILE);
+            final String subscriberId = mPhone.getSubscriberId();
+
+            if (!TextUtils.isEmpty(subscriberId)) {
+                builder.setSubscriberIds(Set.of(subscriberId));
+                NetworkTemplate template = builder.build();
+                final NetworkStats.Bucket ret = networkStatsManager
+                        .querySummaryForDevice(template, 0L, System.currentTimeMillis());
+                return ret.getRxBytes() + ret.getTxBytes();
+            }
+        }
+        return 0L;
     }
 
     /**
@@ -1881,6 +1985,25 @@ public class DataNetworkController extends Handler {
         if (isDataDisallowedDueToSatellite(dataNetwork.getNetworkCapabilities()
                 .getCapabilities())) {
             evaluation.addDataDisallowedReason(DataDisallowedReason.SERVICE_OPTION_NOT_SUPPORTED);
+        }
+
+        // Check whether data limit reached for bootstrap sim, else re-evaluate based on the timer
+        // set.
+        if (isEsimBootStrapProvisioningActivated()
+                && dataNetwork.getTransport() == AccessNetworkConstants.TRANSPORT_TYPE_WWAN) {
+            if (isEsimBootStrapMaxDataLimitReached()) {
+                log("BootStrap Sim Data Usage limit reached");
+                evaluation.addDataDisallowedReason(DataDisallowedReason.DATA_LIMIT_REACHED);
+            } else {
+                if (!hasMessages(EVENT_REEVALUATE_EXISTING_DATA_NETWORKS)) {
+                    sendMessageDelayed(obtainMessage(EVENT_REEVALUATE_EXISTING_DATA_NETWORKS,
+                            DataEvaluationReason.CHECK_DATA_USAGE),
+                            REEVALUATE_BOOTSTRAP_SIM_DATA_USAGE_MILLIS);
+                } else {
+                    log("skip scheduling evaluating existing data networks since already"
+                            + "scheduled");
+                }
+            }
         }
 
         // Check if there are other network that has higher priority, and only single data network
@@ -2265,6 +2388,8 @@ public class DataNetworkController extends Handler {
                     return DataNetwork.TEAR_DOWN_REASON_ONLY_ALLOWED_SINGLE_NETWORK;
                 case HANDOVER_RETRY_STOPPED:
                     return DataNetwork.TEAR_DOWN_REASON_HANDOVER_FAILED;
+                case DATA_LIMIT_REACHED:
+                    return DataNetwork.TEAR_DOWN_REASON_DATA_LIMIT_REACHED;
             }
         }
         return DataNetwork.TEAR_DOWN_REASON_NONE;
@@ -2788,6 +2913,14 @@ public class DataNetworkController extends Handler {
                         DataNetworkController.this.onRetryUnsatisfiedNetworkRequest(
                                 networkRequest);
                     }
+
+                    @Override
+                    public void onQosSessionsChanged(
+                            @NonNull List<QosBearerSession> qosBearerSessions) {
+                        mDataNetworkControllerCallbacks.forEach(
+                                callback -> callback.invokeFromExecutor(() ->
+                                        callback.onQosSessionsChanged(qosBearerSessions)));
+                    }
                 }
         ));
         if (!mAnyDataNetworkExisting) {
@@ -2909,6 +3042,12 @@ public class DataNetworkController extends Handler {
             logl("IMS data state changed from "
                     + TelephonyUtils.dataStateToString(mImsDataNetworkState) + " to CONNECTED.");
             mImsDataNetworkState = TelephonyManager.DATA_CONNECTED;
+        }
+
+        if (isEsimBootStrapProvisioningActivated()) {
+            sendMessageDelayed(obtainMessage(EVENT_REEVALUATE_EXISTING_DATA_NETWORKS,
+                    DataEvaluationReason.CHECK_DATA_USAGE),
+                    REEVALUATE_BOOTSTRAP_SIM_DATA_USAGE_MILLIS);
         }
     }
 
@@ -3340,8 +3479,12 @@ public class DataNetworkController extends Handler {
      * Called when needed to evaluate the preferred transport for certain capability.
      *
      * @param capability The network capability to evaluate.
+     * @param forceReconnect indicates whether enforce reconnection to move to the preferred
+     *                       transport type.
+     *
      */
-    private void onEvaluatePreferredTransport(@NetCapability int capability) {
+    private void onEvaluatePreferredTransport(
+            @NetCapability int capability, boolean forceReconnect) {
         int preferredTransport = mAccessNetworksManager
                 .getPreferredTransportByNetworkCapability(capability);
         log("onEvaluatePreferredTransport: " + DataUtils.networkCapabilityToString(capability)
@@ -3365,7 +3508,13 @@ public class DataNetworkController extends Handler {
                     continue;
                 }
 
-                tryHandoverDataNetwork(dataNetwork, preferredTransport, null/*handoverRetryEntry*/);
+                if (forceReconnect) {
+                    tearDownGracefully(
+                            dataNetwork, DataNetwork.TEAR_DOWN_REASON_HANDOVER_NOT_ALLOWED);
+                } else {
+                    tryHandoverDataNetwork(
+                            dataNetwork, preferredTransport, null/*handoverRetryEntry*/);
+                }
             }
         }
     }
@@ -3910,6 +4059,11 @@ public class DataNetworkController extends Handler {
      * de-registered yet.
      */
     private boolean isSafeToTearDown(@NonNull DataNetwork dataNetwork) {
+        if (dataNetwork.hasNetworkCapabilityInNetworkRequests(
+                NetworkCapabilities.NET_CAPABILITY_EIMS)) {
+            // FWK currently doesn't track emergency registration state for graceful tear down.
+            return true;
+        }
         for (int imsFeature : SUPPORTED_IMS_FEATURES) {
             String imsFeaturePackage = mImsFeaturePackageName.get(imsFeature);
             if (imsFeaturePackage != null) {
@@ -4160,6 +4314,7 @@ public class DataNetworkController extends Handler {
                 .map(TelephonyManager::getNetworkTypeName).collect(Collectors.joining(",")));
         pw.println("mImsThrottleCounter=" + mImsThrottleCounter);
         pw.println("mNetworkUnwantedCounter=" + mNetworkUnwantedCounter);
+        pw.println("mBootStrapSimTotalDataUsageBytes=" + mBootStrapSimTotalDataUsageBytes);
         pw.println("Local logs:");
         pw.increaseIndent();
         mLocalLog.dump(fd, pw, args);

@@ -258,6 +258,8 @@ public class DataEvaluation {
         TAC_CHANGED(true),
         /** Unsatisfied network request detached. */
         UNSATISFIED_REQUEST_DETACHED(true),
+        /** track bootstrap sim data usage */
+        CHECK_DATA_USAGE(false),
         /** Secure Mode state changed. */
         SECURE_MODE_STATE_CHANGED(true),
         /**
@@ -351,7 +353,9 @@ public class DataEvaluation {
         /** Device is in Secure Mode. */
         DATA_RESTRICTED_BY_SECURE_MODE(true),
         /** Handover max retry stopped but network is not on the preferred transport. */
-        HANDOVER_RETRY_STOPPED(true);
+        HANDOVER_RETRY_STOPPED(true),
+        /** BootStrap sim data limit reached. */
+        DATA_LIMIT_REACHED(true);
 
         private final boolean mIsHardReason;
 
