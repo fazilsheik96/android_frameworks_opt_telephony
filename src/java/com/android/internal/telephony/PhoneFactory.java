@@ -216,7 +216,7 @@ public class PhoneFactory {
                         .makeSubscriptionManagerService(context, Looper.myLooper());
 
                 TelephonyComponentFactory.getInstance().inject(MultiSimSettingController.class.
-                        getName()).initMultiSimSettingController(context);
+                        getName()).initMultiSimSettingController(context, featureFlags);
 
                 if (context.getPackageManager().hasSystemFeature(
                         PackageManager.FEATURE_TELEPHONY_EUICC)) {
