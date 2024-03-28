@@ -3904,14 +3904,13 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                 ImsPhoneConnection conn = findConnection(imsCall);
                 // Since onCallInitiating and onCallProgressing reset mPendingMO,
                 // we can't depend on mPendingMO.
-                if ((reasonInfo.getCode() == ImsReasonInfo.CODE_SIP_ALTERNATE_EMERGENCY_CALL
-                        || reasonInfo.getCode() == ImsReasonInfo.CODE_LOCAL_NOT_REGISTERED
-                        || reasonInfo.getCode() == ImsReasonInfo.CODE_LOCAL_CALL_CS_RETRY_REQUIRED)
-                        && conn != null) {
+                if (conn != null) {
                     logi("onCallStartFailed eccCategory=" + eccCategory);
-                    if (reasonInfo.getCode() == ImsReasonInfo.CODE_SIP_ALTERNATE_EMERGENCY_CALL
-                            || reasonInfo.getExtraCode()
-                                    == ImsReasonInfo.EXTRA_CODE_CALL_RETRY_EMERGENCY) {
+                    int reason = reasonInfo.getCode();
+                    int extraCode = reasonInfo.getExtraCode();
+                    if ((reason == ImsReasonInfo.CODE_LOCAL_CALL_CS_RETRY_REQUIRED
+                            && extraCode == ImsReasonInfo.EXTRA_CODE_CALL_RETRY_EMERGENCY)
+                            || (reason == ImsReasonInfo.CODE_SIP_ALTERNATE_EMERGENCY_CALL)) {
                         conn.setNonDetectableEmergencyCallInfo(eccCategory);
                     }
                     conn.setImsReasonInfo(reasonInfo);
@@ -4156,6 +4155,8 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                         mForegroundCall.switchWith(mBackgroundCall);
                         sendEmptyMessage(EVENT_RESUME_NOW_FOREGROUND_CALL);
                         mHoldSwitchingState = HoldSwapState.INACTIVE;
+                        logHoldSwapState("onCallTerminated: call terminated " +
+                                         "in the midst of a switch");
                     } else {
                         log("onCallTerminated: backgroung call has a PENDING_HOLD action in " +
                                 "progress and cannot be resumed. Avoid switching the fg and bg "+
@@ -4169,6 +4170,8 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                     // Just resume the foreground call as is done currently.
                     sendEmptyMessage(EVENT_RESUME_NOW_FOREGROUND_CALL);
                     mHoldSwitchingState = HoldSwapState.INACTIVE;
+                    logHoldSwapState("onCallTerminated: Held call that not" +
+                                     "expected to resume got terminated.");
                 }
                 mCallExpectedToResume = null;
                 logHoldSwapState("onCallTerminated swap active and hold case");
@@ -4205,6 +4208,11 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                     // explicitly to avoid sending ANSWER for third incoming call before ACTIVE call
                     // becomes HELD.
                     sendEmptyMessage(EVENT_ANSWER_WAITING_CALL);
+                } else if (imsCall == mCallExpectedToResume &&
+                         mBackgroundCall.getState() == ImsPhoneCall.State.ACTIVE) {
+                    mForegroundCall.switchWith(mBackgroundCall);
+                    mHoldSwitchingState = HoldSwapState.PENDING_SINGLE_CALL_HOLD;
+                    logHoldSwapState("onCallTerminated Active BG call case.");
                 }
             } else if (mHoldSwitchingState == HoldSwapState.HOLDING_TO_DIAL_OUTGOING ||
                     mHoldSwitchingState == HoldSwapState.ENDING_TO_DIAL_OUTGOING) {
@@ -4259,6 +4267,8 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                     sendEmptyMessage(EVENT_RESUME_NOW_FOREGROUND_CALL);
                     mHoldSwitchingState = HoldSwapState.INACTIVE;
                     mCallExpectedToResume = null;
+                    logHoldSwapState("onCallHeld " +
+                                     "PENDING_RESUME_FOREGROUND_AFTER_HOLD");
                 } else if (oldState == ImsPhoneCall.State.ACTIVE) {
                     // Note: This case comes up when we have just held a call in response to a
                     // switchWaitingOrHoldingAndActive.  We now need to resume the background call.
@@ -4342,6 +4352,8 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                 if (mHoldSwitchingState
                         == HoldSwapState.PENDING_RESUME_FOREGROUND_AFTER_HOLD) {
                     mHoldSwitchingState = HoldSwapState.INACTIVE;
+                    logHoldSwapState("onCallHoldFailed " +
+                                     "PENDING_RESUME_FOREGROUND_AFTER_HOLD");
                 } else if (reasonInfo.getCode() == ImsReasonInfo.CODE_LOCAL_CALL_TERMINATED) {
                     // disconnected while processing hold
                     if (mPendingMO != null) {
@@ -4351,6 +4363,8 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                         sendEmptyMessage(EVENT_ANSWER_WAITING_CALL);
                     }
                     mHoldSwitchingState = HoldSwapState.INACTIVE;
+                    logHoldSwapState("onCallHoldFailed " +
+                                     "CODE_LOCAL_CALL_TERMINATED");
                 } else if (mPendingMO != null && mPendingMO.isEmergency()) {
                     // If mPendingMO is an emergency call, disconnect the call that we tried to
                     // hold.
@@ -4378,8 +4392,11 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                         mCallExpectedToResume = null;
                     }
                     mHoldSwitchingState = HoldSwapState.INACTIVE;
-                } else if (mHoldSwitchingState == HoldSwapState.PENDING_DOUBLE_CALL_HOLD) {
+                    logHoldSwapState("onCallHoldFailed active bg call");
+                } else if (mHoldSwitchingState == HoldSwapState.PENDING_DOUBLE_CALL_HOLD ||
+                           mHoldSwitchingState == HoldSwapState.PENDING_SINGLE_CALL_HOLD) {
                     mHoldSwitchingState = HoldSwapState.INACTIVE;
+                    logHoldSwapState("onCallHoldFailed pending call hold");
                 }
                 ImsPhoneConnection conn = findConnection(imsCall);
                 if (conn != null && conn.getState() != ImsPhoneCall.State.DISCONNECTED) {
@@ -5288,6 +5305,7 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
         mIsInEmergencyCall = false;
         mPhone.setEcmCanceledForEmergency(false);
         mHoldSwitchingState = HoldSwapState.INACTIVE;
+        logHoldSwapState("resetState");
     }
 
     @VisibleForTesting
