@@ -48,10 +48,12 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.nio.charset.Charset;
 import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Objects;
 
 /**
  * {@hide}
@@ -370,6 +372,20 @@ public abstract class IccRecords extends Handler implements IccConstants {
             mAdnCache.reset();
         }
         mLoaded.set(false);
+
+        // Send a failure response for all pending transactions so as to avoid ANRs
+        synchronized (mPendingTransactions) {
+            Iterator<Map.Entry<Integer, Pair<Message, Object>>> iterator =
+                    mPendingTransactions.entrySet().iterator();
+            while (iterator.hasNext()) {
+                Map.Entry<Integer, Pair<Message, Object>> entry = iterator.next();
+                Message msg = entry.getValue().first;
+                Log.d(LOG_TAG, "dispose: sending failure response for msg = " + msg);
+                AsyncResult.forMessage(msg);
+                msg.sendToTarget();
+                iterator.remove();  // Use iterator's remove method to avoid concurrent modification
+            }
+        }
     }
 
     protected abstract void onReady();
