@@ -612,6 +612,15 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
             if (TelecomManager.ACTION_DEFAULT_DIALER_CHANGED.equals(intent.getAction())) {
                 mDefaultDialerUid.set(getPackageUid(context, intent.getStringExtra(
                         TelecomManager.EXTRA_CHANGE_DEFAULT_DIALER_PACKAGE_NAME)));
+            } else if (intent.getAction().equals(
+                    CarrierConfigManager.ACTION_ESSENTIAL_RECORDS_LOADED)) {
+                int subId = intent.getIntExtra(CarrierConfigManager.EXTRA_SUBSCRIPTION_INDEX,
+                        SubscriptionManager.INVALID_SUBSCRIPTION_ID);
+                int phoneId = intent.getIntExtra(CarrierConfigManager.EXTRA_SLOT_INDEX,
+                        SubscriptionManager.INVALID_PHONE_INDEX);
+                log("onReceive:ACTION_ESSENTIAL_RECORDS_LOADED phoneId: " + phoneId);
+                mCarrierConfigChangeListener.onCarrierConfigChanged(phoneId, subId,
+                        TelephonyManager.UNKNOWN_CARRIER_ID, TelephonyManager.UNKNOWN_CARRIER_ID);
             }
         }
     };
