@@ -862,7 +862,11 @@ public class ImsPhone extends ImsPhoneBase {
                     // ringing call can be accepted
                     if (DBG) logd("MmiCode 2: accept ringing call");
                     throwExceptionIfDialDeferred(deferDial);
-                    mCT.acceptCall(VideoProfile.STATE_AUDIO_ONLY);
+                    if (mFeatureFlags.answerAudioOnlyWhenAnsweringViaMmiCode()) {
+                        mCT.acceptCall(VideoProfile.STATE_AUDIO_ONLY);
+                    } else {
+                        mCT.acceptCall(ImsCallProfile.CALL_TYPE_VOICE);
+                    }
                 } else if (getBackgroundCall().getState() == ImsPhoneCall.State.HOLDING) {
                     // If there's an active ongoing call as well, hold it and the background one
                     // should automatically unhold. Otherwise just unhold the background call.

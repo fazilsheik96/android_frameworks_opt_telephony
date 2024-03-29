@@ -1,26 +1,33 @@
 package: "com.android.internal.telephony.flags"
 
+# OWNER=linggm TARGET=24Q3
 flag {
   name: "work_profile_api_split"
+  is_exported: true
   namespace: "telephony"
   description: "To support separation between personal and work from TelephonyManager and SubscriptionManager API perspective."
   bug: "296076674"
 }
 
+# OWNER=linggm TARGET=24Q3
 flag {
   name: "enforce_subscription_user_filter"
+  is_exported: true
   namespace: "telephony"
   description: "Enabled flag means subscriptions enforce filtering result base on calling user handle. It marks the telephony completion of user filtering."
   bug: "296076674"
 }
 
+# OWNER=rambowang TARGET=24Q3
 flag {
   name: "data_only_cellular_service"
+  is_exported: true
   namespace: "telephony"
   description: "Supports customized cellular service capabilities per subscription."
   bug: "296097429"
 }
 
+# OWNER=rambowang TARGET=24Q3
 flag {
   name: "data_only_service_allow_emergency_call_only"
   namespace: "telephony"
@@ -28,15 +35,19 @@ flag {
   bug: "296097429"
 }
 
+# OWNER=hhshin TARGET=24Q3
 flag {
   name: "support_psim_to_esim_conversion"
+  is_exported: true
   namespace: "telephony"
   description: "Support the psim to esim conversion."
   bug: "315073761"
 }
 
+# OWNER=bookatz TARGET=24Q3
 flag {
   name: "subscription_user_association_query"
+  is_exported: true
   namespace: "telephony"
   description: "Supports querying if a subscription is associated with the caller"
   bug: "325045841"
