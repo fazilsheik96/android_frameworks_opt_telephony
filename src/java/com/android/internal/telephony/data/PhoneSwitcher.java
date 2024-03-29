@@ -513,7 +513,7 @@ public class PhoneSwitcher extends Handler {
                                     @TelephonyManager.MobileDataPolicy int policy) {
                                 if (policy == TelephonyManager
                                         .MOBILE_DATA_POLICY_DATA_ON_NON_DEFAULT_DURING_VOICE_CALL) {
-                                    evaluateIfImmediateDataSwitchIsNeeded(
+                                    evaluateTelephonyTempDdsIfRequried(
                                             "EVENT_DATA_DURING_CALL_ENABLED_CHANGED",
                                             DataSwitch.Reason.DATA_SWITCH_REASON_IN_CALL);
                                 }
@@ -686,6 +686,64 @@ public class PhoneSwitcher extends Handler {
         }
     };
 
+    protected void evaluateTelephonyTempDdsIfRequried(String evaluationReason,
+            int switchReason) {
+        boolean shouldEvaluateAfterCallStateChange = isTelephonyTempDdsSwitchEnabled();
+        logl("evaluateTelephonyTempDdsIfRequried : evaluationReason = " + evaluationReason
+                + " , telephony logic of temp DDS switch enabled = "
+                + shouldEvaluateAfterCallStateChange);
+        // When smart temp dds is enabled, need to identify whether emergency override is
+        // taking effective, otherwise, if the phoneId in voice call didn't change,
+        // do nothing.
+        if (shouldEvaluateAfterCallStateChange && !updatesIfPhoneInVoiceCallChanged()) {
+            return;
+        }
+        if (isNddsPhoneIdle()) {
+            // When smart temp dds is enabled & DDS sub is PIN-1 enabled, modem would not
+            // send recommendation on voice call end if DDS sub is hot-swapped and PIN-1
+            // is not entered while call was active.  Re-evaluate voice call phoneid once
+            // voice call ends. Besides, When voice call is ongoing, data during call can be
+            // toggled so that smart temp DDS is disabled, hence, need to evalute this once
+            // after call ends because of no revoking recommendation after primary data
+            // phone also is changed in a manner.
+            updatesIfPhoneInVoiceCallChanged();
+            log("evaluateTelephonyTempDdsIfRequried : Enforce evaluating once after call ends");
+            shouldEvaluateAfterCallStateChange = true;
+        }
+
+        if (!isAnyVoiceCallActiveOnDevice()) {
+            for (int i = 0; i < mActiveModemCount; i++) {
+                if (mCurrentDdsSwitchFailure.get(i).contains(
+                        CommandException.Error.OP_NOT_ALLOWED_DURING_VOICE_CALL)
+                         && isPhoneIdValidForRetry(i)) {
+                    sendRilCommands(i);
+                }
+            }
+        }
+
+        // Only handle this event if we are currently waiting for the emergency call
+        // associated with the override request to start or end.
+        if (mEmergencyOverride != null && mEmergencyOverride.mPendingOriginatingCall) {
+            removeMessages(EVENT_REMOVE_DDS_EMERGENCY_OVERRIDE);
+            if (mPhoneIdInVoiceCall == SubscriptionManager.INVALID_PHONE_INDEX) {
+                // not in a call anymore.
+                Message msg2 = obtainMessage(EVENT_REMOVE_DDS_EMERGENCY_OVERRIDE);
+                sendMessageDelayed(msg2, mEmergencyOverride.mGnssOverrideTimeMs
+                        + ECBM_DEFAULT_DATA_SWITCH_BASE_TIME_MS);
+                // Do not extend the emergency override by waiting for other calls to end.
+                // If it needs to be extended, a new request will come in and replace the
+                // current override.
+                mEmergencyOverride.mPendingOriginatingCall = false;
+            }
+        }
+        //Evaluate and perform DDS switch if modem not capable of  Smart temp DDS.
+        if (shouldEvaluateAfterCallStateChange) {
+            // Always update data modem via data during call code path, because
+            // mAutoSelectedDataSubId doesn't know about any data switch due to voice call
+            evaluateIfImmediateDataSwitchIsNeeded(evaluationReason, switchReason);
+        }
+    }
+
     @Override
     public void handleMessage(Message msg) {
         switch (msg.what) {
@@ -763,58 +821,10 @@ public class PhoneSwitcher extends Handler {
                 // register for radio tech change to listen to radio tech handover in case previous
                 // attempt was not successful
                 registerForImsRadioTechChange();
-                boolean shouldEvaluateAfterCallStateChange = isTelephonyTempDdsSwitchEnabled();
-                // When smart temp dds is enabled, need to identify whether emergency override is
-                // taking effective, otherwise, if the phoneId in voice call didn't change,
-                // do nothing.
-                if (shouldEvaluateAfterCallStateChange && !updatesIfPhoneInVoiceCallChanged()) {
-                    break;
-                }
-                if (isNddsPhoneIdle()) {
-                    // When smart temp dds is enabled & DDS sub is PIN-1 enabled, modem would not
-                    // send recommendation on voice call end if DDS sub is hot-swapped and PIN-1
-                    // is not entered while call was active.  Re-evaluate voice call phoneid once
-                    // voice call ends. Besides, When voice call is ongoing, data during call can be
-                    // toggled so that smart temp DDS is disabled, hence, need to evalute this once
-                    // after call ends because of no revoking recommendation after primary data
-                    // phone also is changed in a manner.
-                    updatesIfPhoneInVoiceCallChanged();
-                    log("EVENT_PRECISE_CALL_STATE_CHANGED Enforce evaluating once after call ends");
-                    shouldEvaluateAfterCallStateChange = true;
-                }
 
-                if (!isAnyVoiceCallActiveOnDevice()) {
-                    for (int i = 0; i < mActiveModemCount; i++) {
-                        if (mCurrentDdsSwitchFailure.get(i).contains(
-                                CommandException.Error.OP_NOT_ALLOWED_DURING_VOICE_CALL)
-                                 && isPhoneIdValidForRetry(i)) {
-                            sendRilCommands(i);
-                        }
-                    }
-                }
+                evaluateTelephonyTempDdsIfRequried("precise call state changed",
+                        DataSwitch.Reason.DATA_SWITCH_REASON_IN_CALL);
 
-                // Only handle this event if we are currently waiting for the emergency call
-                // associated with the override request to start or end.
-                if (mEmergencyOverride != null && mEmergencyOverride.mPendingOriginatingCall) {
-                    removeMessages(EVENT_REMOVE_DDS_EMERGENCY_OVERRIDE);
-                    if (mPhoneIdInVoiceCall == SubscriptionManager.INVALID_PHONE_INDEX) {
-                        // not in a call anymore.
-                        Message msg2 = obtainMessage(EVENT_REMOVE_DDS_EMERGENCY_OVERRIDE);
-                        sendMessageDelayed(msg2, mEmergencyOverride.mGnssOverrideTimeMs
-                                + ECBM_DEFAULT_DATA_SWITCH_BASE_TIME_MS);
-                        // Do not extend the emergency override by waiting for other calls to end.
-                        // If it needs to be extended, a new request will come in and replace the
-                        // current override.
-                        mEmergencyOverride.mPendingOriginatingCall = false;
-                    }
-                }
-                //Evaluate and perform DDS switch if modem not capable of  Smart temp DDS.
-                if (shouldEvaluateAfterCallStateChange) {
-                    // Always update data modem via data during call code path, because
-                    // mAutoSelectedDataSubId doesn't know about any data switch due to voice call
-                    evaluateIfImmediateDataSwitchIsNeeded("precise call state changed",
-                            DataSwitch.Reason.DATA_SWITCH_REASON_IN_CALL);
-                }
                 if (!isAnyVoiceCallActiveOnDevice()) {
                     // consider auto switch on hang up all voice call
                     mAutoDataSwitchController.evaluateAutoDataSwitch(
@@ -989,7 +999,7 @@ public class PhoneSwitcher extends Handler {
                             // Add it when mobile data is on
                             if (policy == TelephonyManager
                                     .MOBILE_DATA_POLICY_DATA_ON_NON_DEFAULT_DURING_VOICE_CALL) {
-                                evaluateIfImmediateDataSwitchIsNeeded(
+                                evaluateTelephonyTempDdsIfRequried(
                                         "EVENT_DATA_DURING_CALL_ENABLED_CHANGED",
                                         DataSwitch.Reason.DATA_SWITCH_REASON_IN_CALL);
                             }
