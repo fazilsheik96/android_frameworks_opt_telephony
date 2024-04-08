@@ -17,7 +17,9 @@
 package com.android.internal.telephony.emergency;
 
 import static android.telephony.AccessNetworkConstants.AccessNetworkType.EUTRAN;
+import static android.telephony.NetworkRegistrationInfo.DOMAIN_CS;
 import static android.telephony.NetworkRegistrationInfo.DOMAIN_CS_PS;
+import static android.telephony.NetworkRegistrationInfo.DOMAIN_PS;
 import static android.telephony.NetworkRegistrationInfo.REGISTRATION_STATE_HOME;
 
 import static com.android.internal.telephony.emergency.EmergencyConstants.MODE_EMERGENCY_CALLBACK;
@@ -34,6 +36,7 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyBoolean;
 import static org.mockito.Mockito.anyInt;
+import static org.mockito.Mockito.anyVararg;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
@@ -47,10 +50,12 @@ import static org.mockito.Mockito.when;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.os.PersistableBundle;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.telephony.AccessNetworkConstants;
@@ -60,7 +65,6 @@ import android.telephony.EmergencyRegistrationResult;
 import android.telephony.NetworkRegistrationInfo;
 import android.telephony.ServiceState;
 import android.telephony.SubscriptionManager;
-import android.telephony.TelephonyCallback;
 import android.telephony.TelephonyManager;
 import android.testing.AndroidTestingRunner;
 import android.testing.TestableLooper;
@@ -68,9 +72,12 @@ import android.testing.TestableLooper;
 import androidx.test.filters.SmallTest;
 
 import com.android.internal.telephony.Call;
+import com.android.internal.telephony.CallStateException;
+import com.android.internal.telephony.Connection;
 import com.android.internal.telephony.GsmCdmaPhone;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneConstants;
+import com.android.internal.telephony.TelephonyIntents;
 import com.android.internal.telephony.TelephonyTest;
 import com.android.internal.telephony.data.PhoneSwitcher;
 
@@ -95,7 +102,7 @@ import java.util.function.Consumer;
 public class EmergencyStateTrackerTest extends TelephonyTest {
     private static final String TEST_SMS_ID = "1111";
     private static final String TEST_SMS_ID_2 = "2222";
-    private static final long TEST_ECM_EXIT_TIMEOUT_MS = 500;
+    private static final int TEST_ECM_EXIT_TIMEOUT_MS = 500;
     private static final EmergencyRegistrationResult E_REG_RESULT = new EmergencyRegistrationResult(
             EUTRAN, REGISTRATION_STATE_HOME, DOMAIN_CS_PS, true, true, 0, 1, "001", "01", "US");
 
@@ -772,216 +779,6 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
     }
 
     /**
-     * Test that once endCall() for IMS call is called and we enter ECM, then we exit ECM
-     * after the specified timeout.
-     */
-    @Test
-    @SmallTest
-    public void endCall_entersEcm_thenExitsEcmAfterTimeoutImsCall() throws Exception {
-        // Setup EmergencyStateTracker
-        EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
-                /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
-        // Create test Phone
-        Phone testPhone = setupTestPhoneForEmergencyCall(/* isRoaming= */ true,
-                /* isRadioOn= */ true);
-        setUpAsyncResultForSetEmergencyMode(testPhone, E_REG_RESULT);
-        setUpAsyncResultForExitEmergencyMode(testPhone);
-        CompletableFuture<Integer> unused = emergencyStateTracker.startEmergencyCall(testPhone,
-                mTestConnection1, false);
-        // Set call to ACTIVE
-        emergencyStateTracker.onEmergencyCallStateChanged(Call.State.ACTIVE, mTestConnection1);
-        emergencyStateTracker.onEmergencyCallDomainUpdated(
-                PhoneConstants.PHONE_TYPE_IMS, mTestConnection1);
-        // Set ecm as supported
-        setEcmSupportedConfig(testPhone, /* ecmSupported= */ true);
-
-        processAllMessages();
-
-        emergencyStateTracker.endCall(mTestConnection1);
-
-        assertTrue(emergencyStateTracker.isInEcm());
-
-        Context mockContext = mock(Context.class);
-        replaceInstance(EmergencyStateTracker.class, "mContext",
-                emergencyStateTracker, mockContext);
-        processAllFutureMessages();
-
-        ArgumentCaptor<TelephonyCallback> callbackCaptor =
-                ArgumentCaptor.forClass(TelephonyCallback.class);
-
-        verify(mTelephonyManagerProxy).registerTelephonyCallback(eq(testPhone.getSubId()),
-                  any(), callbackCaptor.capture());
-
-        TelephonyCallback callback = callbackCaptor.getValue();
-
-        assertNotNull(callback);
-
-        // Verify exitEmergencyMode() is called after timeout
-        verify(testPhone).exitEmergencyMode(any(Message.class));
-        assertFalse(emergencyStateTracker.isInEmergencyMode());
-        assertFalse(emergencyStateTracker.isInEcm());
-        verify(mTelephonyManagerProxy).unregisterTelephonyCallback(eq(callback));
-    }
-
-    /**
-     * Test that startEmergencyCall() is called right after exiting ECM on the same slot.
-     */
-    @Test
-    @SmallTest
-    public void exitEcm_thenDialEmergencyCallOnTheSameSlotRightAfter() throws Exception {
-        // Setup EmergencyStateTracker
-        EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
-                /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
-        emergencyStateTracker.setPdnDisconnectionTimeoutMs(0);
-        // Create test Phone
-        Phone testPhone = setupTestPhoneForEmergencyCall(/* isRoaming= */ true,
-                /* isRadioOn= */ true);
-        setUpAsyncResultForSetEmergencyMode(testPhone, E_REG_RESULT);
-        setUpAsyncResultForExitEmergencyMode(testPhone);
-
-        verify(testPhone, times(0)).setEmergencyMode(anyInt(), any(Message.class));
-        verify(testPhone, times(0)).exitEmergencyMode(any(Message.class));
-
-        CompletableFuture<Integer> unused = emergencyStateTracker.startEmergencyCall(testPhone,
-                mTestConnection1, false);
-        processAllMessages();
-
-        verify(testPhone, times(1)).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
-        verify(testPhone, times(0)).exitEmergencyMode(any(Message.class));
-
-        // Set call to ACTIVE
-        emergencyStateTracker.onEmergencyCallStateChanged(Call.State.ACTIVE, mTestConnection1);
-        emergencyStateTracker.onEmergencyCallDomainUpdated(
-                PhoneConstants.PHONE_TYPE_IMS, mTestConnection1);
-        // Set ecm as supported
-        setEcmSupportedConfig(testPhone, /* ecmSupported= */ true);
-
-        processAllMessages();
-
-        emergencyStateTracker.endCall(mTestConnection1);
-
-        assertTrue(emergencyStateTracker.isInEcm());
-
-        Context mockContext = mock(Context.class);
-        replaceInstance(EmergencyStateTracker.class, "mContext",
-                emergencyStateTracker, mockContext);
-        processAllFutureMessages();
-
-        ArgumentCaptor<TelephonyCallback> callbackCaptor =
-                ArgumentCaptor.forClass(TelephonyCallback.class);
-
-        verify(mTelephonyManagerProxy).registerTelephonyCallback(eq(testPhone.getSubId()),
-                  any(), callbackCaptor.capture());
-
-        TelephonyCallback callback = callbackCaptor.getValue();
-
-        assertNotNull(callback);
-        assertFalse(emergencyStateTracker.isInEmergencyMode());
-        assertFalse(emergencyStateTracker.isInEcm());
-        verify(mTelephonyManagerProxy, times(0)).unregisterTelephonyCallback(eq(callback));
-        verify(testPhone, times(1)).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
-        verify(testPhone, times(1)).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK),
-                any(Message.class));
-        verify(testPhone, times(0)).exitEmergencyMode(any(Message.class));
-
-        replaceInstance(EmergencyStateTracker.class, "mContext", emergencyStateTracker, mContext);
-
-        // dial on the same slot
-        unused = emergencyStateTracker.startEmergencyCall(testPhone, mTestConnection1, false);
-        processAllMessages();
-
-        assertTrue(emergencyStateTracker.isInEmergencyMode());
-        assertFalse(emergencyStateTracker.isInEcm());
-        verify(mTelephonyManagerProxy, times(1)).unregisterTelephonyCallback(eq(callback));
-        verify(testPhone, times(2)).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
-        verify(testPhone, times(1)).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK),
-                any(Message.class));
-        verify(testPhone, times(0)).exitEmergencyMode(any(Message.class));
-    }
-
-    /**
-     * Test that startEmergencyCall() is called right after exiting ECM on the other slot.
-     */
-    @Test
-    @SmallTest
-    public void exitEcm_thenDialEmergencyCallOnTheOtherSlotRightAfter() throws Exception {
-        // Setup EmergencyStateTracker
-        EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
-                /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
-        emergencyStateTracker.setPdnDisconnectionTimeoutMs(0);
-        // Create test Phone
-        Phone testPhone = setupTestPhoneForEmergencyCall(/* isRoaming= */ true,
-                /* isRadioOn= */ true);
-        setUpAsyncResultForSetEmergencyMode(testPhone, E_REG_RESULT);
-        setUpAsyncResultForExitEmergencyMode(testPhone);
-
-        verify(testPhone, times(0)).setEmergencyMode(anyInt(), any(Message.class));
-        verify(testPhone, times(0)).exitEmergencyMode(any(Message.class));
-
-        CompletableFuture<Integer> unused = emergencyStateTracker.startEmergencyCall(testPhone,
-                mTestConnection1, false);
-        processAllMessages();
-
-        verify(testPhone, times(1)).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
-        verify(testPhone, times(0)).exitEmergencyMode(any(Message.class));
-
-        // Set call to ACTIVE
-        emergencyStateTracker.onEmergencyCallStateChanged(Call.State.ACTIVE, mTestConnection1);
-        emergencyStateTracker.onEmergencyCallDomainUpdated(
-                PhoneConstants.PHONE_TYPE_IMS, mTestConnection1);
-        // Set ecm as supported
-        setEcmSupportedConfig(testPhone, /* ecmSupported= */ true);
-
-        processAllMessages();
-
-        emergencyStateTracker.endCall(mTestConnection1);
-
-        assertTrue(emergencyStateTracker.isInEcm());
-
-        Context mockContext = mock(Context.class);
-        replaceInstance(EmergencyStateTracker.class, "mContext",
-                emergencyStateTracker, mockContext);
-        processAllFutureMessages();
-
-        ArgumentCaptor<TelephonyCallback> callbackCaptor =
-                ArgumentCaptor.forClass(TelephonyCallback.class);
-
-        verify(mTelephonyManagerProxy).registerTelephonyCallback(eq(testPhone.getSubId()),
-                  any(), callbackCaptor.capture());
-
-        TelephonyCallback callback = callbackCaptor.getValue();
-
-        assertNotNull(callback);
-        assertFalse(emergencyStateTracker.isInEmergencyMode());
-        assertFalse(emergencyStateTracker.isInEcm());
-        verify(mTelephonyManagerProxy, times(0)).unregisterTelephonyCallback(eq(callback));
-        verify(testPhone, times(1)).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
-        verify(testPhone, times(1)).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK),
-                any(Message.class));
-        verify(testPhone, times(0)).exitEmergencyMode(any(Message.class));
-
-        Phone phone1 = getPhone(1);
-        verify(phone1, times(0)).setEmergencyMode(anyInt(), any(Message.class));
-        verify(phone1, times(0)).exitEmergencyMode(any(Message.class));
-
-        replaceInstance(EmergencyStateTracker.class, "mContext", emergencyStateTracker, mContext);
-
-        // dial on the other slot
-        unused = emergencyStateTracker.startEmergencyCall(phone1, mTestConnection1, false);
-        processAllMessages();
-
-        assertTrue(emergencyStateTracker.isInEmergencyMode());
-        assertFalse(emergencyStateTracker.isInEcm());
-        verify(mTelephonyManagerProxy, times(1)).unregisterTelephonyCallback(eq(callback));
-        verify(testPhone, times(1)).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
-        verify(testPhone, times(1)).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK),
-                any(Message.class));
-        verify(testPhone, times(1)).exitEmergencyMode(any(Message.class));
-        verify(phone1, times(1)).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
-        verify(phone1, times(0)).exitEmergencyMode(any(Message.class));
-    }
-
-    /**
      * Test that once endCall() is called and we enter ECM, then we exit ECM when turning on
      * airplane mode.
      */
@@ -1160,14 +957,16 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         processAllMessages();
 
         assertTrue(emergencyStateTracker.isInEcm());
+        verify(phone0, times(1)).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
+        verify(phone0, times(1)).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK), any(Message.class));
 
         // Second emergency call started.
         CompletableFuture<Integer> future = emergencyStateTracker.startEmergencyCall(phone0,
                 mTestConnection2, false);
 
-        // Returns DisconnectCause#NOT_DISCONNECTED immediately.
-        assertEquals(future.getNow(DisconnectCause.ERROR_UNSPECIFIED),
-                Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
+        assertFalse(future.isDone());
+        verify(phone0, times(2)).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
+        verify(phone0, times(1)).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK), any(Message.class));
     }
 
     @Test
@@ -1230,9 +1029,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         future = emergencyStateTracker.startEmergencyCall(phone0, mTestConnection2, false);
 
         assertTrue(emergencyStateTracker.isInEmergencyMode());
-        // Returns DisconnectCause#NOT_DISCONNECTED immediately.
-        assertEquals(future.getNow(DisconnectCause.ERROR_UNSPECIFIED),
-                Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
+        assertFalse(future.isDone());
 
         emergencyStateTracker.onEmergencyTransportChanged(
                 EmergencyStateTracker.EMERGENCY_TYPE_CALL, MODE_EMERGENCY_WLAN);
@@ -1297,7 +1094,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
 
     @Test
     @SmallTest
-    public void testEndSms() {
+    public void testEndSmsAndExitEmergencyMode() {
         EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
                 /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
         Phone phone0 = setupTestPhoneForEmergencyCall(/* isRoaming= */ false,
@@ -1315,10 +1112,105 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         assertEquals(future.getNow(DisconnectCause.ERROR_UNSPECIFIED),
                 Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
 
-        emergencyStateTracker.endSms(TEST_SMS_ID, true);
+        emergencyStateTracker.endSms(TEST_SMS_ID, true, DOMAIN_CS);
 
         verify(phone0).exitEmergencyMode(any(Message.class));
         assertFalse(emergencyStateTracker.isInEmergencyMode());
+        // CS domain doesn't support SCBM.
+        assertFalse(emergencyStateTracker.isInScbm());
+    }
+
+    @Test
+    @SmallTest
+    public void testEndSmsAndEnterEmergencySmsCallbackMode() {
+        EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
+                /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
+        Phone phone0 = setupTestPhoneForEmergencyCall(/* isRoaming= */ false,
+                /* isRadioOn= */ true);
+        setUpAsyncResultForSetEmergencyMode(phone0, E_REG_RESULT);
+        CompletableFuture<Integer> future = emergencyStateTracker.startEmergencySms(phone0,
+                TEST_SMS_ID, false);
+        processAllMessages();
+
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+        verify(phone0).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
+
+        assertTrue(emergencyStateTracker.getEmergencyRegistrationResult().equals(E_REG_RESULT));
+        // Expect: DisconnectCause#NOT_DISCONNECTED.
+        assertEquals(future.getNow(DisconnectCause.ERROR_UNSPECIFIED),
+                Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
+
+        emergencyStateTracker.endSms(TEST_SMS_ID, true, DOMAIN_PS);
+
+        verify(mCarrierConfigManager).getConfigForSubId(anyInt(),
+                eq(CarrierConfigManager.KEY_EMERGENCY_SMS_MODE_TIMER_MS_INT));
+        verify(phone0).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK), any(Message.class));
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+        assertTrue(emergencyStateTracker.isInScbm());
+    }
+
+    @Test
+    @SmallTest
+    public void testEndSmsWithSmsSentFailureWhileInScbm() {
+        EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
+                /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
+        Phone phone0 = setupTestPhoneForEmergencyCall(/* isRoaming= */ false,
+                /* isRadioOn= */ true);
+        setUpScbm(phone0, emergencyStateTracker);
+        processAllMessages();
+        CompletableFuture<Integer> future = emergencyStateTracker.startEmergencySms(phone0,
+                TEST_SMS_ID_2, false);
+        processAllMessages();
+
+        // Expect: DisconnectCause#NOT_DISCONNECTED.
+        assertEquals(future.getNow(DisconnectCause.ERROR_UNSPECIFIED),
+                Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
+        assertTrue(emergencyStateTracker.isInScbm());
+
+        // Set emergency transport
+        emergencyStateTracker.onEmergencyTransportChanged(
+                EmergencyStateTracker.EMERGENCY_TYPE_SMS, MODE_EMERGENCY_WWAN);
+
+        // When MO SMS fails while in SCBM.
+        emergencyStateTracker.endSms(TEST_SMS_ID_2, false, DOMAIN_PS);
+
+        verify(mCarrierConfigManager).getConfigForSubId(anyInt(),
+                eq(CarrierConfigManager.KEY_EMERGENCY_SMS_MODE_TIMER_MS_INT));
+        verify(phone0, times(2)).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK), any(Message.class));
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+        assertTrue(emergencyStateTracker.isInScbm());
+    }
+
+    @Test
+    @SmallTest
+    public void testEndSmsWithSmsSentSuccessWhileInScbm() {
+        EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
+                /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
+        Phone phone0 = setupTestPhoneForEmergencyCall(/* isRoaming= */ false,
+                /* isRadioOn= */ true);
+        setUpScbm(phone0, emergencyStateTracker);
+        processAllMessages();
+        CompletableFuture<Integer> future = emergencyStateTracker.startEmergencySms(phone0,
+                TEST_SMS_ID_2, false);
+        processAllMessages();
+
+        // Expect: DisconnectCause#NOT_DISCONNECTED.
+        assertEquals(future.getNow(DisconnectCause.ERROR_UNSPECIFIED),
+                Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
+        assertTrue(emergencyStateTracker.isInScbm());
+
+        // Set emergency transport
+        emergencyStateTracker.onEmergencyTransportChanged(
+                EmergencyStateTracker.EMERGENCY_TYPE_SMS, MODE_EMERGENCY_WWAN);
+
+        // When MO SMS is successfully sent while in SCBM.
+        emergencyStateTracker.endSms(TEST_SMS_ID_2, true, DOMAIN_PS);
+
+        verify(mCarrierConfigManager, times(2)).getConfigForSubId(anyInt(),
+                eq(CarrierConfigManager.KEY_EMERGENCY_SMS_MODE_TIMER_MS_INT));
+        verify(phone0, times(2)).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK), any(Message.class));
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+        assertTrue(emergencyStateTracker.isInScbm());
     }
 
     @Test
@@ -1449,6 +1341,24 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    public void testStartEmergencySmsWhileInScbm() {
+        EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
+                /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
+        Phone phone0 = setupTestPhoneForEmergencyCall(/* isRoaming= */ false,
+                /* isRadioOn= */ true);
+        setUpScbm(phone0, emergencyStateTracker);
+
+        CompletableFuture<Integer> future = emergencyStateTracker.startEmergencySms(phone0,
+                TEST_SMS_ID_2, false);
+
+        // Returns DisconnectCause#NOT_DISCONNECTED immediately.
+        assertEquals(future.getNow(DisconnectCause.ERROR_UNSPECIFIED),
+                Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
+        verify(phone0, never()).exitEmergencyMode(any(Message.class));
+    }
+
+    @Test
+    @SmallTest
     public void testStartEmergencySmsUsingDifferentPhone() {
         EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
                 /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
@@ -1466,6 +1376,36 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         // Returns DisconnectCause#ERROR_UNSPECIFIED immediately.
         assertEquals(future.getNow(DisconnectCause.NOT_DISCONNECTED),
                 Integer.valueOf(DisconnectCause.ERROR_UNSPECIFIED));
+    }
+
+    @Test
+    @SmallTest
+    public void testStartEmergencySmsWhileInScbmOnDifferentPhone() {
+        EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
+                /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
+        Phone phone0 = setupTestPhoneForEmergencyCall(/* isRoaming= */ false,
+                /* isRadioOn= */ true);
+        setUpAsyncResultForExitEmergencyMode(phone0);
+        setUpScbm(phone0, emergencyStateTracker);
+        processAllMessages();
+
+        Phone phone1 = getPhone(1);
+        setUpAsyncResultForSetEmergencyMode(phone1, E_REG_RESULT);
+        CompletableFuture<Integer> future = emergencyStateTracker.startEmergencySms(phone1,
+                TEST_SMS_ID_2, false);
+
+        verify(phone0).exitEmergencyMode(any(Message.class));
+        // Waits for exiting emergency mode on other phone.
+        assertFalse(future.isDone());
+
+        processAllMessages();
+
+        verify(phone1).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
+
+        processAllMessages();
+
+        assertEquals(future.getNow(DisconnectCause.ERROR_UNSPECIFIED),
+                Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
     }
 
     @Test
@@ -1532,6 +1472,185 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    public void testStartEmergencyCallWhileCallActiveAndInScbmOnSamePhone() {
+        EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
+                /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
+        Phone phone0 = setupTestPhoneForEmergencyCall(/* isRoaming= */ true,
+                /* isRadioOn= */ true);
+        setUpAsyncResultForSetEmergencyMode(phone0, E_REG_RESULT);
+        // Emergency call is in active.
+        CompletableFuture<Integer> future = emergencyStateTracker.startEmergencyCall(phone0,
+                mTestConnection1, false);
+        processAllMessages();
+
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+        assertTrue(emergencyStateTracker.isInEmergencyCall());
+        verify(phone0).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
+        // Expect: DisconnectCause#NOT_DISCONNECTED
+        assertEquals(future.getNow(DisconnectCause.ERROR_UNSPECIFIED),
+                Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
+
+        emergencyStateTracker.onEmergencyCallStateChanged(Call.State.ACTIVE, mTestConnection1);
+
+        // Emergency SMS is successfully sent and SCBM entered.
+        setUpScbm(phone0, emergencyStateTracker);
+        processAllMessages();
+
+        future = emergencyStateTracker.startEmergencyCall(phone0, mTestConnection2, false);
+        processAllMessages();
+
+        assertTrue(emergencyStateTracker.isInEmergencyCall());
+        // Returns DisconnectCause#NOT_DISCONNECTED immediately.
+        assertEquals(future.getNow(DisconnectCause.ERROR_UNSPECIFIED),
+                Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
+        // Ensure that SCBM is exited.
+        assertFalse(emergencyStateTracker.isInScbm());
+    }
+
+    @Test
+    @SmallTest
+    public void testStartEmergencyCallWhileInEcmAndScbmOnSamePhone() {
+        EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
+                /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
+        Phone phone0 = setupTestPhoneForEmergencyCall(/* isRoaming= */ true,
+                /* isRadioOn= */ true);
+        setUpAsyncResultForSetEmergencyMode(phone0, E_REG_RESULT);
+        setEcmSupportedConfig(phone0, true);
+        // Emergency call is in active.
+        CompletableFuture<Integer> future = emergencyStateTracker.startEmergencyCall(phone0,
+                mTestConnection1, false);
+        processAllMessages();
+
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+        assertTrue(emergencyStateTracker.isInEmergencyCall());
+        verify(phone0).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
+        // Expect: DisconnectCause#NOT_DISCONNECTED
+        assertEquals(future.getNow(DisconnectCause.ERROR_UNSPECIFIED),
+                Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
+
+        emergencyStateTracker.onEmergencyCallStateChanged(Call.State.ACTIVE, mTestConnection1);
+        emergencyStateTracker.endCall(mTestConnection1);
+
+        assertTrue(emergencyStateTracker.isInEcm());
+
+        // Emergency SMS is successfully sent and SCBM entered.
+        setUpScbm(phone0, emergencyStateTracker);
+        processAllMessages();
+
+        future = emergencyStateTracker.startEmergencyCall(phone0, mTestConnection2, false);
+        processAllMessages();
+
+        assertTrue(emergencyStateTracker.isInEcm());
+        // Returns DisconnectCause#NOT_DISCONNECTED immediately.
+        assertEquals(future.getNow(DisconnectCause.ERROR_UNSPECIFIED),
+                Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
+        // Ensure that SCBM is exited.
+        assertFalse(emergencyStateTracker.isInScbm());
+    }
+
+    @Test
+    @SmallTest
+    public void testStartEmergencyCallWhileScbmInProgressOnSamePhone() {
+        EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
+                /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
+        Phone phone0 = setupTestPhoneForEmergencyCall(/* isRoaming= */ true,
+                /* isRadioOn= */ true);
+        // Emergency SMS is successfully sent and SCBM entered.
+        setUpScbm(phone0, emergencyStateTracker);
+
+        assertFalse(emergencyStateTracker.isInEmergencyCall());
+
+        // Emergency call is started.
+        CompletableFuture<Integer> future = emergencyStateTracker.startEmergencyCall(phone0,
+                mTestConnection1, false);
+        processAllMessages();
+
+        verify(phone0, times(2)).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+        assertTrue(emergencyStateTracker.isInEmergencyCall());
+        // Returns DisconnectCause#NOT_DISCONNECTED immediately.
+        assertEquals(future.getNow(DisconnectCause.ERROR_UNSPECIFIED),
+                Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
+        // Ensure that SCBM is exited.
+        assertFalse(emergencyStateTracker.isInScbm());
+    }
+
+    @Test
+    @SmallTest
+    public void testStartEmergencyCallWhileInScbmOnSamePhone() {
+        EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
+                /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
+        Phone phone0 = setupTestPhoneForEmergencyCall(/* isRoaming= */ true,
+                /* isRadioOn= */ true);
+        // Emergency SMS is successfully sent and SCBM entered.
+        setUpScbm(phone0, emergencyStateTracker);
+        processAllMessages();
+
+        assertFalse(emergencyStateTracker.isInEmergencyCall());
+
+        // Emergency call is started.
+        CompletableFuture<Integer> future = emergencyStateTracker.startEmergencyCall(phone0,
+                mTestConnection1, false);
+        processAllMessages();
+
+        verify(phone0, times(2)).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+        assertTrue(emergencyStateTracker.isInEmergencyCall());
+        // Returns DisconnectCause#NOT_DISCONNECTED immediately.
+        assertEquals(future.getNow(DisconnectCause.ERROR_UNSPECIFIED),
+                Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
+        // Ensure that SCBM is exited.
+        assertFalse(emergencyStateTracker.isInScbm());
+    }
+
+    @Test
+    @SmallTest
+    public void testStartEmergencyCallAndEnterScbmAndEndCallOnSamePhone() {
+        EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
+                /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
+        Phone phone0 = setupTestPhoneForEmergencyCall(/* isRoaming= */ true,
+                /* isRadioOn= */ true);
+        setUpAsyncResultForSetEmergencyMode(phone0, E_REG_RESULT);
+        setUpAsyncResultForExitEmergencyMode(phone0);
+        setEcmSupportedConfig(phone0, true);
+        // Emergency call is in active.
+        CompletableFuture<Integer> unused = emergencyStateTracker.startEmergencyCall(phone0,
+                mTestConnection1, false);
+        processAllMessages();
+
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+        assertTrue(emergencyStateTracker.isInEmergencyCall());
+        verify(phone0).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
+
+        emergencyStateTracker.onEmergencyCallStateChanged(Call.State.ACTIVE, mTestConnection1);
+
+        // Emergency SMS is being started.
+        CompletableFuture<Integer> future = emergencyStateTracker.startEmergencySms(phone0,
+                TEST_SMS_ID, false);
+
+        // Returns DisconnectCause#NOT_DISCONNECTED immediately.
+        assertEquals(future.getNow(DisconnectCause.ERROR_UNSPECIFIED),
+                Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
+        assertFalse(emergencyStateTracker.isInScbm());
+
+        emergencyStateTracker.endSms(TEST_SMS_ID, true, DOMAIN_PS);
+
+        assertTrue(emergencyStateTracker.isInScbm());
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+
+        setEcmSupportedConfig(phone0, false);
+        emergencyStateTracker.endCall(mTestConnection1);
+        processAllMessages();
+
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+        assertFalse(emergencyStateTracker.isInEcm());
+        assertFalse(emergencyStateTracker.isInEmergencyCall());
+        assertTrue(emergencyStateTracker.isInScbm());
+        verify(phone0).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK), any(Message.class));
+    }
+
+    @Test
+    @SmallTest
     public void testStartEmergencySmsActiveAndCallOnSamePhone() {
         EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
                 /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
@@ -1553,8 +1672,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         future = emergencyStateTracker.startEmergencyCall(phone0, mTestConnection1, false);
         processAllMessages();
 
-        verify(phone0).exitEmergencyMode(any(Message.class));
-        verify(phone0, times(2)).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
+        verify(phone0).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
         assertTrue(emergencyStateTracker.isInEmergencyMode());
         assertTrue(emergencyStateTracker.isInEmergencyCall());
         // Expect: DisconnectCause#NOT_DISCONNECTED.
@@ -1607,6 +1725,48 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         // Expect: DisconnectCause#NOT_DISCONNECTED
         assertEquals(smsFuture.getNow(DisconnectCause.ERROR_UNSPECIFIED),
                 Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
+        // Expect: DisconnectCause#NOT_DISCONNECTED.
+        assertEquals(callFuture.getNow(DisconnectCause.ERROR_UNSPECIFIED),
+                Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
+        assertTrue(emergencyStateTracker.isInEmergencyCall());
+    }
+
+    @Test
+    @SmallTest
+    public void testStartEmergencySmsInProgressAndStartEmergencyCallAndEndSmsOnSamePhone() {
+        EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
+                /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
+        Phone phone0 = setupTestPhoneForEmergencyCall(/* isRoaming= */ true,
+                /* isRadioOn= */ true);
+        setUpAsyncResultForExitEmergencyMode(phone0);
+        // Emergency SMS is in progress.
+        CompletableFuture<Integer> smsFuture = emergencyStateTracker.startEmergencySms(phone0,
+                TEST_SMS_ID, false);
+        processAllMessages();
+
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+        ArgumentCaptor<Message> smsCaptor = ArgumentCaptor.forClass(Message.class);
+        verify(phone0).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), smsCaptor.capture());
+
+        // Emergency call is being started.
+        CompletableFuture<Integer> callFuture = emergencyStateTracker.startEmergencyCall(phone0,
+                mTestConnection1, false);
+
+        assertFalse(smsFuture.isDone());
+        assertFalse(callFuture.isDone());
+
+        emergencyStateTracker.endSms(TEST_SMS_ID, false, DOMAIN_PS);
+
+        // Response message for setEmergencyMode by SMS.
+        Message msg = smsCaptor.getValue();
+        AsyncResult.forMessage(msg, E_REG_RESULT, null);
+        msg.sendToTarget();
+        processAllMessages();
+
+        // Response message for setEmergencyMode by call.
+        setUpAsyncResultForSetEmergencyMode(phone0, E_REG_RESULT);
+        processAllMessages();
+
         // Expect: DisconnectCause#NOT_DISCONNECTED.
         assertEquals(callFuture.getNow(DisconnectCause.ERROR_UNSPECIFIED),
                 Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
@@ -1731,6 +1891,73 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    public void testStartEmergencyCallWhileScbmInProgressOnDifferentPhone() {
+        EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
+                /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
+        Phone phone0 = setupTestPhoneForEmergencyCall(/* isRoaming= */ true,
+                /* isRadioOn= */ true);
+        setUpAsyncResultForExitEmergencyMode(phone0);
+        // Emergency SMS is successfully sent and SCBM entered.
+        setUpScbm(phone0, emergencyStateTracker);
+
+        assertFalse(emergencyStateTracker.isInEmergencyCall());
+
+        // Emergency call is being started using the different phone.
+        Phone phone1 = getPhone(1);
+        setUpAsyncResultForSetEmergencyMode(phone1, E_REG_RESULT);
+        CompletableFuture<Integer> future = emergencyStateTracker.startEmergencyCall(phone1,
+                mTestConnection1, false);
+        processAllMessages();
+
+        // Exit emergency mode and set the emergency mode again by the call when the exit result
+        // is received for obtaining the latest EmergencyRegResult.
+        verify(phone0).exitEmergencyMode(any(Message.class));
+        verify(phone1).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+        assertTrue(emergencyStateTracker.isInEmergencyCall());
+        // Returns DisconnectCause#NOT_DISCONNECTED immediately.
+        assertEquals(future.getNow(DisconnectCause.ERROR_UNSPECIFIED),
+                Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
+        // Ensure that SCBM is exited.
+        assertFalse(emergencyStateTracker.isInScbm());
+    }
+
+    @Test
+    @SmallTest
+    public void testStartEmergencyCallWhileInScbmOnDifferentPhone() {
+        EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
+                /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
+        Phone phone0 = setupTestPhoneForEmergencyCall(/* isRoaming= */ true,
+                /* isRadioOn= */ true);
+        setUpAsyncResultForExitEmergencyMode(phone0);
+        // Emergency SMS is successfully sent and SCBM entered.
+        setUpScbm(phone0, emergencyStateTracker);
+        processAllMessages();
+
+        assertFalse(emergencyStateTracker.isInEmergencyCall());
+
+        // Emergency call is being started using the different phone.
+        Phone phone1 = getPhone(1);
+        setUpAsyncResultForSetEmergencyMode(phone1, E_REG_RESULT);
+        CompletableFuture<Integer> future = emergencyStateTracker.startEmergencyCall(phone1,
+                mTestConnection1, false);
+        processAllMessages();
+
+        // Exit emergency mode and set the emergency mode again by the call when the exit result
+        // is received for obtaining the latest EmergencyRegResult.
+        verify(phone0).exitEmergencyMode(any(Message.class));
+        verify(phone1).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+        assertTrue(emergencyStateTracker.isInEmergencyCall());
+        // Returns DisconnectCause#NOT_DISCONNECTED immediately.
+        assertEquals(future.getNow(DisconnectCause.ERROR_UNSPECIFIED),
+                Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
+        // Ensure that SCBM is exited.
+        assertFalse(emergencyStateTracker.isInScbm());
+    }
+
+    @Test
+    @SmallTest
     public void testExitEmergencyModeCallAndSmsOnSamePhone() {
         EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
                 /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
@@ -1762,7 +1989,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
 
         assertTrue(emergencyStateTracker.isInEmergencyMode());
 
-        emergencyStateTracker.endSms(TEST_SMS_ID, true);
+        emergencyStateTracker.endSms(TEST_SMS_ID, true, DOMAIN_PS);
         processAllMessages();
 
         assertFalse(emergencyStateTracker.isInEmergencyMode());
@@ -1799,7 +2026,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         assertEquals(future.getNow(DisconnectCause.ERROR_UNSPECIFIED),
                 Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
 
-        emergencyStateTracker.endSms(TEST_SMS_ID, true);
+        emergencyStateTracker.endSms(TEST_SMS_ID, true, DOMAIN_PS);
 
         assertTrue(emergencyStateTracker.isInEmergencyMode());
 
@@ -1846,7 +2073,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         assertTrue(emergencyStateTracker.isInEcm());
         assertFalse(emergencyStateTracker.isInEmergencyCall());
 
-        emergencyStateTracker.endSms(TEST_SMS_ID, true);
+        emergencyStateTracker.endSms(TEST_SMS_ID, true, DOMAIN_PS);
         processAllMessages();
 
         verify(phone0).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK), any(Message.class));
@@ -1901,7 +2128,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
 
         emergencyStateTracker.onEmergencyTransportChanged(
                 EmergencyStateTracker.EMERGENCY_TYPE_SMS, MODE_EMERGENCY_WWAN);
-        emergencyStateTracker.endSms(TEST_SMS_ID, true);
+        emergencyStateTracker.endSms(TEST_SMS_ID, true, DOMAIN_PS);
         processAllMessages();
 
         // Enter emergency callback mode and emergency mode changed by SMS end.
@@ -1909,13 +2136,15 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         assertTrue(emergencyStateTracker.isInEmergencyMode());
         assertTrue(emergencyStateTracker.isInEcm());
         assertFalse(emergencyStateTracker.isInEmergencyCall());
+        assertTrue(emergencyStateTracker.isInScbm());
 
-        // ECM timeout.
+        // ECM/SCBM timeout.
         processAllFutureMessages();
 
         assertFalse(emergencyStateTracker.isInEmergencyMode());
         assertFalse(emergencyStateTracker.isInEcm());
         assertFalse(emergencyStateTracker.isInEmergencyCall());
+        assertFalse(emergencyStateTracker.isInScbm());
         verify(phone0).exitEmergencyMode(any(Message.class));
     }
 
@@ -1948,7 +2177,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         assertEquals(future.getNow(DisconnectCause.ERROR_UNSPECIFIED),
                 Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
 
-        emergencyStateTracker.endSms(TEST_SMS_ID, true);
+        emergencyStateTracker.endSms(TEST_SMS_ID, true, DOMAIN_PS);
 
         assertTrue(emergencyStateTracker.isInEmergencyMode());
 
@@ -1970,6 +2199,130 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
 
     @Test
     @SmallTest
+    public void testExitEmergencyModeWhenExitingEcmAndScbm() {
+        EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
+                /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
+        Phone phone0 = setupTestPhoneForEmergencyCall(/* isRoaming= */ true,
+                /* isRadioOn= */ true);
+        setUpAsyncResultForSetEmergencyMode(phone0, E_REG_RESULT);
+        setUpAsyncResultForExitEmergencyMode(phone0);
+        setEcmSupportedConfig(phone0, true);
+        // Emergency call is in active.
+        CompletableFuture<Integer> unused = emergencyStateTracker.startEmergencyCall(phone0,
+                mTestConnection1, false);
+        processAllMessages();
+
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+        assertTrue(emergencyStateTracker.isInEmergencyCall());
+        verify(phone0).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
+
+        emergencyStateTracker.onEmergencyCallStateChanged(Call.State.ACTIVE, mTestConnection1);
+
+        // Emergency SMS is being started.
+        CompletableFuture<Integer> future = emergencyStateTracker.startEmergencySms(phone0,
+                TEST_SMS_ID, false);
+
+        // Returns DisconnectCause#NOT_DISCONNECTED immediately.
+        assertEquals(future.getNow(DisconnectCause.ERROR_UNSPECIFIED),
+                Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
+
+        emergencyStateTracker.endCall(mTestConnection1);
+
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+        assertTrue(emergencyStateTracker.isInEcm());
+        assertFalse(emergencyStateTracker.isInEmergencyCall());
+
+        setScbmTimerValue(phone0, TEST_ECM_EXIT_TIMEOUT_MS + 100);
+        emergencyStateTracker.endSms(TEST_SMS_ID, true, DOMAIN_PS);
+        processAllMessages();
+
+        verify(phone0).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK), any(Message.class));
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+        assertTrue(emergencyStateTracker.isInEcm());
+        assertFalse(emergencyStateTracker.isInEmergencyCall());
+        assertTrue(emergencyStateTracker.isInScbm());
+
+        // ECM timeout.
+        moveTimeForward(TEST_ECM_EXIT_TIMEOUT_MS + 50);
+        processAllMessages();
+
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+        assertFalse(emergencyStateTracker.isInEcm());
+        assertFalse(emergencyStateTracker.isInEmergencyCall());
+        assertTrue(emergencyStateTracker.isInScbm());
+
+        // SCBM timeout.
+        processAllFutureMessages();
+
+        assertFalse(emergencyStateTracker.isInEmergencyMode());
+        assertFalse(emergencyStateTracker.isInScbm());
+        verify(phone0).exitEmergencyMode(any(Message.class));
+    }
+
+    @Test
+    @SmallTest
+    public void testExitEmergencyModeWhenExitingScbmAndEcm() {
+        EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
+                /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
+        Phone phone0 = setupTestPhoneForEmergencyCall(/* isRoaming= */ true,
+                /* isRadioOn= */ true);
+        setUpAsyncResultForSetEmergencyMode(phone0, E_REG_RESULT);
+        setUpAsyncResultForExitEmergencyMode(phone0);
+        setEcmSupportedConfig(phone0, true);
+        // Emergency call is in active.
+        CompletableFuture<Integer> unused = emergencyStateTracker.startEmergencyCall(phone0,
+                mTestConnection1, false);
+        processAllMessages();
+
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+        assertTrue(emergencyStateTracker.isInEmergencyCall());
+        verify(phone0).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
+
+        emergencyStateTracker.onEmergencyCallStateChanged(Call.State.ACTIVE, mTestConnection1);
+
+        // Emergency SMS is being started.
+        CompletableFuture<Integer> future = emergencyStateTracker.startEmergencySms(phone0,
+                TEST_SMS_ID, false);
+
+        // Returns DisconnectCause#NOT_DISCONNECTED immediately.
+        assertEquals(future.getNow(DisconnectCause.ERROR_UNSPECIFIED),
+                Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
+
+        emergencyStateTracker.endCall(mTestConnection1);
+
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+        assertTrue(emergencyStateTracker.isInEcm());
+        assertFalse(emergencyStateTracker.isInEmergencyCall());
+
+        setScbmTimerValue(phone0, TEST_ECM_EXIT_TIMEOUT_MS - 100);
+        emergencyStateTracker.endSms(TEST_SMS_ID, true, DOMAIN_PS);
+        processAllMessages();
+
+        verify(phone0).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK), any(Message.class));
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+        assertTrue(emergencyStateTracker.isInEcm());
+        assertFalse(emergencyStateTracker.isInEmergencyCall());
+        assertTrue(emergencyStateTracker.isInScbm());
+
+        // SCBM timeout.
+        moveTimeForward(TEST_ECM_EXIT_TIMEOUT_MS - 50);
+        processAllMessages();
+
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+        assertTrue(emergencyStateTracker.isInEcm());
+        assertFalse(emergencyStateTracker.isInEmergencyCall());
+        assertFalse(emergencyStateTracker.isInScbm());
+
+        // ECM timeout.
+        processAllFutureMessages();
+
+        assertFalse(emergencyStateTracker.isInEmergencyMode());
+        assertFalse(emergencyStateTracker.isInEcm());
+        verify(phone0).exitEmergencyMode(any(Message.class));
+    }
+
+    @Test
+    @SmallTest
     public void testSaveKeyEmergencyCallbackModeSupportedBool() {
         mContextFixture.getCarrierConfigBundle().putBoolean(
                 CarrierConfigManager.KEY_CARRIER_CONFIG_APPLIED_BOOL, true);
@@ -1977,6 +2330,8 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
                 false /* isRadioOn */);
         when(phone.getSubId()).thenReturn(1);
         setEcmSupportedConfig(phone, true);
+        PersistableBundle bundle = mCarrierConfigManager.getConfigForSubId(phone.getSubId());
+        doReturn(bundle).when(mCarrierConfigManager).getConfigForSubId(anyInt(), anyVararg());
 
         EmergencyStateTracker testEst = setupEmergencyStateTracker(
                 false /* isSuplDdsSwitchRequiredForEmergencyCall */);
@@ -1995,14 +2350,14 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
                 listenerArgumentCaptor.getAllValues().get(0);
 
         // Verify carrier config for valid subscription
-        assertTrue(testEst.isEmergencyCallbackModeSupported());
+        assertTrue(testEst.isEmergencyCallbackModeSupported(phone));
 
         // SIM removed
         when(phone.getSubId()).thenReturn(SubscriptionManager.INVALID_SUBSCRIPTION_ID);
         setEcmSupportedConfig(phone, false);
 
         // Verify default config for invalid subscription
-        assertFalse(testEst.isEmergencyCallbackModeSupported());
+        assertFalse(testEst.isEmergencyCallbackModeSupported(phone));
 
         // Insert SIM again
         when(phone.getSubId()).thenReturn(1);
@@ -2023,7 +2378,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
                 TelephonyManager.UNKNOWN_CARRIER_ID, TelephonyManager.UNKNOWN_CARRIER_ID);
 
         // Verify saved config for valid subscription
-        assertTrue(testEst.isEmergencyCallbackModeSupported());
+        assertTrue(testEst.isEmergencyCallbackModeSupported(phone));
 
         // Insert SIM again, but emergency callback mode not supported
         when(phone.getSubId()).thenReturn(1);
@@ -2035,7 +2390,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
                 TelephonyManager.UNKNOWN_CARRIER_ID, TelephonyManager.UNKNOWN_CARRIER_ID);
 
         // Verify carrier config for valid subscription
-        assertFalse(testEst.isEmergencyCallbackModeSupported());
+        assertFalse(testEst.isEmergencyCallbackModeSupported(phone));
 
         // SIM removed again
         when(phone.getSubId()).thenReturn(SubscriptionManager.INVALID_SUBSCRIPTION_ID);
@@ -2047,7 +2402,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
                 TelephonyManager.UNKNOWN_CARRIER_ID, TelephonyManager.UNKNOWN_CARRIER_ID);
 
         // Verify saved config for valid subscription
-        assertFalse(testEst.isEmergencyCallbackModeSupported());
+        assertFalse(testEst.isEmergencyCallbackModeSupported(phone));
     }
 
     /**
@@ -2212,6 +2567,276 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         verify(testPhone).exitEmergencyMode(any(Message.class));
     }
 
+    /**
+     * Test that the EmergencyStateTracker rejects incoming call when starting an emergency call.
+     */
+    @Test
+    @SmallTest
+    public void testRejectRingingCall() {
+        Phone phone = setupTestPhoneForEmergencyCall(false /* isRoaming */,
+                false /* isRadioOn */);
+        when(phone.getSubId()).thenReturn(1);
+        Connection c = mock(Connection.class);
+        Call call = mock(Call.class);
+        doReturn(c).when(call).getLatestConnection();
+        doReturn(true).when(call).isRinging();
+        doReturn(call).when(phone).getRingingCall();
+        setEcmSupportedConfig(phone, true);
+
+        EmergencyStateTracker testEst = setupEmergencyStateTracker(
+                false /* isSuplDdsSwitchRequiredForEmergencyCall */);
+
+        // There is an ongoing emergency call.
+        CompletableFuture<Integer> future = testEst.startEmergencyCall(phone,
+                mTestConnection1, false);
+
+        assertNotNull(future);
+
+        // Verify rejecting ringing call.
+        try {
+            verify(call).hangup();
+        } catch (CallStateException e) {
+        }
+    }
+
+    /**
+     * Test that the EmergencyStateTracker rejects incoming call if there is an emergency call
+     * in dialing state.
+     */
+    @Test
+    @SmallTest
+    public void testRejectNewIncomingCall() {
+        Phone phone = setupTestPhoneForEmergencyCall(false /* isRoaming */,
+                false /* isRadioOn */);
+        when(phone.getSubId()).thenReturn(1);
+        setEcmSupportedConfig(phone, true);
+
+        EmergencyStateTracker testEst = setupEmergencyStateTracker(
+                false /* isSuplDdsSwitchRequiredForEmergencyCall */);
+
+        ArgumentCaptor<Handler> handlerCaptor = ArgumentCaptor.forClass(Handler.class);
+        ArgumentCaptor<Integer> intCaptor = ArgumentCaptor.forClass(Integer.class);
+
+        verify(phone).registerForNewRingingConnection(handlerCaptor.capture(),
+                intCaptor.capture(), any());
+        assertNotNull(handlerCaptor.getValue());
+        assertNotNull(intCaptor.getValue());
+
+        // There is an ongoing emergency call.
+        CompletableFuture<Integer> future = testEst.startEmergencyCall(phone,
+                mTestConnection1, false);
+
+        assertNotNull(future);
+
+        Connection c = mock(Connection.class);
+        Call call = mock(Call.class);
+        doReturn(call).when(c).getCall();
+
+        Message msg = Message.obtain(handlerCaptor.getValue(), intCaptor.getValue());
+        AsyncResult.forMessage(msg, c, null);
+        msg.sendToTarget();
+        processAllMessages();
+
+        // Verify rejecting incoming call.
+        try {
+            verify(call).hangup();
+        } catch (CallStateException e) {
+        }
+    }
+
+    @Test
+    @SmallTest
+    public void testNotRejectNewIncomingCall() {
+        Phone phone = setupTestPhoneForEmergencyCall(false /* isRoaming */,
+                false /* isRadioOn */);
+        when(phone.getSubId()).thenReturn(1);
+        setEcmSupportedConfig(phone, true);
+
+        EmergencyStateTracker unused = setupEmergencyStateTracker(
+                false /* isSuplDdsSwitchRequiredForEmergencyCall */);
+
+        ArgumentCaptor<Handler> handlerCaptor = ArgumentCaptor.forClass(Handler.class);
+        ArgumentCaptor<Integer> intCaptor = ArgumentCaptor.forClass(Integer.class);
+
+        verify(phone).registerForNewRingingConnection(handlerCaptor.capture(),
+                intCaptor.capture(), any());
+        assertNotNull(handlerCaptor.getValue());
+        assertNotNull(intCaptor.getValue());
+
+        // There is no ongoing emergency call.
+
+        Connection c = mock(Connection.class);
+        Call call = mock(Call.class);
+        doReturn(call).when(c).getCall();
+
+        Message msg = Message.obtain(handlerCaptor.getValue(), intCaptor.getValue());
+        AsyncResult.forMessage(msg, c, null);
+        msg.sendToTarget();
+        processAllMessages();
+
+        // Verify not rejecting incoming call.
+        try {
+            verify(call, never()).hangup();
+        } catch (CallStateException e) {
+        }
+    }
+
+    /**
+     * Test that emergency call state changes are sent.
+     */
+    @Test
+    @SmallTest
+    public void testSendEmergencyCallStateChanges() {
+        mContextFixture.getCarrierConfigBundle().putBoolean(
+                CarrierConfigManager.KEY_CARRIER_CONFIG_APPLIED_BOOL, true);
+        // Setup EmergencyStateTracker
+        EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
+                /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
+        // Create test Phone
+        Phone testPhone = setupTestPhoneForEmergencyCall(/* isRoaming= */ true,
+                /* isRadioOn= */ true);
+        when(testPhone.getSubId()).thenReturn(1);
+        ArgumentCaptor<CarrierConfigManager.CarrierConfigChangeListener> listenerArgumentCaptor =
+                ArgumentCaptor.forClass(CarrierConfigManager.CarrierConfigChangeListener.class);
+        CarrierConfigManager cfgManager = (CarrierConfigManager) mContext
+                .getSystemService(Context.CARRIER_CONFIG_SERVICE);
+
+        verify(cfgManager).registerCarrierConfigChangeListener(any(),
+                listenerArgumentCaptor.capture());
+
+        CarrierConfigManager.CarrierConfigChangeListener carrierConfigChangeListener =
+                listenerArgumentCaptor.getAllValues().get(0);
+
+        assertNotNull(carrierConfigChangeListener);
+
+        PersistableBundle bundle = mCarrierConfigManager.getConfigForSubId(testPhone.getSubId());
+        bundle.putBoolean(CarrierConfigManager.KEY_BROADCAST_EMERGENCY_CALL_STATE_CHANGES_BOOL,
+                true);
+        doReturn(bundle).when(mCarrierConfigManager).getConfigForSubId(anyInt(), anyVararg());
+        // onCarrierConfigChanged with valid subscription
+        carrierConfigChangeListener.onCarrierConfigChanged(
+                testPhone.getPhoneId(), testPhone.getSubId(),
+                TelephonyManager.UNKNOWN_CARRIER_ID, TelephonyManager.UNKNOWN_CARRIER_ID);
+
+        // Start emergency call
+        CompletableFuture<Integer> unused = emergencyStateTracker.startEmergencyCall(testPhone,
+                mTestConnection1, false);
+
+        // Verify intent is sent that emergency call state is changed
+        ArgumentCaptor<Intent> intentCaptor = ArgumentCaptor.forClass(Intent.class);
+        verify(mContext, times(1)).sendStickyBroadcastAsUser(
+                intentCaptor.capture(), eq(UserHandle.ALL));
+        Intent intent = intentCaptor.getValue();
+        assertNotNull(intent);
+        assertEquals(TelephonyIntents.ACTION_EMERGENCY_CALL_STATE_CHANGED, intent.getAction());
+        assertTrue(intent.getBooleanExtra(TelephonyManager.EXTRA_PHONE_IN_EMERGENCY_CALL, true));
+
+        // End emergency call
+        emergencyStateTracker.endCall(mTestConnection1);
+
+        // Verify intent is sent that emergency call state is changed
+        verify(mContext, times(2)).sendStickyBroadcastAsUser(
+                intentCaptor.capture(), eq(UserHandle.ALL));
+        intent = intentCaptor.getValue();
+        assertNotNull(intent);
+        assertEquals(TelephonyIntents.ACTION_EMERGENCY_CALL_STATE_CHANGED, intent.getAction());
+        assertFalse(intent.getBooleanExtra(TelephonyManager.EXTRA_PHONE_IN_EMERGENCY_CALL, false));
+    }
+
+    /**
+     * Test that emergency call state change is reset after crash.
+     */
+    @Test
+    @SmallTest
+    public void testResetEmergencyCallStateChanges() {
+        Intent intent = new Intent(TelephonyIntents.ACTION_EMERGENCY_CALL_STATE_CHANGED);
+        intent.putExtra(TelephonyManager.EXTRA_PHONE_IN_EMERGENCY_CALL, true);
+        doReturn(intent).when(mContext).registerReceiver(eq(null), any(),
+                eq(Context.RECEIVER_NOT_EXPORTED));
+        // Setup EmergencyStateTracker
+        EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
+                /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
+        emergencyStateTracker.maybeResetEmergencyCallStateChangedIntent();
+
+        ArgumentCaptor<IntentFilter> filterCaptor = ArgumentCaptor.forClass(IntentFilter.class);
+
+        verify(mContext).registerReceiver(eq(null), filterCaptor.capture(),
+                eq(Context.RECEIVER_NOT_EXPORTED));
+
+        IntentFilter filter = filterCaptor.getValue();
+
+        assertNotNull(filter);
+        assertTrue(filter.hasAction(TelephonyIntents.ACTION_EMERGENCY_CALL_STATE_CHANGED));
+
+        ArgumentCaptor<Intent> intentCaptor = ArgumentCaptor.forClass(Intent.class);
+
+        // Verify intent is sent that emergency call state is changed
+        verify(mContext).sendStickyBroadcastAsUser(
+                intentCaptor.capture(), eq(UserHandle.ALL));
+        intent = intentCaptor.getValue();
+        assertNotNull(intent);
+        assertEquals(TelephonyIntents.ACTION_EMERGENCY_CALL_STATE_CHANGED, intent.getAction());
+        assertFalse(intent.getBooleanExtra(TelephonyManager.EXTRA_PHONE_IN_EMERGENCY_CALL, false));
+    }
+
+    /**
+     * Test that emergency call state is not reset after crash
+     * if it's already reset.
+     */
+    @Test
+    @SmallTest
+    public void testResetEmergencyCallStateChangesAlreadyReset() {
+        Intent intent = new Intent(TelephonyIntents.ACTION_EMERGENCY_CALL_STATE_CHANGED);
+        intent.putExtra(TelephonyManager.EXTRA_PHONE_IN_EMERGENCY_CALL, false);
+        doReturn(intent).when(mContext).registerReceiver(eq(null), any(),
+                eq(Context.RECEIVER_NOT_EXPORTED));
+        // Setup EmergencyStateTracker
+        EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
+                /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
+        emergencyStateTracker.maybeResetEmergencyCallStateChangedIntent();
+
+        ArgumentCaptor<IntentFilter> filterCaptor = ArgumentCaptor.forClass(IntentFilter.class);
+
+        verify(mContext).registerReceiver(eq(null), filterCaptor.capture(),
+                eq(Context.RECEIVER_NOT_EXPORTED));
+
+        IntentFilter filter = filterCaptor.getValue();
+
+        assertNotNull(filter);
+        assertTrue(filter.hasAction(TelephonyIntents.ACTION_EMERGENCY_CALL_STATE_CHANGED));
+
+        // Verify intent is not sent.
+        verify(mContext, never()).sendStickyBroadcastAsUser(any(), any());
+    }
+
+    /**
+     * Test that emergency call state is not reset after crash
+     * if it has never been sent.
+     */
+    @Test
+    @SmallTest
+    public void testResetEmergencyCallStateChangesNotSent() {
+        doReturn(null).when(mContext).registerReceiver(eq(null), any(),
+                eq(Context.RECEIVER_NOT_EXPORTED));
+        // Setup EmergencyStateTracker
+        EmergencyStateTracker emergencyStateTracker = setupEmergencyStateTracker(
+                /* isSuplDdsSwitchRequiredForEmergencyCall= */ true);
+        emergencyStateTracker.maybeResetEmergencyCallStateChangedIntent();
+
+        ArgumentCaptor<IntentFilter> filterCaptor = ArgumentCaptor.forClass(IntentFilter.class);
+
+        verify(mContext).registerReceiver(eq(null), filterCaptor.capture(),
+                eq(Context.RECEIVER_NOT_EXPORTED));
+
+        IntentFilter filter = filterCaptor.getValue();
+
+        assertNotNull(filter);
+        assertTrue(filter.hasAction(TelephonyIntents.ACTION_EMERGENCY_CALL_STATE_CHANGED));
+
+        // Verify intent is not sent.
+        verify(mContext, never()).sendStickyBroadcastAsUser(any(), any());
+    }
+
     private EmergencyStateTracker setupEmergencyStateTracker(
             boolean isSuplDdsSwitchRequiredForEmergencyCall) {
         doReturn(mPhoneSwitcher).when(mPhoneSwitcherProxy).getPhoneSwitcher();
@@ -2263,24 +2888,20 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
     }
 
     private void setEcmSupportedConfig(Phone phone, boolean ecmSupported) {
-        CarrierConfigManager cfgManager = (CarrierConfigManager) mContext
-                .getSystemService(Context.CARRIER_CONFIG_SERVICE);
-        cfgManager.getConfigForSubId(phone.getSubId()).putBoolean(
+        mCarrierConfigManager.getConfigForSubId(phone.getSubId()).putBoolean(
                 CarrierConfigManager.ImsEmergency.KEY_EMERGENCY_CALLBACK_MODE_SUPPORTED_BOOL,
                 ecmSupported);
     }
 
     private void setConfigForDdsSwitch(Phone phone, String[] roaminPlmns,
             int suplEmergencyModeType, String esExtensionSec) {
-        CarrierConfigManager cfgManager = (CarrierConfigManager) mContext
-                .getSystemService(Context.CARRIER_CONFIG_SERVICE);
-        cfgManager.getConfigForSubId(phone.getSubId()).putStringArray(
+        mCarrierConfigManager.getConfigForSubId(phone.getSubId()).putStringArray(
                 CarrierConfigManager.Gps.KEY_ES_SUPL_DATA_PLANE_ONLY_ROAMING_PLMN_STRING_ARRAY,
                 roaminPlmns);
-        cfgManager.getConfigForSubId(phone.getSubId()).putInt(
+        mCarrierConfigManager.getConfigForSubId(phone.getSubId()).putInt(
                 CarrierConfigManager.Gps.KEY_ES_SUPL_CONTROL_PLANE_SUPPORT_INT,
                 suplEmergencyModeType);
-        cfgManager.getConfigForSubId(phone.getSubId())
+        mCarrierConfigManager.getConfigForSubId(phone.getSubId())
                 .putString(CarrierConfigManager.Gps.KEY_ES_EXTENSION_SEC_STRING, esExtensionSec);
     }
 
@@ -2303,5 +2924,37 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
             msg.sendToTarget();
             return null;
         }).when(phone).exitEmergencyMode(any(Message.class));
+    }
+
+    private void setUpScbm(Phone phone, EmergencyStateTracker emergencyStateTracker) {
+        setUpAsyncResultForSetEmergencyMode(phone, E_REG_RESULT);
+        setEcmSupportedConfig(phone, true);
+        CompletableFuture<Integer> future = emergencyStateTracker.startEmergencySms(phone,
+                TEST_SMS_ID, false);
+        processAllMessages();
+
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+        verify(phone).setEmergencyMode(eq(MODE_EMERGENCY_WWAN), any(Message.class));
+
+        assertTrue(emergencyStateTracker.getEmergencyRegistrationResult().equals(E_REG_RESULT));
+        // Expect: DisconnectCause#NOT_DISCONNECTED.
+        assertEquals(future.getNow(DisconnectCause.ERROR_UNSPECIFIED),
+                Integer.valueOf(DisconnectCause.NOT_DISCONNECTED));
+
+        // Expect: entering SCBM.
+        emergencyStateTracker.endSms(TEST_SMS_ID, true, DOMAIN_PS);
+
+        verify(mCarrierConfigManager).getConfigForSubId(anyInt(),
+                eq(CarrierConfigManager.KEY_EMERGENCY_SMS_MODE_TIMER_MS_INT));
+        if (!emergencyStateTracker.isInEcm() && !emergencyStateTracker.isInEmergencyCall()) {
+            verify(phone).setEmergencyMode(eq(MODE_EMERGENCY_CALLBACK), any(Message.class));
+        }
+        assertTrue(emergencyStateTracker.isInEmergencyMode());
+        assertTrue(emergencyStateTracker.isInScbm());
+    }
+
+    private void setScbmTimerValue(Phone phone, int millis) {
+        mCarrierConfigManager.getConfigForSubId(phone.getSubId()).putInt(
+                CarrierConfigManager.KEY_EMERGENCY_SMS_MODE_TIMER_MS_INT, millis);
     }
 }

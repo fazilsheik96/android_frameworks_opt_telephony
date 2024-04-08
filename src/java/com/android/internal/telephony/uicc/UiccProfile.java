@@ -1272,6 +1272,11 @@ public class UiccProfile extends IccCard {
             return -1;
         }
 
+        if (mUiccApplications[index] == null) {
+            loge("App index " + index + " is invalid");
+            return -1;
+        }
+
         if (mUiccApplications[index].getType() != expectedAppType
                 && mUiccApplications[index].getType() != altExpectedAppType) {
             loge("App index " + index + " is invalid since it's not "

@@ -315,6 +315,7 @@ public class DataNetwork extends StateMachine {
                     TEAR_DOWN_REASON_ONLY_ALLOWED_SINGLE_NETWORK,
                     TEAR_DOWN_REASON_PREFERRED_DATA_SWITCHED,
                     TEAR_DOWN_REASON_DATA_LIMIT_REACHED,
+                    TEAR_DOWN_REASON_DATA_NETWORK_TRANSPORT_NOT_ALLOWED,
             })
     public @interface TearDownReason {}
 
@@ -413,6 +414,9 @@ public class DataNetwork extends StateMachine {
 
     /** Data network tear down due to bootstrap sim data limit reached. */
     public static final int TEAR_DOWN_REASON_DATA_LIMIT_REACHED = 31;
+
+    /** Data network tear down due to current data network transport mismatch. */
+    public static final int TEAR_DOWN_REASON_DATA_NETWORK_TRANSPORT_NOT_ALLOWED = 32;
 
     //********************************************************************************************//
     // WHENEVER ADD A NEW TEAR DOWN REASON, PLEASE UPDATE DataDeactivateReasonEnum in enums.proto //
@@ -698,6 +702,11 @@ public class DataNetwork extends StateMachine {
      * The last known roaming state of this data network.
      */
     private boolean mLastKnownRoamingState;
+
+    /**
+     * The non-terrestrial status
+     */
+    private final boolean mIsSatellite;
 
     /** The reason that why setting up this data network is allowed. */
     private @NonNull DataAllowedReason mDataAllowedReason;
@@ -989,6 +998,8 @@ public class DataNetwork extends StateMachine {
         mTransport = transport;
         mLastKnownDataNetworkType = getDataNetworkType();
         mLastKnownRoamingState = mPhone.getServiceState().getDataRoamingFromRegistration();
+        mIsSatellite = mPhone.getServiceState().isUsingNonTerrestrialNetwork()
+                && transport == AccessNetworkConstants.TRANSPORT_TYPE_WWAN;
         mDataAllowedReason = dataAllowedReason;
         dataProfile.setLastSetupTimestamp(SystemClock.elapsedRealtime());
         mAttachedNetworkRequestList.addAll(networkRequestList);
@@ -1183,12 +1194,14 @@ public class DataNetwork extends StateMachine {
 
             mPhone.getServiceStateTracker().registerForCssIndicatorChanged(
                     getHandler(), EVENT_CSS_INDICATOR_CHANGED, null);
-            mPhone.getCallTracker().registerForVoiceCallStarted(
-                    getHandler(), EVENT_VOICE_CALL_STARTED, null);
-            mPhone.getCallTracker().registerForVoiceCallEnded(
-                    getHandler(), EVENT_VOICE_CALL_ENDED, null);
+            if (mPhone.getCallTracker() != null) {
+                mPhone.getCallTracker().registerForVoiceCallStarted(
+                        getHandler(), EVENT_VOICE_CALL_STARTED, null);
+                mPhone.getCallTracker().registerForVoiceCallEnded(
+                        getHandler(), EVENT_VOICE_CALL_ENDED, null);
+            }
             // Check null for devices not supporting FEATURE_TELEPHONY_IMS.
-            if (mPhone.getImsPhone() != null) {
+            if (mPhone.getImsPhone() != null && mPhone.getImsPhone().getCallTracker() != null) {
                 mPhone.getImsPhone().getCallTracker().registerForVoiceCallStarted(
                         getHandler(), EVENT_VOICE_CALL_STARTED, null);
                 mPhone.getImsPhone().getCallTracker().registerForVoiceCallEnded(
@@ -1226,12 +1239,14 @@ public class DataNetwork extends StateMachine {
             }
 
             // Check null for devices not supporting FEATURE_TELEPHONY_IMS.
-            if (mPhone.getImsPhone() != null) {
+            if (mPhone.getImsPhone() != null && mPhone.getImsPhone().getCallTracker() != null) {
                 mPhone.getImsPhone().getCallTracker().unregisterForVoiceCallStarted(getHandler());
                 mPhone.getImsPhone().getCallTracker().unregisterForVoiceCallEnded(getHandler());
             }
-            mPhone.getCallTracker().unregisterForVoiceCallStarted(getHandler());
-            mPhone.getCallTracker().unregisterForVoiceCallEnded(getHandler());
+            if (mPhone.getCallTracker() != null) {
+                mPhone.getCallTracker().unregisterForVoiceCallStarted(getHandler());
+                mPhone.getCallTracker().unregisterForVoiceCallEnded(getHandler());
+            }
 
             mPhone.getServiceStateTracker().unregisterForCssIndicatorChanged(getHandler());
             TelephonyManager tm = mPhone.getContext().getSystemService(TelephonyManager.class);
@@ -1410,7 +1425,14 @@ public class DataNetwork extends StateMachine {
                     } else {
                         loge("Failed to allocate PDU session id. e=" + ar.exception);
                     }
-                    setupData();
+                    //Check whether all network requests were removed before setupData.
+                    if (!mAttachedNetworkRequestList.isEmpty()) {
+                        setupData();
+                    } else {
+                        mRetryDelayMillis = DataCallResponse.RETRY_DURATION_UNDEFINED;
+                        mFailCause = DataFailCause.NO_RETRY_FAILURE;
+                        transitionTo(mDisconnectedState);
+                    }
                     break;
                 case EVENT_SETUP_DATA_NETWORK_RESPONSE:
                     int resultCode = msg.arg1;
@@ -1539,7 +1561,7 @@ public class DataNetwork extends StateMachine {
                 //  For requests that can't be satisfied anymore, we need to put them back to the
                 //  unsatisfied pool. If none of network requests can be satisfied, then there is no
                 //  need to mark network agent connected. Just silently deactivate the data network.
-                if (mAttachedNetworkRequestList.size() == 0) {
+                if (mAttachedNetworkRequestList.isEmpty()) {
                     log("Tear down the network since there is no live network request.");
                     // Directly call onTearDown here. Calling tearDown will cause deadlock because
                     // EVENT_TEAR_DOWN_NETWORK is deferred until state machine enters connected
@@ -2208,11 +2230,32 @@ public class DataNetwork extends StateMachine {
     }
 
     /**
+     * @return {@code true} if this is a satellite data network.
+     */
+    public boolean isSatellite() {
+        return mIsSatellite;
+    }
+
+    /**
      * Update the network capabilities.
      */
     private void updateNetworkCapabilities() {
-        final NetworkCapabilities.Builder builder = new NetworkCapabilities.Builder()
-                .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR);
+        final NetworkCapabilities.Builder builder = new NetworkCapabilities.Builder();
+
+        if (mFlags.satelliteInternet() && mIsSatellite
+                && mDataConfigManager.getForcedCellularTransportCapabilities().stream()
+                .noneMatch(this::hasNetworkCapabilityInNetworkRequests)) {
+            // TODO: b/328622096 remove the try/catch
+            try {
+                builder.addTransportType(NetworkCapabilities.TRANSPORT_SATELLITE);
+            } catch (IllegalArgumentException exception) {
+                loge("TRANSPORT_SATELLITE is not supported.");
+                builder.addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR);
+            }
+        } else {
+            builder.addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR);
+        }
+
         boolean roaming = mPhone.getServiceState().getDataRoaming();
 
         builder.setNetworkSpecifier(new TelephonyNetworkSpecifier.Builder()
@@ -2379,6 +2422,11 @@ public class DataNetwork extends StateMachine {
             builder.removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED);
         }
 
+        // mark the network as restricted when service state is non-terrestrial(satellite network)
+        if (mFlags.satelliteInternet() && mIsSatellite) {
+            builder.removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED);
+        }
+
         // Check if the feature force MMS on IWLAN is enabled. When the feature is enabled, MMS
         // will be attempted on IWLAN if possible, even if existing cellular networks already
         // supports IWLAN.
@@ -2395,7 +2443,7 @@ public class DataNetwork extends StateMachine {
                 DataProfile dataProfile = mDataNetworkController.getDataProfileManager()
                         .getDataProfileForNetworkRequest(new TelephonyNetworkRequest(
                                 new NetworkRequest.Builder().addCapability(
-                                NetworkCapabilities.NET_CAPABILITY_MMS).build(), mPhone),
+                                NetworkCapabilities.NET_CAPABILITY_MMS).build(), mPhone, mFlags),
                         TelephonyManager.NETWORK_TYPE_IWLAN, false, false, false);
                 // If we find another data data profile that can support MMS on IWLAN, then remove
                 // the MMS capability from this cellular network. This will allow IWLAN to be
@@ -2512,7 +2560,8 @@ public class DataNetwork extends StateMachine {
             newSuspendedState = true;
             // Check voice/data concurrency.
         } else if (!mPhone.getServiceStateTracker().isConcurrentVoiceAndDataAllowed()
-                && mTransport == AccessNetworkConstants.TRANSPORT_TYPE_WWAN) {
+                && mTransport == AccessNetworkConstants.TRANSPORT_TYPE_WWAN
+                && mPhone.getCallTracker() != null) {
             newSuspendedState = mPhone.getCallTracker().getState() != PhoneConstants.State.IDLE;
         }
 
@@ -3789,6 +3838,8 @@ public class DataNetwork extends StateMachine {
                 return "TEAR_DOWN_REASON_PREFERRED_DATA_SWITCHED";
             case TEAR_DOWN_REASON_DATA_LIMIT_REACHED:
                 return "TEAR_DOWN_REASON_DATA_LIMIT_REACHED";
+            case TEAR_DOWN_REASON_DATA_NETWORK_TRANSPORT_NOT_ALLOWED:
+                return "TEAR_DOWN_REASON_DATA_NETWORK_TRANSPORT_NOT_ALLOWED";
             default:
                 return "UNKNOWN(" + reason + ")";
         }

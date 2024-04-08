@@ -182,7 +182,6 @@ public class DataNetworkControllerTest extends TelephonyTest {
     private LinkBandwidthEstimatorCallback mLinkBandwidthEstimatorCallback;
 
     private boolean mIsNonTerrestrialNetwork = false;
-    private ArrayList<Integer> mCarrierSupportedSatelliteServices = new ArrayList<>();
     private FeatureFlags mFeatureFlags;
 
     private final DataProfile mGeneralPurposeDataProfile = new DataProfile.Builder()
@@ -700,7 +699,6 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 .setDomain(NetworkRegistrationInfo.DOMAIN_PS)
                 .setDataSpecificInfo(dsri)
                 .setIsNonTerrestrialNetwork(mIsNonTerrestrialNetwork)
-                .setAvailableServices(mCarrierSupportedSatelliteServices)
                 .setEmergencyOnly(isEmergencyOnly)
                 .build());
 
@@ -710,7 +708,6 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 .setRegistrationState(iwlanRegState)
                 .setDomain(NetworkRegistrationInfo.DOMAIN_PS)
                 .setIsNonTerrestrialNetwork(mIsNonTerrestrialNetwork)
-                .setAvailableServices(mCarrierSupportedSatelliteServices)
                 .setEmergencyOnly(isEmergencyOnly)
                 .build());
 
@@ -854,6 +851,9 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 .config_enable_iwlan_handover_policy, true);
         mContextFixture.putBooleanResource(com.android.internal.R.bool
                 .config_enhanced_iwlan_handover_check, true);
+        mContextFixture.putStringArrayResource(com.android.internal.R.array
+                .config_force_cellular_transport_capabilities,
+                new String[] {"ims", "eims", "xcap"});
     }
 
     @Before
@@ -872,7 +872,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
         mMockSubInfo = Mockito.mock(SubscriptionInfo.class);
         mFeatureFlags = Mockito.mock(FeatureFlags.class);
         when(mTelephonyComponentFactory.makeDataSettingsManager(any(Phone.class),
-                any(DataNetworkController.class), any(Looper.class),
+                any(DataNetworkController.class), any(FeatureFlags.class), any(Looper.class),
                 any(DataSettingsManager.DataSettingsManagerCallback.class))).thenCallRealMethod();
         doReturn(mMockedImsMmTelManager).when(mMockedImsManager).getImsMmTelManager(anyInt());
         doReturn(mMockedImsRcsManager).when(mMockedImsManager).getImsRcsManager(anyInt());
@@ -896,6 +896,8 @@ public class DataNetworkControllerTest extends TelephonyTest {
         doReturn(PhoneConstants.State.IDLE).when(mCT).getState();
         doReturn(new SubscriptionInfoInternal.Builder().setId(1).build())
                 .when(mSubscriptionManagerService).getSubscriptionInfoInternal(anyInt());
+        doReturn(true).when(mFeatureFlags).carrierEnabledSatelliteFlag();
+        doReturn(true).when(mFeatureFlags).satelliteInternet();
 
         List<SubscriptionInfo> infoList = new ArrayList<>();
         infoList.add(mMockSubInfo);
@@ -1136,15 +1138,24 @@ public class DataNetworkControllerTest extends TelephonyTest {
     }
 
     private @NonNull TelephonyNetworkRequest createNetworkRequest(Integer... capabilities) {
+        return createNetworkRequest(false, capabilities);
+    }
+
+    private @NonNull TelephonyNetworkRequest createNetworkRequest(boolean restricted,
+                                                                  Integer... capabilities) {
         NetworkCapabilities netCaps = new NetworkCapabilities();
         for (int networkCapability : capabilities) {
             netCaps.addCapability(networkCapability);
         }
 
+        if (restricted) {
+            netCaps.removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED);
+        }
+
         NetworkRequest nativeNetworkRequest = new NetworkRequest(netCaps,
                 ConnectivityManager.TYPE_MOBILE, ++mNetworkRequestId, NetworkRequest.Type.REQUEST);
 
-        return new TelephonyNetworkRequest(nativeNetworkRequest, mPhone);
+        return new TelephonyNetworkRequest(nativeNetworkRequest, mPhone, mFeatureFlags);
     }
 
     // The purpose of this test is to make sure the network request insertion/removal works as
@@ -1405,7 +1416,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
         netCaps.removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED);
         mDataNetworkControllerUT.addNetworkRequest(new TelephonyNetworkRequest(
                 new NetworkRequest(netCaps, ConnectivityManager.TYPE_MOBILE, ++mNetworkRequestId,
-                        NetworkRequest.Type.REQUEST), mPhone));
+                        NetworkRequest.Type.REQUEST), mPhone, mFeatureFlags));
         processAllMessages();
         verifyConnectedNetworkHasCapabilities(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE);
         List<DataNetwork> dataNetworkList = getDataNetworks();
@@ -1708,72 +1719,123 @@ public class DataNetworkControllerTest extends TelephonyTest {
     }
 
     @Test
-    public void testNonTerrestrialNetworkChangedWithoutDataSupport() throws Exception {
-        when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(true);
+    public void testIsNetworkRequestSatisfiedByTransportCellularTransportRequest() {
         mIsNonTerrestrialNetwork = true;
-        // Data is not supported while using satellite
-        mCarrierSupportedSatelliteServices.add(NetworkRegistrationInfo.SERVICE_TYPE_VOICE);
+
+        // Data is not supported for cellular transport network request while using satellite
+        // network
         serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
                 NetworkRegistrationInfo.REGISTRATION_STATE_HOME);
 
-        mDataNetworkControllerUT.addNetworkRequest(
-                createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_INTERNET));
+        // Set network request transport as Cellular in satellite network
+        NetworkCapabilities netCaps = new NetworkCapabilities();
+        netCaps.addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR);
+        netCaps.addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        netCaps.removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED);
+        mDataNetworkControllerUT.addNetworkRequest(new TelephonyNetworkRequest(
+                new NetworkRequest(netCaps, ConnectivityManager.TYPE_MOBILE, ++mNetworkRequestId,
+                        NetworkRequest.Type.REQUEST), mPhone, mFeatureFlags));
         processAllMessages();
 
-        // Data with internet capability should not be allowed
-        // when the device is using non-terrestrial network
-        verifyNoConnectedNetworkHasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        // Verify data is not connected since Network request cannot satisfy by transport
+        verify(mMockedDataNetworkControllerCallback, never())
+                .onConnectedInternetDataNetworksChanged(any());
 
         mIsNonTerrestrialNetwork = false;
-        mCarrierSupportedSatelliteServices.clear();
-        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
-                NetworkRegistrationInfo.REGISTRATION_STATE_HOME);
-
-        // Verify data is restored.
-        verifyInternetConnected();
     }
 
     @Test
-    public void testNonTerrestrialNetworkWithDataSupport() throws Exception {
-        when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(true);
-        mIsNonTerrestrialNetwork = true;
-        // Data is supported while using satellite
-        mCarrierSupportedSatelliteServices.add(NetworkRegistrationInfo.SERVICE_TYPE_DATA);
-        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
-                NetworkRegistrationInfo.REGISTRATION_STATE_HOME);
-
-        mDataNetworkControllerUT.addNetworkRequest(
-                createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_INTERNET));
+    public void testIsNetworkRequestSatisfiedByTransportSatelliteTransportRequest_Terrestrial() {
+        // Set network request transport as satellite in satellite network
+        NetworkCapabilities netCaps = new NetworkCapabilities();
+        netCaps.addTransportType(NetworkCapabilities.TRANSPORT_SATELLITE);
+        netCaps.addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        netCaps.removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED);
+        mDataNetworkControllerUT.addNetworkRequest(new TelephonyNetworkRequest(
+                new NetworkRequest(netCaps, ConnectivityManager.TYPE_MOBILE, ++mNetworkRequestId,
+                        NetworkRequest.Type.REQUEST), mPhone, mFeatureFlags));
         processAllMessages();
 
-        // Verify data is connected.
-        verifyInternetConnected();
+        // Verify data is not supported for satellite transport network request while using cellular
+        verify(mMockedDataNetworkControllerCallback, never())
+                .onConnectedInternetDataNetworksChanged(any());
 
-        mIsNonTerrestrialNetwork = false;
-        mCarrierSupportedSatelliteServices.clear();
     }
 
     @Test
-    public void testNonTerrestrialNetworkWithFlagDisabled() throws Exception {
-        when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(false);
-
+    public void testIsNetworkRequestSatisfiedByTransportSatelliteTransportRequest() {
         mIsNonTerrestrialNetwork = true;
-        // Data is not supported while using satellite
-        mCarrierSupportedSatelliteServices.add(NetworkRegistrationInfo.SERVICE_TYPE_VOICE);
+
+        // Data is supported for satellite transport network request while using satellite network
         serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
                 NetworkRegistrationInfo.REGISTRATION_STATE_HOME);
 
-        mDataNetworkControllerUT.addNetworkRequest(
-                createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_INTERNET));
+        // Set network request transport as satellite while using satellite network
+        NetworkCapabilities netCaps = new NetworkCapabilities();
+        netCaps.addTransportType(NetworkCapabilities.TRANSPORT_SATELLITE);
+        netCaps.addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        netCaps.removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED);
+        mDataNetworkControllerUT.addNetworkRequest(new TelephonyNetworkRequest(
+                new NetworkRequest(netCaps, ConnectivityManager.TYPE_MOBILE, ++mNetworkRequestId,
+                        NetworkRequest.Type.REQUEST), mPhone, mFeatureFlags));
         processAllMessages();
 
-        // As feature is disabled, data is connected.
-        verifyInternetConnected();
+        // Verify data is connected since Network request satisfy by transport
+        verify(mMockedDataNetworkControllerCallback).onConnectedInternetDataNetworksChanged(any());
 
         mIsNonTerrestrialNetwork = false;
-        mCarrierSupportedSatelliteServices.clear();
     }
 
+    @Test
+    public void testIsNetworkRequestSatisfiedByTransportNoTransportRequest() {
+        mIsNonTerrestrialNetwork = true;
+
+        // Data is supported for no transport network request while using satellite network
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_HOME);
+
+        // Set network request transport as no transport with Internet capability
+        NetworkCapabilities netCaps = new NetworkCapabilities();
+        netCaps.addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        netCaps.removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED);
+        mDataNetworkControllerUT.addNetworkRequest(new TelephonyNetworkRequest(
+                new NetworkRequest(netCaps, ConnectivityManager.TYPE_MOBILE, ++mNetworkRequestId,
+                        NetworkRequest.Type.REQUEST), mPhone, mFeatureFlags));
+        processAllMessages();
+
+        // Verify data is connected since Network request satisfy by transport
+        verify(mMockedDataNetworkControllerCallback).onConnectedInternetDataNetworksChanged(any());
+
+        mIsNonTerrestrialNetwork = false;
+    }
+
+    @Test
+    public void testIsNetworkCapabilitySatelliteAndCellularCapableImsCellularTransportRequest()
+            throws Exception {
+        mIsNonTerrestrialNetwork = true;
+
+        // IMS PDN is supported for cellular network request while using satellite network
+        serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
+                NetworkRegistrationInfo.REGISTRATION_STATE_HOME);
+
+        // Set network request transport as Cellular + IMS
+        NetworkCapabilities netCaps = new NetworkCapabilities();
+        netCaps.addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR);
+        netCaps.addCapability(NetworkCapabilities.NET_CAPABILITY_IMS);
+        netCaps.addCapability(NetworkCapabilities.NET_CAPABILITY_MMTEL);
+        netCaps.removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED);
+        mDataNetworkControllerUT.addNetworkRequest(new TelephonyNetworkRequest(
+                new NetworkRequest(netCaps, ConnectivityManager.TYPE_MOBILE, ++mNetworkRequestId,
+                        NetworkRequest.Type.REQUEST), mPhone, mFeatureFlags));
+        processAllMessages();
+
+        // Verify ims is connected since, cellular network request for ims is allowed while using
+        // satellite network
+        verifyConnectedNetworkHasCapabilities(NetworkCapabilities.NET_CAPABILITY_IMS,
+                NetworkCapabilities.NET_CAPABILITY_MMTEL);
+
+        mIsNonTerrestrialNetwork = false;
+    }
 
     @Test
     public void testRoamingDataChanged() throws Exception {
@@ -1857,7 +1919,8 @@ public class DataNetworkControllerTest extends TelephonyTest {
         boolean isDataEnabled = mDataNetworkControllerUT.getDataSettingsManager().isDataEnabled();
         doReturn(mDataNetworkControllerUT.getDataSettingsManager())
                 .when(mPhone).getDataSettingsManager();
-        MultiSimSettingController controller = Mockito.spy(new MultiSimSettingController(mContext));
+        MultiSimSettingController controller = Mockito.spy(new MultiSimSettingController(mContext,
+                mFeatureFlags));
         doReturn(true).when(controller).isCarrierConfigLoadedForAllSub();
         replaceInstance(MultiSimSettingController.class, "sInstance", null, controller);
 
@@ -3436,7 +3499,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED)
                 .build();
-        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(request, mPhone);
+        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(request, mPhone, mFeatureFlags);
 
         mDataNetworkControllerUT.addNetworkRequest(tnr);
         processAllMessages();
@@ -3460,7 +3523,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VCN_MANAGED)
                 .build();
-        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(request, mPhone);
+        TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(request, mPhone, mFeatureFlags);
 
         mDataNetworkControllerUT.addNetworkRequest(tnr);
         processAllMessages();
@@ -3532,7 +3595,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 ConnectivityManager.TYPE_MOBILE, ++mNetworkRequestId, NetworkRequest.Type.REQUEST);
 
         mDataNetworkControllerUT.addNetworkRequest(
-                new TelephonyNetworkRequest(nativeNetworkRequest, mPhone));
+                new TelephonyNetworkRequest(nativeNetworkRequest, mPhone, mFeatureFlags));
         processAllMessages();
 
         verifyConnectedNetworkHasCapabilities(NetworkCapabilities.NET_CAPABILITY_DUN);
@@ -3648,7 +3711,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 ConnectivityManager.TYPE_MOBILE, ++mNetworkRequestId, NetworkRequest.Type.REQUEST);
 
         mDataNetworkControllerUT.addNetworkRequest(
-                new TelephonyNetworkRequest(nativeNetworkRequest, mPhone));
+                new TelephonyNetworkRequest(nativeNetworkRequest, mPhone, mFeatureFlags));
         processAllMessages();
 
         // Everything should be disconnected.
@@ -3686,7 +3749,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 ConnectivityManager.TYPE_MOBILE, ++mNetworkRequestId, NetworkRequest.Type.REQUEST);
 
         mDataNetworkControllerUT.addNetworkRequest(
-                new TelephonyNetworkRequest(nativeNetworkRequest, mPhone));
+                new TelephonyNetworkRequest(nativeNetworkRequest, mPhone, mFeatureFlags));
         processAllMessages();
 
         // Everything should be disconnected.
@@ -3909,7 +3972,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 ConnectivityManager.TYPE_MOBILE, ++mNetworkRequestId, NetworkRequest.Type.REQUEST);
 
         mDataNetworkControllerUT.addNetworkRequest(
-                new TelephonyNetworkRequest(nativeNetworkRequest, mPhone));
+                new TelephonyNetworkRequest(nativeNetworkRequest, mPhone, mFeatureFlags));
         processAllMessages();
 
         verifyConnectedNetworkHasDataProfile(mGeneralPurposeDataProfile);
@@ -3933,7 +3996,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 ConnectivityManager.TYPE_MOBILE, ++mNetworkRequestId, NetworkRequest.Type.REQUEST);
 
         mDataNetworkControllerUT.addNetworkRequest(
-                new TelephonyNetworkRequest(nativeNetworkRequest, mPhone));
+                new TelephonyNetworkRequest(nativeNetworkRequest, mPhone, mFeatureFlags));
         processAllMessages();
 
         verifyConnectedNetworkHasDataProfile(mGeneralPurposeDataProfile);
@@ -3998,7 +4061,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
         NetworkRequest nativeNetworkRequest = new NetworkRequest(netCaps,
                 ConnectivityManager.TYPE_MOBILE, ++mNetworkRequestId, NetworkRequest.Type.REQUEST);
         TelephonyNetworkRequest networkRequest = new TelephonyNetworkRequest(
-                nativeNetworkRequest, mPhone);
+                nativeNetworkRequest, mPhone, mFeatureFlags);
 
         mDataNetworkControllerUT.addNetworkRequest(networkRequest);
 
@@ -4050,7 +4113,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
         NetworkRequest nativeNetworkRequest = new NetworkRequest(netCaps,
                 ConnectivityManager.TYPE_MOBILE, ++mNetworkRequestId, NetworkRequest.Type.REQUEST);
         TelephonyNetworkRequest networkRequest = new TelephonyNetworkRequest(
-                nativeNetworkRequest, mPhone);
+                nativeNetworkRequest, mPhone, mFeatureFlags);
 
         mDataNetworkControllerUT.addNetworkRequest(networkRequest);
         processAllMessages();
@@ -4692,11 +4755,12 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 ConnectivityManager.TYPE_MOBILE, 0, NetworkRequest.Type.REQUEST);
 
         mDataNetworkControllerUT.addNetworkRequest(new TelephonyNetworkRequest(
-                nativeNetworkRequest, mPhone));
+                nativeNetworkRequest, mPhone, mFeatureFlags));
         processAllMessages();
 
         // Intentionally create a new telephony request with the original native network request.
-        TelephonyNetworkRequest request = new TelephonyNetworkRequest(nativeNetworkRequest, mPhone);
+        TelephonyNetworkRequest request = new TelephonyNetworkRequest(
+                nativeNetworkRequest, mPhone, mFeatureFlags);
 
         mDataNetworkControllerUT.removeNetworkRequest(request);
         processAllFutureMessages();
@@ -4792,7 +4856,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE)
                         .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
-                        .build(), mPhone));
+                        .build(), mPhone, mFeatureFlags));
         processAllMessages();
         verifyConnectedNetworkHasCapabilities(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE,
                 NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_LATENCY);
@@ -4801,7 +4865,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
                 new NetworkRequest.Builder()
                         .addCapability(NetworkCapabilities.NET_CAPABILITY_PRIORITIZE_LATENCY)
                         .removeCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
-                        .build(), mPhone));
+                        .build(), mPhone, mFeatureFlags));
         processAllMessages();
         List<DataNetwork> dataNetworkList = getDataNetworks();
         assertThat(dataNetworkList).hasSize(1);
@@ -4871,12 +4935,16 @@ public class DataNetworkControllerTest extends TelephonyTest {
 
     @Test
     public void testNonTerrestrialNetwork() throws Exception {
-        when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(true);
         mIsNonTerrestrialNetwork = true;
         serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
                 NetworkRegistrationInfo.REGISTRATION_STATE_HOME);
         mDataNetworkControllerUT.addNetworkRequest(
-                createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_RCS));
+                createNetworkRequest(false, NetworkCapabilities.NET_CAPABILITY_RCS));
+        processAllMessages();
+        verifyAllDataDisconnected();
+
+        mDataNetworkControllerUT.addNetworkRequest(
+                createNetworkRequest(true, NetworkCapabilities.NET_CAPABILITY_RCS));
         processAllMessages();
         verifyConnectedNetworkHasDataProfile(mNtnDataProfile);
     }
@@ -5035,8 +5103,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
     }
 
     @Test
-    public void testNtnNetworkOnProvisioningProfileClass_WithFlagEnabled() throws Exception {
-        when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(true);
+    public void testNtnNetworkOnProvisioningProfileClassWithFlagEnabled() throws Exception {
         when(mFeatureFlags.esimBootstrapProvisioningFlag()).thenReturn(true);
         // Allowed data limit Unlimited
         mContextFixture.putIntResource(com.android.internal.R.integer
@@ -5048,7 +5115,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
         serviceStateChanged(TelephonyManager.NETWORK_TYPE_LTE,
                 NetworkRegistrationInfo.REGISTRATION_STATE_HOME);
         mDataNetworkControllerUT.addNetworkRequest(
-                createNetworkRequest(NetworkCapabilities.NET_CAPABILITY_RCS));
+                createNetworkRequest(true, NetworkCapabilities.NET_CAPABILITY_RCS));
         processAllMessages();
 
         assertThat(mDataNetworkControllerUT.isEsimBootStrapProvisioningActivated()).isTrue();
@@ -5057,8 +5124,7 @@ public class DataNetworkControllerTest extends TelephonyTest {
     }
 
     @Test
-    public void testNonNtnNetworkOnProvisioningProfileClass_WithFlagEnabled() throws Exception {
-        when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(true);
+    public void testNonNtnNetworkOnProvisioningProfileClassWithFlagEnabled() throws Exception {
         when(mFeatureFlags.esimBootstrapProvisioningFlag()).thenReturn(true);
         doReturn(new SubscriptionInfoInternal.Builder().setId(1)
                 .setProfileClass(SubscriptionManager.PROFILE_CLASS_PROVISIONING).build())

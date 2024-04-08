@@ -327,8 +327,9 @@ public class TelephonyComponentFactory {
     /**
      * Create a new EmergencyNumberTracker.
      */
-    public EmergencyNumberTracker makeEmergencyNumberTracker(Phone phone, CommandsInterface ci) {
-        return new EmergencyNumberTracker(phone, ci);
+    public EmergencyNumberTracker makeEmergencyNumberTracker(Phone phone, CommandsInterface ci,
+            @NonNull FeatureFlags featureFlags) {
+        return new EmergencyNumberTracker(phone, ci, featureFlags);
     }
 
     private static final boolean USE_NEW_NITZ_STATE_MACHINE = true;
@@ -546,9 +547,10 @@ public class TelephonyComponentFactory {
      * @param c The context.
      * @return The multi sim settings controller instance.
      */
-    public MultiSimSettingController initMultiSimSettingController(Context c) {
+    public MultiSimSettingController initMultiSimSettingController(Context c,
+            @NonNull FeatureFlags featureFlags) {
         Rlog.i(TAG, " initMultiSimSettingController ");
-        return MultiSimSettingController.init(c);
+        return MultiSimSettingController.init(c, featureFlags);
     }
 
     /**
@@ -640,9 +642,11 @@ public class TelephonyComponentFactory {
      * @return The data settings manager instance.
      */
     public @NonNull DataSettingsManager makeDataSettingsManager(@NonNull Phone phone,
-            @NonNull DataNetworkController dataNetworkController, @NonNull Looper looper,
+            @NonNull DataNetworkController dataNetworkController,
+            @NonNull FeatureFlags featureFlags, @NonNull Looper looper,
             @NonNull DataSettingsManager.DataSettingsManagerCallback callback) {
-        return new DataSettingsManager(phone, dataNetworkController, looper, callback);
+        return new DataSettingsManager(phone, dataNetworkController, featureFlags, looper,
+                callback);
     }
 
     /** Create CellularNetworkSecuritySafetySource. */
@@ -693,7 +697,8 @@ public class TelephonyComponentFactory {
     }
 
     /** Create NullCipherNotifier. */
-    public NullCipherNotifier makeNullCipherNotifier() {
-        return NullCipherNotifier.getInstance();
+    public NullCipherNotifier makeNullCipherNotifier(
+            CellularNetworkSecuritySafetySource safetySource) {
+        return NullCipherNotifier.getInstance(safetySource);
     }
 }

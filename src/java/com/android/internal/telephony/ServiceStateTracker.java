@@ -398,6 +398,8 @@ public class ServiceStateTracker extends Handler {
                 if (SubscriptionManager.isValidSubscriptionId(mPrevSubId)) {
                     // just went from valid to invalid subId, so notify phone state listeners
                     // with final broadcast
+                    log("onSubscriptionInfoChanged mEmergencyOnly = " + mEmergencyOnly);
+                    mOutOfServiceSS.setEmergencyOnly(mEmergencyOnly);
                     mPhone.notifyServiceStateChangedForSubId(mOutOfServiceSS,
                             ServiceStateTracker.this.mPrevSubId);
                 }

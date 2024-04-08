@@ -1533,7 +1533,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testNrCapabilityChanged_firstRequest_incompleteCarrierConfig_changeNeeded() {
-        when(mFeatureFlags.enableCarrierConfigN1Control()).thenReturn(true);
+        when(mFeatureFlags.enableCarrierConfigN1ControlAttempt2()).thenReturn(true);
 
         mPhoneUT.mCi = mMockCi;
         PersistableBundle bundle = mContextFixture.getCarrierConfigBundle();
@@ -1564,7 +1564,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testNrCapabilityChanged_firstRequest_noChangeNeeded() {
-        when(mFeatureFlags.enableCarrierConfigN1Control()).thenReturn(true);
+        when(mFeatureFlags.enableCarrierConfigN1ControlAttempt2()).thenReturn(true);
 
         mPhoneUT.mCi = mMockCi;
         PersistableBundle bundle = mContextFixture.getCarrierConfigBundle();
@@ -1588,7 +1588,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testNrCapabilityChanged_firstRequest_needsChange() {
-        when(mFeatureFlags.enableCarrierConfigN1Control()).thenReturn(true);
+        when(mFeatureFlags.enableCarrierConfigN1ControlAttempt2()).thenReturn(true);
 
         mPhoneUT.mCi = mMockCi;
         PersistableBundle bundle = mContextFixture.getCarrierConfigBundle();
@@ -1612,7 +1612,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testNrCapabilityChanged_CarrierConfigChanges() {
-        when(mFeatureFlags.enableCarrierConfigN1Control()).thenReturn(true);
+        when(mFeatureFlags.enableCarrierConfigN1ControlAttempt2()).thenReturn(true);
 
         // Initialize the inner cache and set the modem to N1 mode = enabled/true
         testNrCapabilityChanged_firstRequest_needsChange();
@@ -1634,7 +1634,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testNrCapabilityChanged_CarrierConfigChanges_ErrorResponse() {
-        when(mFeatureFlags.enableCarrierConfigN1Control()).thenReturn(true);
+        when(mFeatureFlags.enableCarrierConfigN1ControlAttempt2()).thenReturn(true);
 
         mPhoneUT.mCi = mMockCi;
         for (int i = 0; i < 2; i++) {
@@ -1660,7 +1660,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
 
     @Test
     public void testNrCapabilityChanged_firstRequest_ImsChanges() {
-        when(mFeatureFlags.enableCarrierConfigN1Control()).thenReturn(true);
+        when(mFeatureFlags.enableCarrierConfigN1ControlAttempt2()).thenReturn(true);
 
         mPhoneUT.mCi = mMockCi;
         Message passthroughMessage = mTestHandler.obtainMessage(0xC0FFEE);
@@ -2726,6 +2726,9 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         doReturn(true).when(dsResolver).isDomainSelectionSupported();
         DomainSelectionResolver.setDomainSelectionResolver(dsResolver);
 
+        EmergencyStateTracker est = Mockito.mock(EmergencyStateTracker.class);
+        replaceInstance(EmergencyStateTracker.class, "INSTANCE", null, est);
+
         mPhoneUT.handleMessage(mPhoneUT.obtainMessage(
                 GsmCdmaPhone.EVENT_EMERGENCY_CALLBACK_MODE_ENTER));
 
@@ -2735,7 +2738,8 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         mPhoneUT.exitEmergencyCallbackMode();
         processAllMessages();
 
-        verify(mContext, never()).sendStickyBroadcastAsUser(any(), any());
+        // Verify that the request is routed to EmergencyStateTracker.
+        verify(est).exitEmergencyCallbackMode();
     }
 
     @Test
@@ -3028,7 +3032,64 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
                         new AsyncResult(null, update, null)));
         processAllMessages();
 
-        verify(mNullCipherNotifier, times(1)).onSecurityAlgorithmUpdate(eq(0), eq(update));
+        verify(mNullCipherNotifier, times(1))
+                .onSecurityAlgorithmUpdate(eq(mContext), eq(0), eq(0), eq(update));
+    }
+
+    @Test
+    public void testUpdateNullCipherNotifier_flagDisabled() {
+        when(mFeatureFlags.enableModemCipherTransparencyUnsolEvents()).thenReturn(false);
+        Phone phoneUT = makeNewPhoneUT();
+        phoneUT.sendMessage(
+                mPhoneUT.obtainMessage(
+                        Phone.EVENT_SUBSCRIPTIONS_CHANGED,
+                        new AsyncResult(null, null, null)));
+        processAllMessages();
+
+        verify(mNullCipherNotifier, never()).setSubscriptionMapping(any(), anyInt(), anyInt());
+    }
+
+    @Test
+    public void testUpdateNullCipherNotifier_activeSubscription() {
+        when(mFeatureFlags.enableModemCipherTransparencyUnsolEvents()).thenReturn(true);
+
+        int subId = 10;
+        SubscriptionInfoInternal subInfo = new SubscriptionInfoInternal.Builder().setSimSlotIndex(
+                0).setId(subId).build();
+        when(mSubscriptionManagerService.getSubscriptionInfoInternal(subId)).thenReturn(
+                subInfo);
+        doReturn(subId).when(mSubscriptionManagerService)
+                .getSubId(anyInt());
+        Phone phoneUT = makeNewPhoneUT();
+
+        phoneUT.sendMessage(
+                mPhoneUT.obtainMessage(
+                        Phone.EVENT_SUBSCRIPTIONS_CHANGED,
+                        new AsyncResult(null, null, null)));
+        processAllMessages();
+
+        verify(mNullCipherNotifier, times(1)).setSubscriptionMapping(eq(mContext), eq(0), eq(10));
+    }
+
+    @Test
+    public void testUpdateNullCipherNotifier_inactiveSubscription() {
+        when(mFeatureFlags.enableModemCipherTransparencyUnsolEvents()).thenReturn(true);
+        int subId = 1;
+        SubscriptionInfoInternal subInfo = new SubscriptionInfoInternal.Builder().setSimSlotIndex(
+                -1).setId(subId).build();
+        when(mSubscriptionManagerService.getSubscriptionInfoInternal(subId)).thenReturn(
+                subInfo);
+        doReturn(subId).when(mSubscriptionManagerService)
+                .getSubId(anyInt());
+        Phone phoneUT = makeNewPhoneUT();
+
+        phoneUT.sendMessage(
+                mPhoneUT.obtainMessage(
+                        Phone.EVENT_SUBSCRIPTIONS_CHANGED,
+                        new AsyncResult(null, null, null)));
+        processAllMessages();
+
+        verify(mNullCipherNotifier, times(1)).setSubscriptionMapping(eq(mContext), eq(0), eq(-1));
     }
 
     @Test
@@ -3081,7 +3142,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         setNullCipherNotificationPreferenceEnabled(true);
         phoneUT.handleNullCipherNotificationPreferenceChanged();
 
-        verify(mNullCipherNotifier, times(1)).enable();
+        verify(mNullCipherNotifier, times(1)).enable(eq(mContext));
         verify(mMockCi, times(1)).setSecurityAlgorithmsUpdatedEnabled(eq(true),
                 any(Message.class));
     }
@@ -3095,7 +3156,7 @@ public class GsmCdmaPhoneTest extends TelephonyTest {
         setNullCipherNotificationPreferenceEnabled(false);
         phoneUT.handleNullCipherNotificationPreferenceChanged();
 
-        verify(mNullCipherNotifier, times(1)).disable();
+        verify(mNullCipherNotifier, times(1)).disable(eq(mContext));
         verify(mMockCi, times(1)).setSecurityAlgorithmsUpdatedEnabled(eq(false),
                 any(Message.class));
     }

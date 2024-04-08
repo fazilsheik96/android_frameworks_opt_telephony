@@ -1058,6 +1058,15 @@ public class DataConfigManager extends Handler {
     }
 
     /**
+     * TODO: remove after V.
+     * @return To indicate whether allow using roaming nDDS if user enabled its roaming when the DDS
+     * is not usable(OOS or disabled roaming)
+     */
+    public boolean doesAutoDataSwitchAllowRoaming() {
+        return mResources.getBoolean(com.android.internal.R.bool.auto_data_switch_allow_roaming);
+    }
+
+    /**
      * @return The maximum number of retries when a validation for switching failed.
      */
     public int getAutoDataSwitchValidationMaxRetry() {
@@ -1440,6 +1449,18 @@ public class DataConfigManager extends Handler {
     }
 
     /**
+     * @return The capabilities that network will be forced to mark as cellular transport.
+     */
+    public @NetCapability Set<Integer> getForcedCellularTransportCapabilities() {
+        String[] forcedCellularTransportCapabilities = mResources.getStringArray(
+                com.android.internal.R.array.config_force_cellular_transport_capabilities);
+
+        return Arrays.stream(forcedCellularTransportCapabilities)
+                .map(DataUtils::getNetworkCapabilityFromString)
+                .collect(Collectors.toSet());
+    }
+
+    /**
      * Log debug messages.
      * @param s debug messages
      */
@@ -1547,6 +1568,9 @@ public class DataConfigManager extends Handler {
         pw.println("isTetheringProfileDisabledForRoaming="
                 + isTetheringProfileDisabledForRoaming());
         pw.println("allowClearInitialAttachDataProfile=" + allowClearInitialAttachDataProfile());
+        pw.println("forcedCellularTransportCapabilities=" + getForcedCellularTransportCapabilities()
+                .stream().map(DataUtils::networkCapabilityToString)
+                .collect(Collectors.joining(",")));
         pw.decreaseIndent();
     }
 }

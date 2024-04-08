@@ -24,6 +24,7 @@
 package com.android.internal.telephony;
 
 import static android.telephony.TelephonyManager.HAL_SERVICE_RADIO;
+import static android.telephony.ims.ImsService.CAPABILITY_SUPPORTS_SIMULTANEOUS_CALLING;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -797,6 +798,7 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
             case EVENT_SET_NETWORK_MANUAL_COMPLETE:
             case EVENT_SET_NETWORK_AUTOMATIC_COMPLETE:
                 handleSetSelectNetwork((AsyncResult) msg.obj);
+                onSetNetworkSelectionModeCompleted();
                 return;
         }
 
@@ -1562,6 +1564,12 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         }
 
         updateSavedNetworkOperator(nsm);
+    }
+
+    /**
+     * Called when setting network selection mode is complete.
+     */
+    protected void onSetNetworkSelectionModeCompleted() {
     }
 
     /**
@@ -4091,6 +4099,15 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         return;
     }
 
+    /**
+     * Deletes all the keys for a given Carrier from the device keystore.
+     * @param carrierId : the carrier ID which needs to be matched in the delete query
+     * @param simOperator : MccMnc which needs to be matched in the delete query.
+     */
+    public void deleteCarrierInfoForImsiEncryption(int carrierId, String simOperator) {
+
+    }
+
     public int getCarrierId() {
         return TelephonyManager.UNKNOWN_CARRIER_ID;
     }
@@ -4717,6 +4734,20 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
                         "WFC Wi-Fi Only Mode: IMS not registered");
             }
         }
+    }
+
+    public boolean isImsServiceSimultaneousCallingSupportCapable(Context context) {
+        if (!mFeatureFlags.simultaneousCallingIndications()) return false;
+        boolean capable = false;
+        ImsManager imsManager = ImsManager.getInstance(context, mPhoneId);
+        if (imsManager != null) {
+            try {
+                capable = imsManager.isCapable(CAPABILITY_SUPPORTS_SIMULTANEOUS_CALLING);
+            } catch (ImsException e) {
+                loge("initializeTerminalBasedCallWaiting : exception " + e);
+            }
+        }
+        return capable;
     }
 
     public void startRingbackTone() {

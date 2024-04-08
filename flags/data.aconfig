@@ -1,12 +1,17 @@
 package: "com.android.internal.telephony.flags"
 
+# OWNER=linggm TARGET=24Q3
 flag {
-  name: "auto_switch_allow_roaming"
+  name: "auto_data_switch_allow_roaming"
   namespace: "telephony"
   description: "Allow using roaming network as target if user allows it from settings."
-  bug: "306488039"
+  bug: "287132491"
+  metadata {
+    purpose: PURPOSE_BUGFIX
+  }
 }
 
+# OWNER=linggm TARGET=24Q3
 flag {
   name: "auto_data_switch_rat_ss"
   namespace: "telephony"
@@ -14,6 +19,7 @@ flag {
   bug:"260928808"
 }
 
+# OWNER=linggm TARGET=24Q2
 flag {
   name: "use_alarm_callback"
   namespace: "telephony"
@@ -21,6 +27,7 @@ flag {
   bug: "311476875"
 }
 
+# OWNER=linggm TARGET=24Q2
 flag {
   name: "refine_preferred_data_profile_selection"
   namespace: "telephony"
@@ -28,6 +35,7 @@ flag {
   bug: "311476883"
 }
 
+# OWNER=linggm TARGET=24Q2
 flag {
   name: "unthrottle_check_transport"
   namespace: "telephony"
@@ -35,6 +43,7 @@ flag {
   bug: "303922311"
 }
 
+# OWNER=linggm TARGET=24Q1
 flag {
   name: "relax_ho_teardown"
   namespace: "telephony"
@@ -42,6 +51,7 @@ flag {
   bug: "270895912"
 }
 
+# OWNER=linggm TARGET=24Q2
 flag {
   name: "allow_mmtel_in_non_vops"
   namespace: "telephony"
@@ -49,6 +59,7 @@ flag {
   bug: "241198464"
 }
 
+# OWNER=jackyu TARGET=24Q2
 flag {
   name: "metered_embb_urlcc"
   namespace: "telephony"
@@ -56,27 +67,34 @@ flag {
   bug: "301310451"
   }
 
+# OWNER=sarahchin TARGET=24Q3
 flag {
   name: "slicing_additional_error_codes"
+  is_exported: true
   namespace: "telephony"
   description: "Support additional slicing error codes and functionality."
   bug: "307378699"
 }
 
+# OWNER=nagendranb TARGET=24Q3
 flag {
   name: "apn_setting_field_support_flag"
+  is_exported: true
   namespace: "telephony"
   description: "Expose apn setting supporting field"
   bug: "307038091"
 }
 
+# OWNER=sangyun TARGET=24Q3
 flag {
   name: "network_validation"
+  is_exported: true
   namespace: "telephony"
   description: "Request network validation for data networks and response status."
   bug:"286171724"
 }
 
+# OWNER=nagendranb TARGET=24Q2
 flag {
  name: "notify_data_activity_changed_with_slot"
   namespace: "telephony"
@@ -84,6 +102,7 @@ flag {
   bug: "309896936"
 }
 
+# OWNER=qingqi TARGET=24Q3
 flag {
   name: "vonr_enabled_metric"
   namespace: "telephony"
@@ -91,6 +110,7 @@ flag {
   bug:"288449751"
 }
 
+# OWNER=willycwhu TARGET=24Q2
 flag {
   name: "ignore_existing_networks_for_internet_allowed_checking"
   namespace: "telephony"
@@ -98,6 +118,7 @@ flag {
   bug: "284420611"
 }
 
+# OWNER=apsankar TARGET=24Q3
 flag {
   name: "data_call_session_stats_captures_cross_sim_calling"
   namespace: "telephony"
@@ -105,6 +126,7 @@ flag {
   bug: "313956117"
 }
 
+# OWNER=jackyu TARGET=24Q2
 flag {
   name: "force_iwlan_mms"
   namespace: "telephony"
@@ -112,9 +134,18 @@ flag {
   bug: "316211526"
 }
 
+# OWNER=sewook TARGET=24Q3
 flag {
   name: "reconnect_qualified_network"
   namespace: "telephony"
   description: "This flag is for internal implementation to handle reconnect request from QNS in telephony FWK."
   bug: "319520561"
+}
+
+# OWNER=jackyu TARGET=24Q3
+flag {
+  name: "dsrs_diagnostics_enabled"
+  namespace: "telephony"
+  description: "Enable DSRS diagnostics."
+  bug: "319601607"
 }

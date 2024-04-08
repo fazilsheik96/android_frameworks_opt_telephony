@@ -38,6 +38,7 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.hardware.radio.V1_0.IRadio;
 import android.hardware.radio.V1_0.RadioError;
 import android.hardware.radio.V1_0.RadioIndicationType;
@@ -156,6 +157,15 @@ public class RIL extends BaseCommands implements CommandsInterface {
 
     /** @hide */
     public static final HalVersion RADIO_HAL_VERSION_UNKNOWN = HalVersion.UNKNOWN;
+
+    /** @hide */
+    public static final HalVersion RADIO_HAL_VERSION_1_1 = new HalVersion(1, 1);
+
+    /** @hide */
+    public static final HalVersion RADIO_HAL_VERSION_1_2 = new HalVersion(1, 2);
+
+    /** @hide */
+    public static final HalVersion RADIO_HAL_VERSION_1_3 = new HalVersion(1, 3);
 
     /** @hide */
     public static final HalVersion RADIO_HAL_VERSION_1_4 = new HalVersion(1, 4);
@@ -278,6 +288,13 @@ public class RIL extends BaseCommands implements CommandsInterface {
     //***** Constants
 
     static final String[] HIDL_SERVICE_NAME = {"slot1", "slot2", "slot3"};
+
+    private static final Map<String, Integer> FEATURES_TO_SERVICES = Map.ofEntries(
+            Map.entry(PackageManager.FEATURE_TELEPHONY_CALLING, HAL_SERVICE_VOICE),
+            Map.entry(PackageManager.FEATURE_TELEPHONY_DATA, HAL_SERVICE_DATA),
+            Map.entry(PackageManager.FEATURE_TELEPHONY_MESSAGING, HAL_SERVICE_MESSAGING),
+            Map.entry(PackageManager.FEATURE_TELEPHONY_IMS, HAL_SERVICE_IMS)
+    );
 
     public static List<TelephonyHistogram> getTelephonyRILTimingHistograms() {
         List<TelephonyHistogram> list;
@@ -633,6 +650,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
             if (mDisabledRadioServices.get(HAL_SERVICE_RADIO).contains(mPhoneId)) {
                 riljLoge("getRadioProxy: mRadioProxy for " + HIDL_SERVICE_NAME[mPhoneId]
                         + " is disabled");
+                return null;
             } else {
                 try {
                     mRadioProxy = android.hardware.radio.V1_6.IRadio.getService(
@@ -674,6 +692,7 @@ public class RIL extends BaseCommands implements CommandsInterface {
                     mDisabledRadioServices.get(HAL_SERVICE_RADIO).add(mPhoneId);
                     riljLoge("getRadioProxy: set mRadioProxy for "
                             + HIDL_SERVICE_NAME[mPhoneId] + " as disabled");
+                    return null;
                 }
             }
         } catch (RemoteException e) {
@@ -730,6 +749,9 @@ public class RIL extends BaseCommands implements CommandsInterface {
     public synchronized RadioServiceProxy getRadioServiceProxy(int service) {
         if (!SubscriptionManager.isValidPhoneId(mPhoneId)) return mServiceProxies.get(service);
         if ((service >= HAL_SERVICE_IMS) && !isRadioServiceSupported(service)) {
+            riljLogw("getRadioServiceProxy: " + serviceToString(service) + " for "
+                    + HIDL_SERVICE_NAME[mPhoneId] + " is not supported\n"
+                    + android.util.Log.getStackTraceString(new RuntimeException()));
             return mServiceProxies.get(service);
         }
         if (!mIsCellularSupported) {
@@ -745,7 +767,9 @@ public class RIL extends BaseCommands implements CommandsInterface {
         try {
             if (mMockModem == null && mDisabledRadioServices.get(service).contains(mPhoneId)) {
                 riljLoge("getRadioServiceProxy: " + serviceToString(service) + " for "
-                        + HIDL_SERVICE_NAME[mPhoneId] + " is disabled");
+                        + HIDL_SERVICE_NAME[mPhoneId] + " is disabled\n"
+                        + android.util.Log.getStackTraceString(new RuntimeException()));
+                return null;
             } else {
                 IBinder binder;
                 switch (service) {
@@ -956,7 +980,8 @@ public class RIL extends BaseCommands implements CommandsInterface {
                     mDisabledRadioServices.get(service).add(mPhoneId);
                     mHalVersion.put(service, RADIO_HAL_VERSION_UNKNOWN);
                     riljLoge("getRadioServiceProxy: set " + serviceToString(service) + " for "
-                            + HIDL_SERVICE_NAME[mPhoneId] + " as disabled");
+                            + HIDL_SERVICE_NAME[mPhoneId] + " as disabled\n"
+                            + android.util.Log.getStackTraceString(new RuntimeException()));
                 }
             }
         } catch (RemoteException e) {
@@ -1108,9 +1133,16 @@ public class RIL extends BaseCommands implements CommandsInterface {
             tdc.registerRIL(this);
         }
 
+        validateFeatureFlags();
+
         // Set radio callback; needed to set RadioIndication callback (should be done after
         // wakelock stuff is initialized above as callbacks are received on separate binder threads)
         for (int service = MIN_SERVICE_IDX; service <= MAX_SERVICE_IDX; service++) {
+            if (!isRadioServiceSupported(service)) {
+                riljLog("Not initializing " + serviceToString(service) + " (not supported)");
+                continue;
+            }
+
             if (service == HAL_SERVICE_RADIO) {
                 getRadioProxy();
             } else {
@@ -1173,6 +1205,26 @@ public class RIL extends BaseCommands implements CommandsInterface {
         }
 
         return false;
+    }
+
+    private void validateFeatureFlags() {
+        PackageManager pm = mContext.getPackageManager();
+        for (var entry : FEATURES_TO_SERVICES.entrySet()) {
+            String feature = entry.getKey();
+            int service = entry.getValue();
+
+            boolean hasFeature = pm.hasSystemFeature(feature);
+            boolean hasService = isRadioServiceSupported(service);
+
+            if (hasFeature && !hasService) {
+                riljLoge("Feature " + feature + " is declared, but service "
+                        + serviceToString(service) + " is missing");
+            }
+            if (!hasFeature && hasService) {
+                riljLoge("Service " + serviceToString(service) + " is available, but feature "
+                        + feature + " is not declared");
+            }
+        }
     }
 
     private boolean isRadioBugDetectionEnabled() {
