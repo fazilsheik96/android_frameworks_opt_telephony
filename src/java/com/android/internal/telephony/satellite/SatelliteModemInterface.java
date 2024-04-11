@@ -93,6 +93,8 @@ public class SatelliteModemInterface {
             new RegistrantList();
     @NonNull private final RegistrantList mSatelliteCapabilitiesChangedRegistrants =
             new RegistrantList();
+    @NonNull private final RegistrantList mSatelliteSupportedStateChangedRegistrants =
+            new RegistrantList();
 
     @NonNull private final ISatelliteListener mListener = new ISatelliteListener.Stub() {
         @Override
@@ -157,6 +159,11 @@ public class SatelliteModemInterface {
                 android.telephony.satellite.stub.SatelliteCapabilities satelliteCapabilities) {
             mSatelliteCapabilitiesChangedRegistrants.notifyResult(
                     SatelliteServiceUtils.fromSatelliteCapabilities(satelliteCapabilities));
+        }
+
+        @Override
+        public void onSatelliteSupportedStateChanged(boolean supported) {
+            mSatelliteSupportedStateChangedRegistrants.notifyResult(supported);
         }
     };
 
@@ -505,6 +512,27 @@ public class SatelliteModemInterface {
     }
 
     /**
+     * Registers for the satellite supported state changed.
+     *
+     * @param h Handler for notification message.
+     * @param what User-defined message code.
+     * @param obj User object.
+     */
+    public void registerForSatelliteSupportedStateChanged(
+            @NonNull Handler h, int what, @Nullable Object obj) {
+        mSatelliteSupportedStateChangedRegistrants.add(h, what, obj);
+    }
+
+    /**
+     * Unregisters for the satellite supported state changed.
+     *
+     * @param h Handler to be removed from the registrant list.
+     */
+    public void unregisterForSatelliteSupportedStateChanged(@NonNull Handler h) {
+        mSatelliteSupportedStateChangedRegistrants.remove(h);
+    }
+
+    /**
      * Request to enable or disable the satellite service listening mode.
      * Listening mode allows the satellite service to listen for incoming pages.
      *
@@ -591,19 +619,20 @@ public class SatelliteModemInterface {
      *
      * @param enableSatellite True to enable the satellite modem and false to disable.
      * @param enableDemoMode True to enable demo mode and false to disable.
+     * @param isEmergency {@code true} to enable emergency mode, {@code false} otherwise.
      * @param message The Message to send to result of the operation to.
      */
     public void requestSatelliteEnabled(boolean enableSatellite, boolean enableDemoMode,
-            @NonNull Message message) {
+            boolean isEmergency, @NonNull Message message) {
         if (mSatelliteService != null) {
             try {
                 mSatelliteService.requestSatelliteEnabled(enableSatellite, enableDemoMode,
-                        new IIntegerConsumer.Stub() {
-                    @Override
-                    public void accept(int result) {
-                        int error = SatelliteServiceUtils.fromSatelliteError(result);
-                        logd("setSatelliteEnabled: " + error);
-                        Binder.withCleanCallingIdentity(() ->
+                        isEmergency, new IIntegerConsumer.Stub() {
+                            @Override
+                            public void accept(int result) {
+                                int error = SatelliteServiceUtils.fromSatelliteError(result);
+                                logd("setSatelliteEnabled: " + error);
+                                Binder.withCleanCallingIdentity(() ->
                                 sendMessageWithResult(message, null, error));
                     }
                 });
