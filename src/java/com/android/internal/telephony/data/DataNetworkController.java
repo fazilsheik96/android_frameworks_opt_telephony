@@ -17,6 +17,7 @@
 package com.android.internal.telephony.data;
 
 import android.annotation.CallbackExecutor;
+import android.annotation.ElapsedRealtimeLong;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -39,6 +40,7 @@ import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.os.SystemClock;
 import android.telecom.TelecomManager;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.AccessNetworkConstants.AccessNetworkType;
@@ -255,9 +257,21 @@ public class DataNetworkController extends Handler {
             TimeUnit.SECONDS.toMillis(60);
 
     /**
+     * The guard timer in milliseconds to limit querying the data usage api stats frequently
+     */
+    private static final long GUARD_TIMER_INTERVAL_TO_QUERY_DATA_USAGE_API_STATS_MILLIS =
+            TimeUnit.SECONDS.toMillis(1);
+
+    /**
      * bootstrap sim total data usage bytes
      */
     private long mBootStrapSimTotalDataUsageBytes = 0L;
+
+    /**
+     * bootstrap sim last data usage query time
+     */
+    @ElapsedRealtimeLong
+    private long mBootstrapSimLastDataUsageQueryTime = 0L;
 
     protected final Phone mPhone;
     private final String mLogTag;
@@ -1598,7 +1612,7 @@ public class DataNetworkController extends Handler {
             DataProfile emergencyProfile = mDataProfileManager.getDataProfileForNetworkRequest(
                     networkRequest, getDataNetworkType(transport),
                     mServiceState.isUsingNonTerrestrialNetwork(),
-                    isEsimBootStrapProvisioningActivated(), true);
+                    false /*isEsimBootStrapProvisioning*/, true);
 
             // Check if the profile is being throttled.
             if (mDataConfigManager.shouldHonorRetryTimerForEmergencyNetworkRequest()
@@ -1839,7 +1853,8 @@ public class DataNetworkController extends Handler {
      *  - At evaluation network request and evaluation data network determines, if
      *    bootstrap sim current data usage reached bootstrap sim max data limit allowed set
      *    at {@link DataConfigManager#getEsimBootStrapMaxDataLimitBytes()}
-     *  - Query the current data usage at {@link #getDataUsage()}
+     *  - Query the current data usage at {@link #getDataUsage()}, if last data usage query guarding
+     *    interval as expired.
      *
      * @return true, if bootstrap sim data limit is reached
      *         else false, if bootstrap sim max data limit allowed set is -1(Unlimited) or current
@@ -1854,13 +1869,15 @@ public class DataNetworkController extends Handler {
             return false;
         }
 
-        log("current bootstrap sim data Usage: " + mBootStrapSimTotalDataUsageBytes);
-        if (mBootStrapSimTotalDataUsageBytes >= esimBootStrapMaxDataLimitBytes) {
-            return true;
-        } else {
+        if (mBootStrapSimTotalDataUsageBytes < esimBootStrapMaxDataLimitBytes
+                && (mBootstrapSimLastDataUsageQueryTime == 0
+                || SystemClock.elapsedRealtime() - mBootstrapSimLastDataUsageQueryTime
+                > GUARD_TIMER_INTERVAL_TO_QUERY_DATA_USAGE_API_STATS_MILLIS)) {
             mBootStrapSimTotalDataUsageBytes = getDataUsage();
-            return mBootStrapSimTotalDataUsageBytes >= esimBootStrapMaxDataLimitBytes;
+            log("current bootstrap sim data usage: " + mBootStrapSimTotalDataUsageBytes);
+            mBootstrapSimLastDataUsageQueryTime =  SystemClock.elapsedRealtime();
         }
+        return mBootStrapSimTotalDataUsageBytes >= esimBootStrapMaxDataLimitBytes;
     }
 
     /**
@@ -1880,6 +1897,8 @@ public class DataNetworkController extends Handler {
 
             if (!TextUtils.isEmpty(subscriberId)) {
                 builder.setSubscriberIds(Set.of(subscriberId));
+                // Consider data usage calculation of only metered capabilities / data network
+                builder.setMeteredness(android.net.NetworkStats.METERED_YES);
                 NetworkTemplate template = builder.build();
                 final NetworkStats.Bucket ret = networkStatsManager
                         .querySummaryForDevice(template, 0L, System.currentTimeMillis());
@@ -2255,15 +2274,32 @@ public class DataNetworkController extends Handler {
     }
 
     /**
-     * tethering and enterprise capabilities are not respected as restricted requests. For a request
-     * with these capabilities, any soft disallowed reasons are honored.
+     * Check if a network request should be treated as a valid restricted network request that
+     * can bypass soft disallowed reasons, for example, mobile data off.
+     *
      * @param networkRequest The network request to evaluate.
-     * @return {@code true} if the request doesn't contain any exceptional capabilities, its
-     * restricted capability, if any, is respected.
+     * @return {@code true} if the request can be considered as a valid restricted network request
+     * that can bypass any soft disallowed reasons, otherwise {@code false}.
      */
     private boolean isValidRestrictedRequest(@NonNull TelephonyNetworkRequest networkRequest) {
-        return !(networkRequest.hasCapability(NetworkCapabilities.NET_CAPABILITY_DUN)
-                || networkRequest.hasCapability(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE));
+
+        if (!mFeatureFlags.satelliteInternet()) {
+            return !(networkRequest.hasCapability(NetworkCapabilities.NET_CAPABILITY_DUN)
+                    || networkRequest.hasCapability(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE));
+        } else {
+            // tethering, enterprise and mms with restricted capabilities always honor soft
+            // disallowed reasons and not respected as restricted request
+            if (networkRequest.hasCapability(NetworkCapabilities.NET_CAPABILITY_DUN)
+                    || networkRequest.hasCapability(NetworkCapabilities.NET_CAPABILITY_ENTERPRISE)
+                    || networkRequest.hasCapability(NetworkCapabilities.NET_CAPABILITY_MMS)) {
+                return false;
+            }
+            // When the device is on satellite, internet with restricted capabilities always honor
+            // soft disallowed reasons and not respected as restricted request
+            return !(mServiceState.isUsingNonTerrestrialNetwork()
+                    && networkRequest.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET));
+
+        }
     }
 
     /**
@@ -3300,7 +3336,13 @@ public class DataNetworkController extends Handler {
             return;
         }
 
-        if (dataNetwork.isInternetSupported()) {
+        // Only track the networks that require validation.
+        // The criteria is base on NetworkMonitorUtils.java.
+        NetworkCapabilities capabilities = dataNetwork.getNetworkCapabilities();
+        if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
+                && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_TRUSTED)
+                && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)) {
             if (status == NetworkAgent.VALIDATION_STATUS_NOT_VALID
                     && (dataNetwork.getCurrentState() == null || dataNetwork.isDisconnected())) {
                 log("Ignoring invalid validation status for disconnected DataNetwork");
