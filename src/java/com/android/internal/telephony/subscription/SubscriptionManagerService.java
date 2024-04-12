@@ -124,6 +124,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
@@ -3731,16 +3732,15 @@ public class SubscriptionManagerService extends ISub.Stub {
         enforceTelephonyFeatureWithException(callingPackage, "getPhoneNumber");
 
         final long identity = Binder.clearCallingIdentity();
-
-        SubscriptionInfoInternal subInfo = mSubscriptionDatabaseManager
-                .getSubscriptionInfoInternal(subId);
-
-        if (subInfo == null) {
-            loge("Invalid sub id " + subId + ", callingPackage=" + callingPackage);
-            return "";
-        }
-
         try {
+            SubscriptionInfoInternal subInfo = mSubscriptionDatabaseManager
+                    .getSubscriptionInfoInternal(subId);
+
+            if (subInfo == null) {
+                loge("Invalid sub id " + subId + ", callingPackage=" + callingPackage);
+                return "";
+            }
+
             switch(source) {
                 case SubscriptionManager.PHONE_NUMBER_SOURCE_UICC:
                     Phone phone = PhoneFactory.getPhone(getSlotIndex(subId));
@@ -4423,13 +4423,12 @@ public class SubscriptionManagerService extends ISub.Stub {
     public List<String> getSatelliteEntitlementPlmnList(int subId) {
         SubscriptionInfoInternal subInfo = mSubscriptionDatabaseManager.getSubscriptionInfoInternal(
                 subId);
-        if (subInfo == null) {
-            loge("getSatelliteEntitlementPlmnList: invalid subId=" + subId);
-            return new ArrayList<>();
-        }
 
-        return Arrays.stream(subInfo.getSatelliteEntitlementPlmns().split(",")).collect(
-                Collectors.toList());
+        return Optional.ofNullable(subInfo)
+                .map(SubscriptionInfoInternal::getSatelliteEntitlementPlmns)
+                .filter(s -> !s.isEmpty())
+                .map(s -> Arrays.stream(s.split(",")).collect(Collectors.toList()))
+                .orElse(new ArrayList<>());
     }
 
     /**
