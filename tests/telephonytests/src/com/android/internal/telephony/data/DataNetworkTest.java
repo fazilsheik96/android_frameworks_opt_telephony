@@ -256,12 +256,18 @@ public class DataNetworkTest extends TelephonyTest {
 
     private void setSuccessfulSetupDataResponse(DataServiceManager dsm, int cid,
             List<TrafficDescriptor> tds, Qos defaultQos) {
+        setSuccessfulSetupDataResponse(dsm, cid, tds, defaultQos,
+                PreciseDataConnectionState.NETWORK_VALIDATION_UNSUPPORTED);
+    }
+
+    private void setSuccessfulSetupDataResponse(DataServiceManager dsm, int cid,
+            List<TrafficDescriptor> tds, Qos defaultQos, int netwokrValidationResult) {
         doAnswer(invocation -> {
             final Message msg = (Message) invocation.getArguments()[10];
 
             DataCallResponse response = createDataCallResponse(
                     cid, DataCallResponse.LINK_STATUS_ACTIVE, tds, defaultQos,
-                    PreciseDataConnectionState.NETWORK_VALIDATION_UNSUPPORTED);
+                    netwokrValidationResult);
             msg.getData().putParcelable("data_call_response", response);
             msg.arg1 = DataServiceCallback.RESULT_SUCCESS;
             msg.sendToTarget();
@@ -1230,6 +1236,29 @@ public class DataNetworkTest extends TelephonyTest {
         List<PreciseDataConnectionState> pdcsList = pdcsCaptor.getAllValues();
         assertThat(pdcsList.get(0).getState()).isEqualTo(TelephonyManager.DATA_CONNECTING);
         assertThat(pdcsList.get(1).getState()).isEqualTo(TelephonyManager.DATA_DISCONNECTED);
+    }
+
+    @Test
+    public void testNetworkRequestDetachedBeforeConnected() throws Exception {
+        doReturn(true).when(mFeatureFlags).keepEmptyRequestsNetwork();
+        NetworkRequestList networkRequestList = new NetworkRequestList(new TelephonyNetworkRequest(
+                new NetworkRequest.Builder()
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_IMS)
+                        .build(), mPhone, mFeatureFlags));
+        mDataNetworkUT = new DataNetwork(mPhone, mFeatureFlags, Looper.myLooper(),
+                mDataServiceManagers, mImsDataProfile, networkRequestList,
+                AccessNetworkConstants.TRANSPORT_TYPE_WWAN, DataAllowedReason.NORMAL,
+                mDataNetworkCallback);
+        replaceInstance(DataNetwork.class, "mDataCallSessionStats",
+                mDataNetworkUT, mDataCallSessionStats);
+
+        // Remove the request before the network connect.
+        mDataNetworkUT.detachNetworkRequest(networkRequestList.getFirst(), false/*should retry*/);
+        setSuccessfulSetupDataResponse(mMockedWwanDataServiceManager, 123);
+        processAllMessages();
+
+        // Verify the request proceed to connected state even without requests.
+        assertThat(mDataNetworkUT.isConnected()).isTrue();
     }
 
     @Test
@@ -2245,6 +2274,51 @@ public class DataNetworkTest extends TelephonyTest {
                 .isEqualTo(PreciseDataConnectionState.NETWORK_VALIDATION_UNSUPPORTED);
     }
 
+    @Test
+    public void testHandoverWithSuccessNetworkValidation_FlagEnabled() throws Exception {
+        when(mFeatureFlags.networkValidation()).thenReturn(true);
+
+        setupDataNetwork();
+
+        setSuccessfulSetupDataResponse(
+                mMockedWlanDataServiceManager, 456, Collections.emptyList(), null,
+                PreciseDataConnectionState.NETWORK_VALIDATION_SUCCESS);
+        TelephonyNetworkAgent mockNetworkAgent = Mockito.mock(TelephonyNetworkAgent.class);
+        replaceInstance(DataNetwork.class, "mNetworkAgent",
+                mDataNetworkUT, mockNetworkAgent);
+        // Now handover to IWLAN
+        mDataNetworkUT.startHandover(AccessNetworkConstants.TRANSPORT_TYPE_WLAN, null);
+        processAllMessages();
+
+        verify(mMockedWwanDataServiceManager).startHandover(eq(123), any(Message.class));
+        verify(mLinkBandwidthEstimator).unregisterCallback(any(
+                LinkBandwidthEstimatorCallback.class));
+        assertThat(mDataNetworkUT.getTransport())
+                .isEqualTo(AccessNetworkConstants.TRANSPORT_TYPE_WLAN);
+        assertThat(mDataNetworkUT.getId()).isEqualTo(456);
+        verify(mDataNetworkCallback).onHandoverSucceeded(eq(mDataNetworkUT));
+
+        ArgumentCaptor<PreciseDataConnectionState> pdcsCaptor =
+                ArgumentCaptor.forClass(PreciseDataConnectionState.class);
+        verify(mPhone, times(4)).notifyDataConnection(pdcsCaptor.capture());
+        List<PreciseDataConnectionState> pdcsList = pdcsCaptor.getAllValues();
+
+        assertThat(pdcsList).hasSize(4);
+        assertThat(pdcsList.get(0).getState()).isEqualTo(TelephonyManager.DATA_CONNECTING);
+        assertThat(pdcsList.get(1).getState()).isEqualTo(TelephonyManager.DATA_CONNECTED);
+        assertThat(pdcsList.get(1).getNetworkValidationStatus())
+                .isEqualTo(PreciseDataConnectionState.NETWORK_VALIDATION_UNSUPPORTED);
+        assertThat(pdcsList.get(2).getState())
+                .isEqualTo(TelephonyManager.DATA_HANDOVER_IN_PROGRESS);
+        assertThat(pdcsList.get(2).getNetworkValidationStatus())
+                .isEqualTo(PreciseDataConnectionState.NETWORK_VALIDATION_UNSUPPORTED);
+        assertThat(pdcsList.get(3).getState()).isEqualTo(TelephonyManager.DATA_CONNECTED);
+        assertThat(pdcsList.get(3).getNetworkValidationStatus())
+                .isEqualTo(PreciseDataConnectionState.NETWORK_VALIDATION_SUCCESS);
+
+        verify(mDataNetworkCallback).onHandoverSucceeded(eq(mDataNetworkUT));
+    }
+
     private void setupIwlanDataNetwork() throws Exception {
         // setup iwlan data network over ims
         doReturn(mIwlanNetworkRegistrationInfo).when(mServiceState).getNetworkRegistrationInfo(
@@ -2332,6 +2406,32 @@ public class DataNetworkTest extends TelephonyTest {
         // Now QNS prefers MMS on IWLAN
         doReturn(AccessNetworkConstants.TRANSPORT_TYPE_WLAN).when(mAccessNetworksManager)
                 .getPreferredTransportByNetworkCapability(NetworkCapabilities.NET_CAPABILITY_MMS);
+        // Verify an mms apn that shares the same apn name doesn't count as an alternative.
+        ApnSetting mmsApnWithSameApn = new ApnSetting.Builder()
+                .setId(2164)
+                .setOperatorNumeric("12345")
+                .setEntryName("fake_mms_apn")
+                .setApnName("fake_apn")
+                .setApnTypeBitmask(ApnSetting.TYPE_MMS)
+                .setProtocol(ApnSetting.PROTOCOL_IPV6)
+                .setRoamingProtocol(ApnSetting.PROTOCOL_IP)
+                .setCarrierEnabled(true)
+                .setNetworkTypeBitmask((int) TelephonyManager.NETWORK_TYPE_BITMASK_IWLAN)
+                .build();
+        doReturn(new DataProfile.Builder().setApnSetting(mmsApnWithSameApn)
+                .setTrafficDescriptor(new TrafficDescriptor("fake_apn", null))
+                .build()).when(mDataProfileManager).getDataProfileForNetworkRequest(
+                any(TelephonyNetworkRequest.class),
+                eq(TelephonyManager.NETWORK_TYPE_IWLAN), eq(false), eq(false), eq(false));
+        accessNetworksManagerCallbackArgumentCaptor.getValue()
+                .onPreferredTransportChanged(NetworkCapabilities.NET_CAPABILITY_MMS, false);
+        processAllMessages();
+
+        // Check if MMS capability remains intact.
+        assertThat(mDataNetworkUT.getNetworkCapabilities()
+                .hasCapability(NetworkCapabilities.NET_CAPABILITY_MMS)).isTrue();
+
+        // Verify MMS capability is removed if using a valid MMS alternative APN.
         doReturn(mMmsDataProfile).when(mDataProfileManager).getDataProfileForNetworkRequest(
                 any(TelephonyNetworkRequest.class),
                     eq(TelephonyManager.NETWORK_TYPE_IWLAN), eq(false), eq(false), eq(false));

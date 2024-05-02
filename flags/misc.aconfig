@@ -1,4 +1,5 @@
 package: "com.android.internal.telephony.flags"
+container: "system"
 
 # OWNER=tjstuart TARGET=24Q3
 flag {
@@ -112,6 +113,17 @@ flag {
     namespace: "telephony"
     description: "Fix bug when preloaded carrier app is uninstalled and lose provisioning data"
     bug:"158028151"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+# OWNER=sangyun TARGET=24Q3
+flag {
+    name: "roaming_notification_for_single_data_network"
+    namespace: "telephony"
+    description: "Fix bug where roaming notification was not shown on a single data network."
+    bug:"249908996"
     metadata {
         purpose: PURPOSE_BUGFIX
     }

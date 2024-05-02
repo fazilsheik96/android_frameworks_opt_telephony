@@ -20,6 +20,7 @@ import static com.android.internal.telephony.TelephonyStatsLog.CARRIER_ID_TABLE_
 import static com.android.internal.telephony.TelephonyStatsLog.CELLULAR_DATA_SERVICE_SWITCH;
 import static com.android.internal.telephony.TelephonyStatsLog.CELLULAR_SERVICE_STATE;
 import static com.android.internal.telephony.TelephonyStatsLog.DATA_CALL_SESSION;
+import static com.android.internal.telephony.TelephonyStatsLog.DATA_NETWORK_VALIDATION;
 import static com.android.internal.telephony.TelephonyStatsLog.DEVICE_TELEPHONY_PROPERTIES;
 import static com.android.internal.telephony.TelephonyStatsLog.EMERGENCY_NUMBERS_INFO;
 import static com.android.internal.telephony.TelephonyStatsLog.GBA_EVENT;
@@ -72,6 +73,7 @@ import com.android.internal.telephony.imsphone.ImsPhone;
 import com.android.internal.telephony.nano.PersistAtomsProto.CellularDataServiceSwitch;
 import com.android.internal.telephony.nano.PersistAtomsProto.CellularServiceState;
 import com.android.internal.telephony.nano.PersistAtomsProto.DataCallSession;
+import com.android.internal.telephony.nano.PersistAtomsProto.DataNetworkValidation;
 import com.android.internal.telephony.nano.PersistAtomsProto.EmergencyNumbersInfo;
 import com.android.internal.telephony.nano.PersistAtomsProto.GbaEvent;
 import com.android.internal.telephony.nano.PersistAtomsProto.ImsDedicatedBearerEvent;
@@ -226,6 +228,7 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
             registerAtom(SATELLITE_OUTGOING_DATAGRAM);
             registerAtom(SATELLITE_PROVISION);
             registerAtom(SATELLITE_SOS_MESSAGE_RECOMMENDER);
+            registerAtom(DATA_NETWORK_VALIDATION);
             Rlog.d(TAG, "registered");
         } else {
             Rlog.e(TAG, "could not get StatsManager, atoms not registered");
@@ -320,6 +323,8 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 return pullSatelliteProvision(data);
             case SATELLITE_SOS_MESSAGE_RECOMMENDER:
                 return pullSatelliteSosMessageRecommender(data);
+            case DATA_NETWORK_VALIDATION:
+                return pullDataNetworkValidation(data);
             default:
                 Rlog.e(TAG, String.format("unexpected atom ID %d", atomTag));
                 return StatsManager.PULL_SKIP;
@@ -940,6 +945,19 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
         }
     }
 
+    private int pullDataNetworkValidation(@NonNull List<StatsEvent> data) {
+        DataNetworkValidation[] dataNetworkValidations =
+                mStorage.getDataNetworkValidation(mPowerCorrelatedMinCooldownMillis);
+        if (dataNetworkValidations != null) {
+            Arrays.stream(dataNetworkValidations)
+                    .forEach(d -> data.add(buildStatsEvent(d)));
+            return StatsManager.PULL_SUCCESS;
+        } else {
+            Rlog.w(TAG, "DATA_NETWORK_VALIDATION pull too frequent, skipping");
+            return StatsManager.PULL_SKIP;
+        }
+    }
+
     /** Registers a pulled atom ID {@code atomId}. */
     private void registerAtom(int atomId) {
         mStatsManager.setPullAtomCallback(atomId, /* metadata= */ null,
@@ -975,7 +993,8 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 state.foldState,
                 state.overrideVoiceService,
                 state.isDataEnabled,
-                state.isIwlanCrossSim);
+                state.isIwlanCrossSim,
+                state.isNtn);
     }
 
     private static StatsEvent buildStatsEvent(VoiceCallRatUsage usage) {
@@ -1033,7 +1052,8 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 session.isIwlanCrossSimAtStart,
                 session.isIwlanCrossSimAtEnd,
                 session.isIwlanCrossSimAtConnected,
-                session.vonrEnabled);
+                session.vonrEnabled,
+                session.isNtn);
 
     }
 
@@ -1110,7 +1130,8 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 dataCallSession.handoverFailureCauses,
                 dataCallSession.handoverFailureRat,
                 dataCallSession.isNonDds,
-                dataCallSession.isIwlanCrossSim);
+                dataCallSession.isIwlanCrossSim,
+                dataCallSession.isNtn);
     }
 
     private static StatsEvent buildStatsEvent(ImsRegistrationStats stats) {
@@ -1353,7 +1374,15 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 SATELLITE_SESSION,
                 satelliteSession.satelliteServiceInitializationResult,
                 satelliteSession.satelliteTechnology,
-                satelliteSession.count);
+                satelliteSession.count,
+                satelliteSession.satelliteServiceTerminationResult,
+                satelliteSession.initializationProcessingTimeMillis,
+                satelliteSession.terminationProcessingTimeMillis,
+                satelliteSession.sessionDurationSeconds,
+                satelliteSession.countOfOutgoingDatagramSuccess,
+                satelliteSession.countOfOutgoingDatagramFailed,
+                satelliteSession.countOfIncomingDatagramSuccess,
+                satelliteSession.countOfIncomingDatagramFailed);
     }
 
     private static StatsEvent buildStatsEvent(SatelliteIncomingDatagram stats) {
@@ -1393,6 +1422,18 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 stats.isMultiSim,
                 stats.recommendingHandoverType,
                 stats.isSatelliteAllowedInCurrentLocation);
+    }
+
+    private static StatsEvent buildStatsEvent(DataNetworkValidation stats) {
+        return TelephonyStatsLog.buildStatsEvent(
+                DATA_NETWORK_VALIDATION,
+                stats.networkType,
+                stats.apnTypeBitmask,
+                stats.signalStrength,
+                stats.validationResult,
+                stats.elapsedTimeInMillis,
+                stats.handoverAttempted,
+                stats.networkValidationCount);
     }
 
     /** Returns all phones in {@link PhoneFactory}, or an empty array if phones not made yet. */

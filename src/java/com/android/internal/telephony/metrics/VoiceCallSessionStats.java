@@ -75,6 +75,7 @@ import com.android.internal.telephony.imsphone.ImsPhone;
 import com.android.internal.telephony.imsphone.ImsPhoneConnection;
 import com.android.internal.telephony.nano.PersistAtomsProto.VoiceCallSession;
 import com.android.internal.telephony.nano.TelephonyProto.TelephonyCallSession.Event.AudioCodec;
+import com.android.internal.telephony.satellite.SatelliteController;
 import com.android.internal.telephony.uicc.UiccController;
 import com.android.telephony.Rlog;
 
@@ -171,11 +172,14 @@ public class VoiceCallSessionStats {
     private final VonrHelper mVonrHelper =
             PhoneFactory.getMetricsCollector().getVonrHelper();
 
+    private final SatelliteController mSatelliteController;
+
     public VoiceCallSessionStats(int phoneId, Phone phone, @NonNull FeatureFlags featureFlags) {
         mPhoneId = phoneId;
         mPhone = phone;
         mFlags = featureFlags;
         DataConnectionStateTracker.getInstance(phoneId).start(phone);
+        mSatelliteController = SatelliteController.getInstance();
     }
 
     /* CS calls */
@@ -570,6 +574,9 @@ public class VoiceCallSessionStats {
             proto.vonrEnabled = mVonrHelper.getVonrEnabled(mPhone.getSubId());
         }
 
+        proto.isNtn = mSatelliteController != null
+                ? mSatelliteController.isInSatelliteModeForCarrierRoaming(mPhone) : false;
+
         mAtomsStorage.addVoiceCallSession(proto);
 
         // merge RAT usages to PersistPullers when the call session ends (i.e. no more active calls)
@@ -790,11 +797,8 @@ public class VoiceCallSessionStats {
                 }
             }
         }
-        if (bearer == VOICE_CALL_SESSION__BEARER_AT_END__CALL_BEARER_IMS) {
-            return TelephonyManager.NETWORK_TYPE_UNKNOWN;
-        } else {
-            return ServiceStateStats.getRat(state, NetworkRegistrationInfo.DOMAIN_CS);
-        }
+
+        return ServiceStateStats.getRat(state, NetworkRegistrationInfo.DOMAIN_CS);
     }
 
     /** Resets the list of codecs used for the connection with only the codec currently in use. */

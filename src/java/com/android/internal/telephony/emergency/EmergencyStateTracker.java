@@ -354,11 +354,26 @@ public class EmergencyStateTracker {
                             mOnEcmExitCompleteRunnable.run();
                             mOnEcmExitCompleteRunnable = null;
                         }
+                        if (mPhone != null && mEmergencyMode == MODE_EMERGENCY_WWAN) {
+                            // In cross sim redialing.
+                            setEmergencyModeInProgress(true);
+                            mWasEmergencyModeSetOnModem = true;
+                            mPhone.setEmergencyMode(MODE_EMERGENCY_WWAN,
+                                    mHandler.obtainMessage(MSG_SET_EMERGENCY_MODE_DONE,
+                                    Integer.valueOf(EMERGENCY_TYPE_CALL)));
+                        }
                     } else if (emergencyType == EMERGENCY_TYPE_SMS) {
                         if (mIsEmergencyCallStartedDuringEmergencySms) {
                             mIsEmergencyCallStartedDuringEmergencySms = false;
                             turnOnRadioAndSwitchDds(mPhone, EMERGENCY_TYPE_CALL,
                                     mIsTestEmergencyNumber);
+                        } else if (mPhone != null && mEmergencyMode == MODE_EMERGENCY_WWAN) {
+                            // Starting emergency call while exiting emergency mode
+                            setEmergencyModeInProgress(true);
+                            mWasEmergencyModeSetOnModem = true;
+                            mPhone.setEmergencyMode(MODE_EMERGENCY_WWAN,
+                                    mHandler.obtainMessage(MSG_SET_EMERGENCY_MODE_DONE,
+                                    Integer.valueOf(EMERGENCY_TYPE_CALL)));
                         } else if (mIsEmergencySmsStartedDuringScbm) {
                             mIsEmergencySmsStartedDuringScbm = false;
                             setEmergencyMode(mSmsPhone, emergencyType,
@@ -713,6 +728,16 @@ public class EmergencyStateTracker {
             maybeNotifyTransportChangeCompleted(emergencyType, false);
             return;
         }
+
+        if (emergencyType == EMERGENCY_TYPE_CALL
+                && mode == MODE_EMERGENCY_WWAN
+                && isEmergencyModeInProgress() && !isInEmergencyMode()) {
+            // In cross sim redialing or ending emergency SMS, exitEmergencyMode is not completed.
+            mEmergencyMode = mode;
+            Rlog.i(TAG, "setEmergencyMode wait for the completion of exitEmergencyMode");
+            return;
+        }
+
         mEmergencyMode = mode;
         setEmergencyModeInProgress(true);
 
@@ -1210,6 +1235,15 @@ public class EmergencyStateTracker {
                 && mEmergencyCallDomain == NetworkRegistrationInfo.DOMAIN_CS && isInEcm();
     }
 
+    /**
+     * Returns {@code true} if currently in emergency callback mode with the given {@link Phone}.
+     *
+     * @param phone the {@link Phone} for the emergency call.
+     */
+    public boolean isInEcm(Phone phone) {
+        return isInEcm() && isSamePhone(mPhone, phone);
+    }
+
     private void sendEmergencyCallStateChange(Phone phone, boolean isAlive) {
         if ((isAlive && !mSentEmergencyCallState && getBroadcastEmergencyCallStateChanges(phone))
                 || (!isAlive && mSentEmergencyCallState)) {
@@ -1521,6 +1555,11 @@ public class EmergencyStateTracker {
 
                 @Override
                 public boolean isOkToCall(Phone phone, int serviceState, boolean imsVoiceCapable) {
+                    if (!Objects.equals(mOngoingConnection, expectedConnection)) {
+                        Rlog.i(TAG, "isOkToCall "
+                                + expectedConnection.getTelecomCallId() + " canceled.");
+                        return true;
+                    }
                     // Wait for normal service state or timeout if required.
                     if (phone == phoneForEmergency
                             && waitForInServiceTimeout > 0
@@ -1533,6 +1572,11 @@ public class EmergencyStateTracker {
 
                 @Override
                 public boolean onTimeout(Phone phone, int serviceState, boolean imsVoiceCapable) {
+                    if (!Objects.equals(mOngoingConnection, expectedConnection)) {
+                        Rlog.i(TAG, "onTimeout "
+                                + expectedConnection.getTelecomCallId() + " canceled.");
+                        return true;
+                    }
                     // onTimeout shall be called only with the Phone for emergency
                     return phone.getServiceStateTracker().isRadioOn()
                             && !satelliteController.isSatelliteEnabled();

@@ -1,4 +1,5 @@
 package: "com.android.internal.telephony.flags"
+container: "system"
 
 # OWNER=hyosunkim TARGET=24Q2
 flag {
@@ -88,6 +89,17 @@ flag {
     namespace: "telephony"
     description: "This flag changes the media type when answering incoming call via MMI code"
     bug:"286499659"
+    metadata {
+        purpose: PURPOSE_BUGFIX
+    }
+}
+
+# OWNER=joonhunshin TARGET=24Q3
+flag {
+    name: "notify_initial_ims_provisioning_status"
+    namespace: "telephony"
+    description: "This flag allows to notify initial IMS provisioning status when IFeatureProvisioningCallback registered or ImsService connected"
+    bug:"330082572"
     metadata {
         purpose: PURPOSE_BUGFIX
     }
