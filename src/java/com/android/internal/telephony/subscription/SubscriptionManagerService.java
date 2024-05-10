@@ -105,6 +105,7 @@ import com.android.internal.telephony.data.PhoneSwitcher;
 import com.android.internal.telephony.euicc.EuiccController;
 import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.flags.Flags;
+import com.android.internal.telephony.satellite.SatelliteController;
 import com.android.internal.telephony.subscription.SubscriptionDatabaseManager.SubscriptionDatabaseManagerCallback;
 import com.android.internal.telephony.uicc.IccRecords;
 import com.android.internal.telephony.uicc.IccUtils;
@@ -1423,13 +1424,19 @@ public class SubscriptionManagerService extends ISub.Stub {
         }
 
         if (simState == TelephonyManager.SIM_STATE_ABSENT) {
-            if (!isDsdsToSsConfigEnabled()) {
+            SatelliteController satelliteController = SatelliteController.getInstance();
+            boolean isSatelliteEnabledOrBeingEnabled = false;
+            if (satelliteController != null) {
+                isSatelliteEnabledOrBeingEnabled = satelliteController.isSatelliteEnabled()
+                        || satelliteController.isSatelliteBeingEnabled();
+            }
+
+            if (!isSatelliteEnabledOrBeingEnabled) {
+              if (!isDsdsToSsConfigEnabled()) {
                 // Re-enable the pSIM when it's removed, so it will be in enabled state when it gets
                 // re-inserted again. (pre-U behavior)
                 List<String> iccIds = getIccIdsOfInsertedPhysicalSims();
                 mSubscriptionDatabaseManager.getAllSubscriptions().stream()
-                        // All the removed pSIMs (Note this could include some erased eSIM that has
-                        // embedded bit removed).
                         .filter(subInfo -> !iccIds.contains(subInfo.getIccId())
                                 && !subInfo.isEmbedded())
                         .forEach(subInfo -> {
@@ -1441,6 +1448,7 @@ public class SubscriptionManagerService extends ISub.Stub {
                             mSubscriptionDatabaseManager.setPortIndex(subId,
                                     TelephonyManager.INVALID_PORT_INDEX);
                         });
+              }
             }
 
             if (mSlotIndexToSubId.containsKey(phoneId)) {
