@@ -31,6 +31,7 @@ import android.net.TrafficStats;
 import android.os.AsyncResult;
 import android.os.Handler;
 import android.os.HandlerExecutor;
+import android.os.Looper;
 import android.os.Message;
 import android.os.OutcomeReceiver;
 import android.preference.PreferenceManager;
@@ -170,7 +171,6 @@ public class LinkBandwidthEstimator extends Handler {
     private final Phone mPhone;
     private final TelephonyFacade mTelephonyFacade;
     private final TelephonyManager mTelephonyManager;
-    private final ConnectivityManager mConnectivityManager;
     private final DataNetworkController mDataNetworkController;
     private final LocalLog mLocalLog = new LocalLog(512);
     private boolean mScreenOn = false;
@@ -186,29 +186,29 @@ public class LinkBandwidthEstimator extends Handler {
     private long mRxBytesDeltaAcc;
 
     private ModemActivityInfo mLastModemActivityInfo = null;
-    private final TelephonyCallback mTelephonyCallback = new TelephonyCallbackImpl();
     private int mSignalStrengthDbm;
     private int mSignalLevel;
     private int mDataRat = TelephonyManager.NETWORK_TYPE_UNKNOWN;
     private int mTac;
     @NonNull private String mPlmn = UNKNOWN_PLMN;
     private NetworkCapabilities mNetworkCapabilities;
-    private NetworkBandwidth mPlaceholderNetwork;
+    private final NetworkBandwidth mPlaceholderNetwork;
     private long mFilterUpdateTimeMs;
 
     private int mBandwidthUpdateSignalDbm = -1;
     private int mBandwidthUpdateSignalLevel = -1;
     private int mBandwidthUpdateDataRat = TelephonyManager.NETWORK_TYPE_UNKNOWN;
     private String mBandwidthUpdatePlmn = UNKNOWN_PLMN;
-    private BandwidthState mTxState = new BandwidthState(LINK_TX);
-    private BandwidthState mRxState = new BandwidthState(LINK_RX);
+    private final BandwidthState mTxState = new BandwidthState(LINK_TX);
+    private final BandwidthState mRxState = new BandwidthState(LINK_RX);
     private long mLastPlmnOrRatChangeTimeMs;
     private long mLastDrsOrRatChangeTimeMs;
 
     private int mDataActivity = TelephonyManager.DATA_ACTIVITY_NONE;
 
     /** Link bandwidth estimator callbacks. */
-    private final @NonNull Set<LinkBandwidthEstimatorCallback> mLinkBandwidthEstimatorCallbacks =
+    @NonNull
+    private final Set<LinkBandwidthEstimatorCallback> mLinkBandwidthEstimatorCallbacks =
             new ArraySet<>();
 
     /**
@@ -278,14 +278,14 @@ public class LinkBandwidthEstimator extends Handler {
 
     private final OutcomeReceiver<ModemActivityInfo, TelephonyManager.ModemActivityInfoException>
             mOutcomeReceiver =
-            new OutcomeReceiver<ModemActivityInfo, TelephonyManager.ModemActivityInfoException>() {
+            new OutcomeReceiver<>() {
                 @Override
                 public void onResult(ModemActivityInfo result) {
                     obtainMessage(MSG_MODEM_ACTIVITY_RETURNED, result).sendToTarget();
                 }
 
                 @Override
-                public void onError(TelephonyManager.ModemActivityInfoException e) {
+                public void onError(@NonNull TelephonyManager.ModemActivityInfoException e) {
                     Rlog.e(TAG, "error reading modem stats:" + e);
                     obtainMessage(MSG_MODEM_ACTIVITY_RETURNED, null).sendToTarget();
                 }
@@ -304,21 +304,28 @@ public class LinkBandwidthEstimator extends Handler {
                 }
             };
 
-    public LinkBandwidthEstimator(Phone phone, TelephonyFacade telephonyFacade) {
+    public LinkBandwidthEstimator(Phone phone, Looper looper, TelephonyFacade telephonyFacade) {
+        super(looper);
         mPhone = phone;
         TAG = LinkBandwidthEstimator.class.getSimpleName() + "-" + mPhone.getPhoneId();
         mTelephonyFacade = telephonyFacade;
         mTelephonyManager = phone.getContext()
                 .getSystemService(TelephonyManager.class)
                 .createForSubscriptionId(phone.getSubId());
-        mConnectivityManager = phone.getContext().getSystemService(ConnectivityManager.class);
         DisplayManager dm = (DisplayManager) phone.getContext().getSystemService(
                 Context.DISPLAY_SERVICE);
-        dm.registerDisplayListener(mDisplayListener, null);
+        if (dm != null) {
+            dm.registerDisplayListener(mDisplayListener, null);
+        }
         handleScreenStateChanged(isScreenOn());
-        mConnectivityManager.registerDefaultNetworkCallback(mDefaultNetworkCallback, this);
+
+        ConnectivityManager cm = phone.getContext()
+                .getSystemService(ConnectivityManager.class);
+        if (cm != null) {
+            cm.registerDefaultNetworkCallback(mDefaultNetworkCallback, this);
+        }
         mTelephonyManager.registerTelephonyCallback(new HandlerExecutor(this),
-                mTelephonyCallback);
+                new TelephonyCallbackImpl());
         mPlaceholderNetwork = new NetworkBandwidth(UNKNOWN_PLMN);
         initAvgBwPerRatTable();
         registerNrStateFrequencyChange();
@@ -396,6 +403,7 @@ public class LinkBandwidthEstimator extends Handler {
         // the screen is turned off transiently such as due to the proximity sensor.
         final DisplayManager dm = (DisplayManager) mPhone.getContext().getSystemService(
                 Context.DISPLAY_SERVICE);
+        if (dm == null) return false;
         Display[] displays = dm.getDisplays();
 
         if (displays != null) {
@@ -446,6 +454,7 @@ public class LinkBandwidthEstimator extends Handler {
         handleTrafficStatsPollConditionChanged();
     }
 
+    @SuppressWarnings("unchecked")
     private void handleDrsOrRatChanged(AsyncResult ar) {
         Pair<Integer, Integer> drsRatPair = (Pair<Integer, Integer>) ar.result;
         logd("DrsOrRatChanged dataRegState " + drsRatPair.first + " rilRat " + drsRatPair.second);
@@ -765,7 +774,7 @@ public class LinkBandwidthEstimator extends Handler {
                 return;
             }
             long filterOutKbps = (long) mFilterKbps * alpha
-                    + filterInKbps * FILTER_SCALE - filterInKbps * alpha;
+                    + (long) filterInKbps * FILTER_SCALE - (long) filterInKbps * alpha;
             filterOutKbps = filterOutKbps / FILTER_SCALE;
             mFilterKbps = (int) Math.min(filterOutKbps, Integer.MAX_VALUE);
 
@@ -913,8 +922,8 @@ public class LinkBandwidthEstimator extends Handler {
 
             StringBuilder sb = new StringBuilder();
             logd(sb.append(mLink)
-                    .append(" sampKbps ").append(mBwSampleKbps)
-                    .append(" filtKbps ").append(mFilterKbps)
+                    .append(" sampleKbps ").append(mBwSampleKbps)
+                    .append(" filterKbps ").append(mFilterKbps)
                     .append(" reportKbps ").append(mLastReportedBwKbps)
                     .append(" avgUsedKbps ").append(mAvgUsedKbps)
                     .append(" csKbps ").append(mStaticBwKbps)
@@ -980,7 +989,8 @@ public class LinkBandwidthEstimator extends Handler {
     /**
      * @return The data activity.
      */
-    public @DataActivityType int getDataActivity() {
+    @DataActivityType
+    public int getDataActivity() {
         return mDataActivity;
     }
 
@@ -1084,7 +1094,7 @@ public class LinkBandwidthEstimator extends Handler {
         /* ss should always be non-null */
         if (!TextUtils.isEmpty(ss.getOperatorNumeric())) {
             plmn = ss.getOperatorNumeric();
-        } else if (cellIdentity != null && !TextUtils.isEmpty(cellIdentity.getPlmn())) {
+        } else if (!TextUtils.isEmpty(cellIdentity.getPlmn())) {
             plmn = cellIdentity.getPlmn();
         } else {
             plmn = UNKNOWN_PLMN;
@@ -1095,7 +1105,6 @@ public class LinkBandwidthEstimator extends Handler {
             mPlmn = plmn;
         }
 
-        boolean updatedRat = false;
         NetworkRegistrationInfo nri = getDataNri();
         if (nri != null) {
             int dataRat = nri.getAccessNetworkTechnology();
@@ -1169,7 +1178,7 @@ public class LinkBandwidthEstimator extends Handler {
         }
         @Override
         public boolean equals(@Nullable Object o) {
-            if (o == null || !(o instanceof NetworkKey) || hashCode() != o.hashCode()) {
+            if (!(o instanceof NetworkKey that) || hashCode() != o.hashCode()) {
                 return false;
             }
 
@@ -1177,7 +1186,6 @@ public class LinkBandwidthEstimator extends Handler {
                 return true;
             }
 
-            NetworkKey that = (NetworkKey) o;
             return mPlmn.equals(that.mPlmn)
                     && mTac == that.mTac
                     && mDataRat.equals(that.mDataRat);
@@ -1189,11 +1197,7 @@ public class LinkBandwidthEstimator extends Handler {
         }
         @Override
         public String toString() {
-            StringBuilder sb = new StringBuilder();
-            sb.append("Plmn").append(mPlmn)
-                    .append("Rat").append(mDataRat)
-                    .append("Tac").append(mTac);
-            return sb.toString();
+            return "Plmn" + mPlmn + "Rat" + mDataRat + "Tac" + mTac;
         }
     }
 
@@ -1252,11 +1256,7 @@ public class LinkBandwidthEstimator extends Handler {
         }
 
         private String getDataKey(int link, int level) {
-            StringBuilder sb = new StringBuilder();
-            return sb.append(mKey)
-                    .append("Link").append(link)
-                    .append("Level").append(level)
-                    .toString();
+            return mKey + "Link" + link + "Level" + level;
         }
 
         /** Get the accumulated bandwidth value */

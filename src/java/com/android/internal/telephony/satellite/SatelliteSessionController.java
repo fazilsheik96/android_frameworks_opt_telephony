@@ -123,6 +123,7 @@ public class SatelliteSessionController extends StateMachine {
     @NonNull private final UnavailableState mUnavailableState = new UnavailableState();
     @NonNull private final PowerOffState mPowerOffState = new PowerOffState();
     @NonNull private final EnablingState mEnablingState = new EnablingState();
+    @NonNull private final DisablingState mDisablingState = new DisablingState();
     @NonNull private final IdleState mIdleState = new IdleState();
     @NonNull private final TransferringState mTransferringState = new TransferringState();
     @NonNull private final ListeningState mListeningState = new ListeningState();
@@ -222,6 +223,7 @@ public class SatelliteSessionController extends StateMachine {
         addState(mUnavailableState);
         addState(mPowerOffState);
         addState(mEnablingState);
+        addState(mDisablingState);
         addState(mIdleState);
         addState(mTransferringState);
         addState(mListeningState);
@@ -396,6 +398,16 @@ public class SatelliteSessionController extends StateMachine {
         mIsDemoMode = isDemoMode;
     }
 
+    /**
+     * Get whether state machine is in enabling state.
+     *
+     * @return {@code true} if state machine is in enabling state and {@code false} otherwise.
+     */
+    public boolean isInEnablingState() {
+        if (DBG) logd("isInEnablingState: getCurrentState=" + getCurrentState());
+        return getCurrentState() == mEnablingState;
+    }
+
     private boolean isDemoMode() {
         return mIsDemoMode;
     }
@@ -521,6 +533,41 @@ public class SatelliteSessionController extends StateMachine {
         }
     }
 
+    private class DisablingState extends State {
+        @Override
+        public void enter() {
+            if (DBG) logd("Entering DisablingState");
+
+            mCurrentState = SatelliteManager.SATELLITE_MODEM_STATE_DISABLING_SATELLITE;
+            notifyStateChangedEvent(SatelliteManager.SATELLITE_MODEM_STATE_DISABLING_SATELLITE);
+        }
+
+        @Override
+        public void exit() {
+            if (DBG) logd("Exiting DisablingState");
+        }
+
+        @Override
+        public boolean processMessage(Message msg) {
+            if (DBG) log("DisablingState: processing " + getWhatToString(msg.what));
+            switch (msg.what) {
+                case EVENT_SATELLITE_ENABLED_STATE_CHANGED:
+                    handleSatelliteEnabledStateChanged((boolean) msg.obj);
+                    break;
+            }
+            // Ignore all unexpected events.
+            return HANDLED;
+        }
+
+        private void handleSatelliteEnabledStateChanged(boolean on) {
+            if (on) {
+                logw("Unexpected power on event while disabling satellite");
+            } else {
+                transitionTo(mPowerOffState);
+            }
+        }
+    }
+
     private class IdleState extends State {
         @Override
         public void enter() {
@@ -546,6 +593,9 @@ public class SatelliteSessionController extends StateMachine {
                 case EVENT_DISABLE_CELLULAR_MODEM_WHILE_SATELLITE_MODE_IS_ON_DONE:
                     handleEventDisableCellularModemWhileSatelliteModeIsOnDone(
                             (AsyncResult) msg.obj);
+                    break;
+                case EVENT_SATELLITE_ENABLEMENT_STARTED:
+                    handleSatelliteEnablementStarted((boolean) msg.obj);
                     break;
             }
             // Ignore all unexpected events.
@@ -637,6 +687,9 @@ public class SatelliteSessionController extends StateMachine {
                 case EVENT_SATELLITE_MODEM_STATE_CHANGED:
                     handleEventSatelliteModemStateChange(msg.arg1);
                     break;
+                case EVENT_SATELLITE_ENABLEMENT_STARTED:
+                    handleSatelliteEnablementStarted((boolean) msg.obj);
+                    break;
             }
             // Ignore all unexpected events.
             return HANDLED;
@@ -704,6 +757,9 @@ public class SatelliteSessionController extends StateMachine {
                 case EVENT_SATELLITE_ENABLED_STATE_CHANGED:
                     handleSatelliteEnabledStateChanged(!(boolean) msg.obj, "ListeningState");
                     break;
+                case EVENT_SATELLITE_ENABLEMENT_STARTED:
+                    handleSatelliteEnablementStarted((boolean) msg.obj);
+                    break;
             }
             // Ignore all unexpected events.
             return HANDLED;
@@ -762,6 +818,9 @@ public class SatelliteSessionController extends StateMachine {
                     break;
                 case EVENT_DATAGRAM_TRANSFER_STATE_CHANGED:
                     handleEventDatagramTransferStateChanged((DatagramTransferState) msg.obj);
+                    break;
+                case EVENT_SATELLITE_ENABLEMENT_STARTED:
+                    handleSatelliteEnablementStarted((boolean) msg.obj);
                     break;
             }
             // Ignore all unexpected events.
@@ -824,6 +883,9 @@ public class SatelliteSessionController extends StateMachine {
                     break;
                 case EVENT_DATAGRAM_TRANSFER_STATE_CHANGED:
                     handleEventDatagramTransferStateChanged((DatagramTransferState) msg.obj);
+                    break;
+                case EVENT_SATELLITE_ENABLEMENT_STARTED:
+                    handleSatelliteEnablementStarted((boolean) msg.obj);
                     break;
             }
             // Ignore all unexpected events.
@@ -1030,6 +1092,12 @@ public class SatelliteSessionController extends StateMachine {
         }
     }
 
+    private void handleSatelliteEnablementStarted(boolean enabled) {
+        if (!enabled) {
+            transitionTo(mDisablingState);
+        }
+    }
+
     private boolean isMockModemAllowed() {
         return (DEBUG || SystemProperties.getBoolean(ALLOW_MOCK_MODEM_PROPERTY, false));
     }
@@ -1053,8 +1121,13 @@ public class SatelliteSessionController extends StateMachine {
     }
 
     private long getSatelliteNbIotInactivityTimeoutMillis() {
-        return mContext.getResources().getInteger(
-                R.integer.config_satellite_nb_iot_inactivity_timeout_millis);
+        if (isDemoMode()) {
+            return mContext.getResources().getInteger(
+                    R.integer.config_satellite_demo_mode_nb_iot_inactivity_timeout_millis);
+        } else {
+            return mContext.getResources().getInteger(
+                    R.integer.config_satellite_nb_iot_inactivity_timeout_millis);
+        }
     }
 
     private void restartNbIotInactivityTimer() {
