@@ -250,13 +250,6 @@ public class DataNetworkController extends Handler {
             TimeUnit.SECONDS.toMillis(1);
 
     /**
-     * The delay in milliseconds to re-evaluate existing data networks for bootstrap sim data usage
-     * limit.
-     */
-    private static final long REEVALUATE_BOOTSTRAP_SIM_DATA_USAGE_MILLIS =
-            TimeUnit.SECONDS.toMillis(60);
-
-    /**
      * The guard timer in milliseconds to limit querying the data usage api stats frequently
      */
     private static final long GUARD_TIMER_INTERVAL_TO_QUERY_DATA_USAGE_API_STATS_MILLIS =
@@ -409,12 +402,6 @@ public class DataNetworkController extends Handler {
     private @NonNull SlidingWindowEventCounter mSetupDataCallWlanFailureCounter;
     /** Event counter for WWAN setup data failure within time window to trigger anomaly report. */
     private @NonNull SlidingWindowEventCounter mSetupDataCallWwanFailureCounter;
-
-    /**
-     * {@code true} if {@link #tearDownAllDataNetworks(int)} was invoked and waiting for all
-     * networks torn down.
-     */
-    private boolean mPendingTearDownAllNetworks = false;
 
     /**
      * The capabilities of the latest released IMS request. To detect back to back release/request
@@ -1689,7 +1676,7 @@ public class DataNetworkController extends Handler {
         }
 
         // Check if there are pending tear down all networks request.
-        if (mPendingTearDownAllNetworks) {
+        if (mPhone.getServiceStateTracker().isPendingRadioPowerOffAfterDataOff()) {
             evaluation.addDataDisallowedReason(DataDisallowedReason.PENDING_TEAR_DOWN_ALL);
         }
 
@@ -2041,7 +2028,7 @@ public class DataNetworkController extends Handler {
                 if (!hasMessages(EVENT_REEVALUATE_EXISTING_DATA_NETWORKS)) {
                     sendMessageDelayed(obtainMessage(EVENT_REEVALUATE_EXISTING_DATA_NETWORKS,
                             DataEvaluationReason.CHECK_DATA_USAGE),
-                            REEVALUATE_BOOTSTRAP_SIM_DATA_USAGE_MILLIS);
+                            mDataConfigManager.getReevaluateBootstrapSimDataUsageMillis());
                 } else {
                     log("skip scheduling evaluating existing data networks since already"
                             + "scheduled");
@@ -3067,7 +3054,6 @@ public class DataNetworkController extends Handler {
         mDataNetworkList.remove(dataNetwork);
         trackSetupDataCallFailure(dataNetwork.getTransport(), cause);
         if (mAnyDataNetworkExisting && mDataNetworkList.isEmpty()) {
-            mPendingTearDownAllNetworks = false;
             mAnyDataNetworkExisting = false;
             mDataNetworkControllerCallbacks.forEach(callback -> callback.invokeFromExecutor(
                     () -> callback.onAnyDataNetworkExistingChanged(mAnyDataNetworkExisting)));
@@ -3168,7 +3154,7 @@ public class DataNetworkController extends Handler {
         if (isEsimBootStrapProvisioningActivated()) {
             sendMessageDelayed(obtainMessage(EVENT_REEVALUATE_EXISTING_DATA_NETWORKS,
                     DataEvaluationReason.CHECK_DATA_USAGE),
-                    REEVALUATE_BOOTSTRAP_SIM_DATA_USAGE_MILLIS);
+                    mDataConfigManager.getReevaluateBootstrapSimDataUsageMillis());
         }
     }
 
@@ -3399,7 +3385,6 @@ public class DataNetworkController extends Handler {
 
         if (mAnyDataNetworkExisting && mDataNetworkList.isEmpty()) {
             log("All data networks disconnected now.");
-            mPendingTearDownAllNetworks = false;
             mAnyDataNetworkExisting = false;
             mDataNetworkControllerCallbacks.forEach(callback -> callback.invokeFromExecutor(
                     () -> callback.onAnyDataNetworkExistingChanged(mAnyDataNetworkExisting)));
@@ -4142,14 +4127,13 @@ public class DataNetworkController extends Handler {
      *
      * @param reason The reason to tear down.
      */
-    public void onTearDownAllDataNetworks(@TearDownReason int reason) {
+    private void onTearDownAllDataNetworks(@TearDownReason int reason) {
         log("onTearDownAllDataNetworks: reason=" + DataNetwork.tearDownReasonToString(reason));
         if (mDataNetworkList.isEmpty()) {
             log("tearDownAllDataNetworks: No pending networks. All disconnected now.");
             return;
         }
 
-        mPendingTearDownAllNetworks = true;
         for (DataNetwork dataNetwork : mDataNetworkList) {
             if (!dataNetwork.isDisconnecting()) {
                 tearDownGracefully(dataNetwork, reason);

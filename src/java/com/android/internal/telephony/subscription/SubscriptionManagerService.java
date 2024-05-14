@@ -42,6 +42,7 @@ import android.net.Uri;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.CountDownTimer;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
@@ -142,6 +143,9 @@ public class SubscriptionManagerService extends ISub.Stub {
     private static final String LOG_TAG = "SMSVC";
     private static final String ALLOW_MOCK_MODEM_PROPERTY = "persist.radio.allow_mock_modem";
     private static final String BOOT_ALLOW_MOCK_MODEM_PROPERTY = "ro.boot.radio.allow_mock_modem";
+
+    private static final int CHECK_BOOTSTRAP_TIMER_IN_MS = 20 * 60 * 1000; // 20 minutes
+    private static CountDownTimer bootstrapProvisioningTimer;
 
     /** Whether enabling verbose debugging message or not. */
     private static final boolean VDBG = false;
@@ -313,6 +317,9 @@ public class SubscriptionManagerService extends ISub.Stub {
     @NonNull
     private final int[] mSimState;
 
+    /** Vendor API level from system property. */
+    private final int mVendorApiLevel;
+
     /**
      * {@code true} if a user profile can only see the SIMs associated with it, unless it possesses
      * no SIMs on the device.
@@ -467,6 +474,8 @@ public class SubscriptionManagerService extends ISub.Stub {
         mEuiccManager = context.getSystemService(EuiccManager.class);
         mAppOpsManager = context.getSystemService(AppOpsManager.class);
         mPackageManager = context.getPackageManager();
+        mVendorApiLevel = SystemProperties.getInt(
+                "ro.vendor.api_level", Build.VERSION.DEVICE_INITIAL_SDK_INT);
 
         mUiccController = UiccController.getInstance();
         mHandler = new Handler(looper);
@@ -933,9 +942,13 @@ public class SubscriptionManagerService extends ISub.Stub {
      *
      * @param subId Subscription id.
      * @param groupOwner The group owner to assign to the subscription
+     *
+     * @throws SecurityException if the caller does not have required permissions.
      */
+    @Override
+    @RequiresPermission(Manifest.permission.MODIFY_PHONE_STATE)
     public void setGroupOwner(int subId, @NonNull String groupOwner) {
-        // This can throw IllegalArgumentException if the subscription does not exist.
+        enforcePermissions("setGroupOwner", Manifest.permission.MODIFY_PHONE_STATE);
         try {
             mSubscriptionDatabaseManager.setGroupOwner(
                     subId,
@@ -1595,6 +1608,43 @@ public class SubscriptionManagerService extends ISub.Stub {
 
         updateGroupDisabled();
         updateDefaultSubId();
+
+        if (mSlotIndexToSubId.containsKey(phoneId) &&
+                isEsimBootStrapProvisioningActiveForSubId(mSlotIndexToSubId.get(phoneId))) {
+            startEsimBootstrapTimer();
+        } else {
+            cancelEsimBootstrapTimer();
+        }
+    }
+
+    private void cancelEsimBootstrapTimer() {
+        if (bootstrapProvisioningTimer != null) {
+            bootstrapProvisioningTimer.cancel();
+            bootstrapProvisioningTimer = null;
+            log("bootstrapProvisioningTimer timer cancelled.");
+        }
+    }
+
+    private void startEsimBootstrapTimer() {
+        if (bootstrapProvisioningTimer == null) {
+            bootstrapProvisioningTimer = new CountDownTimer(CHECK_BOOTSTRAP_TIMER_IN_MS,
+                    CHECK_BOOTSTRAP_TIMER_IN_MS) {
+                @Override
+                public void onTick(long millisUntilFinished) {
+                    // Do nothing
+                }
+
+                @Override
+                public void onFinish() {
+                    AnomalyReporter.reportAnomaly(UUID.fromString("40587b0f-27c9-4b39-b94d"
+                                    + "-71fc9771f354"), "eSim bootstrap has been active for too "
+                            + "long.");
+                    log("bootstrapProvisioningTimer: timer finished esim was not disabled.");
+                    cancelEsimBootstrapTimer();
+                }
+            }.start();
+            log("bootstrapProvisioningTimer timer started.");
+        }
     }
 
     public boolean isDsdsToSsConfigEnabled() {
@@ -2501,7 +2551,7 @@ public class SubscriptionManagerService extends ISub.Stub {
     })
     public int setOpportunistic(boolean opportunistic, int subId, @NonNull String callingPackage) {
         TelephonyPermissions.enforceAnyPermissionGrantedOrCarrierPrivileges(
-                mContext, Binder.getCallingUid(), subId, true, "setOpportunistic",
+                mContext, subId, Binder.getCallingUid(), true, "setOpportunistic",
                 Manifest.permission.MODIFY_PHONE_STATE);
 
         enforceTelephonyFeatureWithException(callingPackage, "setOpportunistic");
@@ -4599,7 +4649,11 @@ public class SubscriptionManagerService extends ISub.Stub {
 
         if (!mFeatureFlags.enforceTelephonyFeatureMappingForPublicApis()
                 || !CompatChanges.isChangeEnabled(ENABLE_FEATURE_MAPPING, callingPackage,
-                Binder.getCallingUserHandle())) {
+                Binder.getCallingUserHandle())
+                || mVendorApiLevel < Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            // Skip to check associated telephony feature,
+            // if compatibility change is not enabled for the current process or
+            // the SDK version of vendor partition is less than Android V.
             return;
         }
 
