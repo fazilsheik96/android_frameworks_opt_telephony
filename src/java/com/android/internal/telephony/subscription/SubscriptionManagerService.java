@@ -1181,7 +1181,7 @@ public class SubscriptionManagerService extends ISub.Stub {
                                 SubscriptionManager.INVALID_SIM_SLOT_INDEX,
                                 null, SubscriptionManager.SUBSCRIPTION_TYPE_LOCAL_SIM);
                         mSubscriptionDatabaseManager.setDisplayName(subId, mContext.getResources()
-                                .getString(R.string.default_card_name, subId));
+                                .getString(R.string.default_card_name, getCardNumber(subId)));
                         subInfo = mSubscriptionDatabaseManager.getSubscriptionInfoInternal(subId);
                     }
 
@@ -1497,7 +1497,8 @@ public class SubscriptionManagerService extends ISub.Stub {
                     subId = insertSubscriptionInfo(iccId, phoneId, null,
                             SubscriptionManager.SUBSCRIPTION_TYPE_LOCAL_SIM);
                     mSubscriptionDatabaseManager.setDisplayName(subId,
-                            mContext.getResources().getString(R.string.default_card_name, subId));
+                            mContext.getResources().getString(R.string.default_card_name,
+                                    getCardNumber(subId)));
                 } else {
                     subId = subInfo.getSubscriptionId();
                     log("updateSubscription: Found existing subscription. subId= " + subId
@@ -4743,6 +4744,11 @@ public class SubscriptionManagerService extends ISub.Stub {
                     "config_satellite_sim_spn_identifier", "");
         }
         log("isSatelliteSpn: overlaySpn=" + overlaySpn + ", spn=" + spn);
+
+        if (TextUtils.isEmpty(spn) || TextUtils.isEmpty(overlaySpn)) {
+            return false;
+        }
+
         return TextUtils.equals(spn, overlaySpn);
     }
 
@@ -4750,6 +4756,24 @@ public class SubscriptionManagerService extends ISub.Stub {
         boolean isAllowed = SystemProperties.getBoolean(ALLOW_MOCK_MODEM_PROPERTY, false);
         return (SystemProperties.getBoolean(ALLOW_MOCK_MODEM_PROPERTY, false)
                 || SystemProperties.getBoolean(BOOT_ALLOW_MOCK_MODEM_PROPERTY, false));
+    }
+
+    /**
+     * Iterates through previously subscribed SIMs to excludes subscriptions that are not visible
+     * to the users to provide a more appropriate number to describe the current SIM.
+     * @param subId current subscription id.
+     * @return cardNumber subId excluding invisible subscriptions.
+     */
+    private int getCardNumber(int subId) {
+        int cardNumber = subId; // Initialize with the potential card number
+        for (int i = subId - 1; i > 0; i--) {
+            SubscriptionInfoInternal subInfo = getSubscriptionInfoInternal(i);
+            if (subInfo != null && !subInfo.isVisible()) {
+                cardNumber--;
+            }
+        }
+
+        return cardNumber;
     }
 
     /**
