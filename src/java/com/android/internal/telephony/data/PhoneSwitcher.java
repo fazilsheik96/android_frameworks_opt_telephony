@@ -1123,7 +1123,7 @@ public class PhoneSwitcher extends Handler {
      * 1. user changed mobile data settings
      * 2. OR user changed auto data switch feature
      */
-    private void onDataEnabledChanged() {
+    protected void onDataEnabledChanged() {
         if (isAnyVoiceCallActiveOnDevice()) {
             // user changed data related settings during call, switch or turn off immediately
             evaluateIfImmediateDataSwitchIsNeeded(
