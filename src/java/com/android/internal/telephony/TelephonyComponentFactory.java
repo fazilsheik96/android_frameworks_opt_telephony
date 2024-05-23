@@ -568,9 +568,9 @@ public class TelephonyComponentFactory {
     }
 
     public RIL makeRIL(Context context, int preferredNetworkType,
-            int cdmaSubscription, Integer instanceId) {
+            int cdmaSubscription, Integer instanceId, @NonNull FeatureFlags featureFlags) {
         Rlog.d(LOG_TAG, "makeRIL");
-        return new RIL(context, preferredNetworkType, cdmaSubscription, instanceId);
+        return new RIL(context, preferredNetworkType, cdmaSubscription, instanceId, featureFlags);
     }
 
     public void makeExtTelephonyClasses(Context context,

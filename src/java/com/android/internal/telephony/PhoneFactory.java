@@ -190,7 +190,7 @@ public class PhoneFactory {
                     sCommandsInterfaces[i] = telephonyComponentFactory.inject(RIL.class.getName()).
                             makeRIL(context,
                                     RadioAccessFamily.getRafFromNetworkType(networkModes[i]),
-                                    cdmaSubscription, i);
+                                    cdmaSubscription, i, featureFlags);
                 }
 
                 if (numPhones > 0) {
@@ -339,7 +339,7 @@ public class PhoneFactory {
                         RIL.class.getName()).
                         makeRIL(context, RadioAccessFamily.getRafFromNetworkType(
                         RILConstants.PREFERRED_NETWORK_MODE),
-                        cdmaSubscription, i);
+                        cdmaSubscription, i, sFeatureFlags);
                 sPhones[i] = createPhone(context, i);
                 if (context.getPackageManager().hasSystemFeature(
                         PackageManager.FEATURE_TELEPHONY_IMS)) {
