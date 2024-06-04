@@ -1055,7 +1055,8 @@ public abstract class SMSDispatcher extends Handler {
             tracker.onSent(mContext);
             mPhone.notifySmsSent(tracker.mDestAddress);
             mSmsDispatchersController.notifySmsSentToEmergencyStateTracker(
-                    tracker.mDestAddress, tracker.mMessageId, false);
+                    tracker.mDestAddress, tracker.mMessageId, false,
+                    tracker.isSinglePartOrLastPart());
 
             mPhone.getSmsStats().onOutgoingSms(
                     tracker.mImsRetry > 0 /* isOverIms */,
@@ -2632,6 +2633,14 @@ public abstract class SMSDispatcher extends Handler {
          */
         protected long getInterval() {
             return SystemClock.elapsedRealtime() - mTimestamp;
+        }
+
+        /**
+         * Returns the flag specifying whether this {@link SmsTracker} is a single part or
+         * the last part of multipart message.
+         */
+        protected boolean isSinglePartOrLastPart() {
+            return mUnsentPartCount != null ? (mUnsentPartCount.get() == 0) : true;
         }
 
         /**

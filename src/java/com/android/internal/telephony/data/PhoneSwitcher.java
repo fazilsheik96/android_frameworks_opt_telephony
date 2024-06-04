@@ -32,7 +32,6 @@ import static java.util.Arrays.copyOf;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
-import android.compat.annotation.UnsupportedAppUsage;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -46,7 +45,6 @@ import android.net.NetworkRequest;
 import android.net.NetworkSpecifier;
 import android.net.TelephonyNetworkSpecifier;
 import android.os.AsyncResult;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
@@ -111,7 +109,7 @@ import java.util.concurrent.Executor;
 /**
  * Utility singleton to monitor subscription changes and incoming NetworkRequests
  * and determine which phone/phones are active.
- *
+ * <p>
  * Manages the ALLOW_DATA calls to modems and notifies phones about changes to
  * the active phones.  Note we don't wait for data attach (which may not happen anyway).
  */
@@ -218,7 +216,6 @@ public class PhoneSwitcher extends Handler {
                 }
             };
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     // How many phones (correspondingly logical modems) are allowed for PS attach. This is used
     // when we specifically use setDataAllowed to initiate on-demand PS(data) attach for each phone.
     protected int mMaxDataAttachModemCount;
@@ -1126,7 +1123,7 @@ public class PhoneSwitcher extends Handler {
      * 1. user changed mobile data settings
      * 2. OR user changed auto data switch feature
      */
-    private void onDataEnabledChanged() {
+    protected void onDataEnabledChanged() {
         if (isAnyVoiceCallActiveOnDevice()) {
             // user changed data related settings during call, switch or turn off immediately
             evaluateIfImmediateDataSwitchIsNeeded(
@@ -1406,12 +1403,10 @@ public class PhoneSwitcher extends Handler {
         public long lastRequested = 0;
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     protected void activate(int phoneId) {
         switchPhone(phoneId, true);
     }
 
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     protected void deactivate(int phoneId) {
         switchPhone(phoneId, false);
     }
@@ -1703,10 +1698,6 @@ public class PhoneSwitcher extends Handler {
         r.notifyRegistrant();
     }
 
-    public void unregisterForActivePhoneSwitch(Handler h) {
-        mActivePhoneRegistrants.remove(h);
-    }
-
     /**
      * Set opportunistic data subscription. It's an indication to switch Internet data to this
      * subscription. It has to be an active subscription, and PhoneSwitcher will try to validate
@@ -1950,7 +1941,6 @@ public class PhoneSwitcher extends Handler {
      * Log debug messages and also log into the local log.
      * @param l debug messages
      */
-    @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     protected void logl(String l) {
         log(l);
         mLocalLog.log(l);
@@ -2051,12 +2041,6 @@ public class PhoneSwitcher extends Handler {
      */
     public int getAutoSelectedDataSubId() {
         return mAutoSelectedDataSubId;
-    }
-
-    // TODO (b/148396668): add an internal callback method to monitor phone capability change,
-    // and hook this call to that callback.
-    private void onPhoneCapabilityChanged(PhoneCapability capability) {
-        onPhoneCapabilityChangedInternal(capability);
     }
 
     public void dump(FileDescriptor fd, PrintWriter writer, String[] args) {

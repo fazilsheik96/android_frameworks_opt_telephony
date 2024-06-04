@@ -190,6 +190,11 @@ public class SatelliteSOSMessageRecommender extends Handler {
             return;
         }
 
+        if (hasMessages(EVENT_EMERGENCY_CALL_STARTED)) {
+            logd("onEmergencyCallStarted: Ignoring due to ongoing event:");
+            return;
+        }
+
         /*
          * Right now, assume that the device is connected to satellite via carrier within hysteresis
          * time. However, this might not be correct when the monitoring timer expires. Thus, we
@@ -277,7 +282,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
             updateSatelliteViaCarrierAvailability();
 
             boolean isDialerNotified = false;
-            if (!isImsRegistered() && !isCellularAvailable()
+            if (!isCellularAvailable()
                     && isSatelliteAllowed()
                     && (isSatelliteViaOemAvailable() || isSatelliteViaCarrierAvailable())
                     && shouldTrackCall(mEmergencyConnection.getState())) {
@@ -434,12 +439,15 @@ public class SatelliteSOSMessageRecommender extends Handler {
             ServiceState serviceState = phone.getServiceState();
             if (serviceState != null) {
                 int state = serviceState.getState();
-                if ((state == STATE_IN_SERVICE || state == STATE_EMERGENCY_ONLY)
+                if ((state == STATE_IN_SERVICE || state == STATE_EMERGENCY_ONLY
+                        || serviceState.isEmergencyOnly())
                         && !serviceState.isUsingNonTerrestrialNetwork()) {
+                    logv("isCellularAvailable true");
                     return true;
                 }
             }
         }
+        logv("isCellularAvailable false");
         return false;
     }
 
@@ -474,9 +482,10 @@ public class SatelliteSOSMessageRecommender extends Handler {
     }
 
     private synchronized void handleStateChangedEventForHysteresisTimer() {
-        if (!isImsRegistered() && !isCellularAvailable()) {
+        if (!isCellularAvailable()) {
             startTimer();
         } else {
+            logv("handleStateChangedEventForHysteresisTimer stopTimer");
             stopTimer();
         }
     }
@@ -489,6 +498,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
             sendMessageDelayed(obtainMessage(EVENT_TIME_OUT), mTimeoutMillis);
             mCountOfTimerStarted++;
             mIsTimerTimedOut = false;
+            logd("startTimer mCountOfTimerStarted=" + mCountOfTimerStarted);
         }
     }
 
@@ -737,6 +747,10 @@ public class SatelliteSOSMessageRecommender extends Handler {
     private static boolean isMockModemAllowed() {
         return (SystemProperties.getBoolean(ALLOW_MOCK_MODEM_PROPERTY, false)
                 || SystemProperties.getBoolean(BOOT_ALLOW_MOCK_MODEM_PROPERTY, false));
+    }
+
+    private static void logv(@NonNull String log) {
+        Rlog.v(TAG, log);
     }
 
     private static void logd(@NonNull String log) {

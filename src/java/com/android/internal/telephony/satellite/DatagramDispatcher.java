@@ -221,7 +221,7 @@ public class DatagramDispatcher extends Handler {
                     } else {
                         SatelliteModemInterface.getInstance().sendSatelliteDatagram(
                                 argument.datagram,
-                                argument.datagramType == SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE,
+                                SatelliteServiceUtils.isSosMessage(argument.datagramType),
                                 argument.needFullScreenPointingUI, onCompleted);
                         startWaitForDatagramSendingResponseTimer(argument);
                     }
@@ -266,7 +266,7 @@ public class DatagramDispatcher extends Handler {
                     // Log metrics about the outgoing datagram
                     reportSendDatagramCompleted(argument, error);
                     // Remove current datagram from pending map.
-                    if (argument.datagramType == SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE) {
+                    if (SatelliteServiceUtils.isSosMessage(argument.datagramType)) {
                         mPendingEmergencyDatagramsMap.remove(argument.datagramId);
                     } else {
                         mPendingNonEmergencyDatagramsMap.remove(argument.datagramId);
@@ -277,9 +277,6 @@ public class DatagramDispatcher extends Handler {
                         mDatagramController.updateSendStatus(argument.subId, argument.datagramType,
                                 SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_SUCCESS,
                                 getPendingDatagramCount(), error);
-                        mControllerMetricsStats.reportOutgoingDatagramSuccessCount(
-                                argument.datagramType, mIsDemoMode);
-                        mSessionMetricsStats.addCountOfSuccessfulOutgoingDatagram();
                         startWaitForSimulatedPollDatagramsDelayTimer(request);
                         if (getPendingDatagramCount() > 0) {
                             // Send response for current datagram
@@ -306,9 +303,6 @@ public class DatagramDispatcher extends Handler {
                         // after updating datagram transfer state internally.
                         argument.callback.accept(error);
                         // Abort sending all the pending datagrams
-                        mControllerMetricsStats.reportOutgoingDatagramFailCount(
-                                argument.datagramType, mIsDemoMode);
-                        mSessionMetricsStats.addCountOfFailedOutgoingDatagram();
                         abortSendingPendingDatagrams(argument.subId,
                                 SatelliteManager.SATELLITE_RESULT_REQUEST_ABORTED);
                     }
@@ -373,13 +367,13 @@ public class DatagramDispatcher extends Handler {
 
         synchronized (mLock) {
             // Add datagram to pending datagram map
-            if (datagramType == SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE) {
+            if (SatelliteServiceUtils.isSosMessage(datagramType)) {
                 mPendingEmergencyDatagramsMap.put(datagramId, datagramArgs);
             } else {
                 mPendingNonEmergencyDatagramsMap.put(datagramId, datagramArgs);
             }
 
-            if (mDatagramController.needsWaitingForSatelliteConnected()) {
+            if (mDatagramController.needsWaitingForSatelliteConnected(datagramType)) {
                 logd("sendDatagram: wait for satellite connected");
                 mDatagramController.updateSendStatus(subId, datagramType,
                         SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT,
@@ -513,9 +507,14 @@ public class DatagramDispatcher extends Handler {
         }
 
         if ((pendingDatagram != null) && pendingDatagram.iterator().hasNext()) {
-            mSendingDatagramInProgress = true;
             SendSatelliteDatagramArgument datagramArg =
                     pendingDatagram.iterator().next().getValue();
+            if (mDatagramController.needsWaitingForSatelliteConnected(datagramArg.datagramType)) {
+                logd("sendPendingDatagrams: wait for satellite connected");
+                return;
+            }
+
+            mSendingDatagramInProgress = true;
             // Sets the trigger time for getting pending datagrams
             datagramArg.setDatagramStartTime();
             mDatagramController.updateSendStatus(datagramArg.subId, datagramArg.datagramType,
@@ -545,8 +544,6 @@ public class DatagramDispatcher extends Handler {
                 pendingDatagramsMap.entrySet()) {
             SendSatelliteDatagramArgument argument = entry.getValue();
             reportSendDatagramCompleted(argument, errorCode);
-            mControllerMetricsStats.reportOutgoingDatagramFailCount(argument.datagramType,
-                    mIsDemoMode);
             argument.callback.accept(errorCode);
         }
 
@@ -605,6 +602,15 @@ public class DatagramDispatcher extends Handler {
                                 ? (System.currentTimeMillis() - argument.datagramStartTime) : 0)
                         .setIsDemoMode(mIsDemoMode)
                         .build());
+        if (resultCode == SatelliteManager.SATELLITE_RESULT_SUCCESS) {
+            mControllerMetricsStats.reportOutgoingDatagramSuccessCount(argument.datagramType,
+                    mIsDemoMode);
+            mSessionMetricsStats.addCountOfSuccessfulOutgoingDatagram();
+        } else {
+            mControllerMetricsStats.reportOutgoingDatagramFailCount(argument.datagramType,
+                    mIsDemoMode);
+            mSessionMetricsStats.addCountOfFailedOutgoingDatagram();
+        }
     }
 
     /**
@@ -728,9 +734,6 @@ public class DatagramDispatcher extends Handler {
                     0, SatelliteManager.SATELLITE_RESULT_SUCCESS);
             abortSendingPendingDatagrams(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
                     SATELLITE_RESULT_NOT_REACHABLE);
-            mControllerMetricsStats.reportOutgoingDatagramFailCount(argument.datagramType,
-                    mIsDemoMode);
-            mSessionMetricsStats.addCountOfFailedOutgoingDatagram();
         }
     }
 
@@ -760,7 +763,7 @@ public class DatagramDispatcher extends Handler {
     private boolean shouldProcessEventSendSatelliteDatagramDone(
             @NonNull SendSatelliteDatagramArgument argument) {
         synchronized (mLock) {
-            if (argument.datagramType == SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE) {
+            if (SatelliteServiceUtils.isSosMessage(argument.datagramType)) {
                 return mPendingEmergencyDatagramsMap.containsKey(argument.datagramId);
             } else {
                 return mPendingNonEmergencyDatagramsMap.containsKey(argument.datagramId);
@@ -793,10 +796,8 @@ public class DatagramDispatcher extends Handler {
 
             // Log metrics about the outgoing datagram
             reportSendDatagramCompleted(argument, SATELLITE_RESULT_MODEM_TIMEOUT);
-            mControllerMetricsStats.reportOutgoingDatagramFailCount(argument.datagramType,
-                    mIsDemoMode);
             // Remove current datagram from pending map.
-            if (argument.datagramType == SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE) {
+            if (SatelliteServiceUtils.isSosMessage(argument.datagramType)) {
                 mPendingEmergencyDatagramsMap.remove(argument.datagramId);
             } else {
                 mPendingNonEmergencyDatagramsMap.remove(argument.datagramId);
