@@ -187,7 +187,7 @@ public class PhoneSwitcher extends Handler {
     private final @NonNull NetworkRequestList mNetworkRequestList = new NetworkRequestList();
     protected final RegistrantList mActivePhoneRegistrants;
     private final SubscriptionManagerService mSubscriptionManagerService;
-    private final @NonNull FeatureFlags mFlags;
+    protected final @NonNull FeatureFlags mFlags;
     protected final Context mContext;
     private final LocalLog mLocalLog;
     protected PhoneState[] mPhoneStates;
@@ -472,7 +472,7 @@ public class PhoneSwitcher extends Handler {
         }
     }
 
-    private void registerForImsRadioTechChange() {
+    protected void registerForImsRadioTechChange() {
         // register for radio tech change to listen to radio tech handover.
         if (!mIsRegisteredForImsRadioTechChange) {
             for (int i = 0; i < mActiveModemCount; i++) {
@@ -481,7 +481,7 @@ public class PhoneSwitcher extends Handler {
         }
     }
 
-    private void evaluateIfImmediateDataSwitchIsNeeded(String evaluationReason, int switchReason) {
+    protected void evaluateIfImmediateDataSwitchIsNeeded(String evaluationReason, int switchReason) {
         if (onEvaluate(REQUESTS_UNCHANGED, evaluationReason)) {
             logDataSwitchEvent(mPreferredDataSubId.get(),
                     TelephonyEvent.EventState.EVENT_STATE_START,
@@ -836,12 +836,6 @@ public class PhoneSwitcher extends Handler {
                 // attempt was not successful
                 if (!mFlags.changeMethodOfObtainingImsRegistrationRadioTech()) {
                     registerForImsRadioTechChange();
-                    if (!isTelephonyTempDdsSwitchEnabled()) {
-                        // When smart temp DDS switch is honored, evaluating data phone usage isn't
-                        // needed for IMS radio tech changed.
-                        logl("Ignore EVENT_IMS_RADIO_TECH_CHANGED");
-                        break;
-                    }
                 } else {
                     if (msg.obj == null) {
                         log("EVENT_IMS_RADIO_TECH_CHANGED but parameter is not available");
@@ -1005,7 +999,7 @@ public class PhoneSwitcher extends Handler {
      * Only provide service for the handler of PhoneSwitcher.
      * @return true if the radio tech changed, otherwise false
      */
-    private boolean onImsRadioTechChanged(@NonNull AsyncResult asyncResult) {
+    protected boolean onImsRadioTechChanged(@NonNull AsyncResult asyncResult) {
         ImsPhone.ImsRegistrationRadioTechInfo imsRegistrationRadioTechInfo =
                 (ImsPhone.ImsRegistrationRadioTechInfo) asyncResult.result;
         if (imsRegistrationRadioTechInfo == null
