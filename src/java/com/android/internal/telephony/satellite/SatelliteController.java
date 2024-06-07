@@ -155,6 +155,7 @@ public class SatelliteController extends Handler {
     private static final boolean DEBUG = !"user".equals(Build.TYPE);
     /** File used to store shared preferences related to satellite. */
     public static final String SATELLITE_SHARED_PREF = "satellite_shared_pref";
+    public static final String SATELLITE_SUBSCRIPTION_ID = "satellite_subscription_id";
     /** Value to pass for the setting key SATELLITE_MODE_ENABLED, enabled = 1, disabled = 0 */
     public static final int SATELLITE_MODE_ENABLED_TRUE = 1;
     public static final int SATELLITE_MODE_ENABLED_FALSE = 0;
@@ -164,6 +165,10 @@ public class SatelliteController extends Handler {
      * to enable satellite.
      */
     public static final int TIMEOUT_TYPE_WAIT_FOR_SATELLITE_ENABLING_RESPONSE = 1;
+    /** This is used by CTS to override demo pointing aligned duration. */
+    public static final int TIMEOUT_TYPE_DEMO_POINTING_ALIGNED_DURATION_MILLIS = 2;
+    /** This is used by CTS to override demo pointing not aligned duration. */
+    public static final int TIMEOUT_TYPE_DEMO_POINTING_NOT_ALIGNED_DURATION_MILLIS = 3;
 
     /** Key used to read/write OEM-enabled satellite provision status in shared preferences. */
     private static final String OEM_ENABLED_SATELLITE_PROVISION_STATUS_KEY =
@@ -216,7 +221,8 @@ public class SatelliteController extends Handler {
     @NonNull private static SatelliteController sInstance;
     @NonNull private final Context mContext;
     @NonNull private final SatelliteModemInterface mSatelliteModemInterface;
-    @NonNull private SatelliteSessionController mSatelliteSessionController;
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    @NonNull protected SatelliteSessionController mSatelliteSessionController;
     @NonNull private final PointingAppController mPointingAppController;
     @NonNull private final DatagramController mDatagramController;
     @NonNull private final ControllerMetricsStats mControllerMetricsStats;
@@ -268,6 +274,8 @@ public class SatelliteController extends Handler {
     private final AtomicBoolean mRegisteredForSatelliteCapabilitiesChanged =
             new AtomicBoolean(false);
     private final AtomicBoolean mIsModemEnabledReportingNtnSignalStrength =
+            new AtomicBoolean(false);
+    private final AtomicBoolean mLatestRequestedStateForNtnSignalStrengthReport =
             new AtomicBoolean(false);
     private final AtomicBoolean mRegisteredForSatelliteSupportedStateChanged =
             new AtomicBoolean(false);
@@ -408,6 +416,8 @@ public class SatelliteController extends Handler {
     private final SparseArray<List<String>> mMergedPlmnListPerCarrier = new SparseArray<>();
     private static AtomicLong sNextSatelliteEnableRequestId = new AtomicLong(0);
     private long mWaitTimeForSatelliteEnablingResponse;
+    private long mDemoPointingAlignedDurationMillis;
+    private long mDemoPointingNotAlignedDurationMillis;
 
     /** Key used to read/write satellite system notification done in shared preferences. */
     private static final String SATELLITE_SYSTEM_NOTIFICATION_DONE_KEY =
@@ -537,6 +547,9 @@ public class SatelliteController extends Handler {
                 null);
         loadSatelliteSharedPreferences();
         mWaitTimeForSatelliteEnablingResponse = getWaitForSatelliteEnablingResponseTimeoutMillis();
+        mDemoPointingAlignedDurationMillis = getDemoPointingAlignedDurationMillisFromResources();
+        mDemoPointingNotAlignedDurationMillis =
+                getDemoPointingNotAlignedDurationMillisFromResources();
     }
 
     /**
@@ -1004,6 +1017,7 @@ public class SatelliteController extends Handler {
                         }
                     }
                     // Request Ntn signal strength report when satellite enabled or disabled done.
+                    mLatestRequestedStateForNtnSignalStrengthReport.set(argument.enableSatellite);
                     updateNtnSignalStrengthReporting(argument.enableSatellite);
                 } else {
                     synchronized (mSatelliteEnabledRequestLock) {
@@ -1364,6 +1378,13 @@ public class SatelliteController extends Handler {
                                 + shouldReport);
                 if (errorCode == SATELLITE_RESULT_SUCCESS) {
                     mIsModemEnabledReportingNtnSignalStrength.set(shouldReport);
+                    if (mLatestRequestedStateForNtnSignalStrengthReport.get()
+                            != mIsModemEnabledReportingNtnSignalStrength.get()) {
+                        logd("mLatestRequestedStateForNtnSignalStrengthReport does not match with "
+                                + "mIsModemEnabledReportingNtnSignalStrength");
+                        updateNtnSignalStrengthReporting(
+                                mLatestRequestedStateForNtnSignalStrengthReport.get());
+                    }
                 } else {
                     loge(((boolean) request.argument ? "startSendingNtnSignalStrength"
                             : "stopSendingNtnSignalStrength") + "returns " + errorCode);
@@ -1635,6 +1656,7 @@ public class SatelliteController extends Handler {
                 /* We have already successfully queried the satellite modem. */
                 Bundle bundle = new Bundle();
                 bundle.putBoolean(SatelliteManager.KEY_SATELLITE_SUPPORTED, mIsSatelliteSupported);
+                bundle.putInt(SATELLITE_SUBSCRIPTION_ID, subId);
                 result.send(SATELLITE_RESULT_SUCCESS, bundle);
                 return;
             }
@@ -2055,6 +2077,8 @@ public class SatelliteController extends Handler {
             logd("setDeviceAlignedWithSatellite: oemEnabledSatelliteFlag is disabled");
             return;
         }
+
+        DemoSimulator.getInstance().setDeviceAlignedWithSatellite(isAligned);
         mDatagramController.setDeviceAlignedWithSatellite(isAligned);
     }
 
@@ -2385,6 +2409,25 @@ public class SatelliteController extends Handler {
     }
 
     /**
+     * This API can be used by only CTS to override the boolean configs used by the
+     * DatagramController module.
+     *
+     * @param enable Whether to enable or disable boolean config.
+     * @return {@code true} if the boolean config is set successfully, {@code false} otherwise.
+     */
+    public boolean setDatagramControllerBooleanConfig(
+            boolean reset, int booleanType, boolean enable) {
+        if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
+            logd("setDatagramControllerBooleanConfig: oemEnabledSatelliteFlag is disabled");
+            return false;
+        }
+        logd("setDatagramControllerBooleanConfig: reset=" + reset + ", booleanType="
+                + booleanType + ", enable=" + enable);
+        return mDatagramController.setDatagramControllerBooleanConfig(
+                reset, booleanType, enable);
+    }
+
+    /**
      * This API can be used by only CTS to override timeout durations used by SatelliteController
      * module.
      *
@@ -2411,6 +2454,20 @@ public class SatelliteController extends Handler {
                 mWaitTimeForSatelliteEnablingResponse = timeoutMillis;
             }
             logd("mWaitTimeForSatelliteEnablingResponse=" + mWaitTimeForSatelliteEnablingResponse);
+        } else if (timeoutType == TIMEOUT_TYPE_DEMO_POINTING_ALIGNED_DURATION_MILLIS) {
+            if (reset) {
+                mDemoPointingAlignedDurationMillis =
+                        getDemoPointingAlignedDurationMillisFromResources();
+            } else {
+                mDemoPointingAlignedDurationMillis = timeoutMillis;
+            }
+        } else if (timeoutType == TIMEOUT_TYPE_DEMO_POINTING_NOT_ALIGNED_DURATION_MILLIS) {
+            if (reset) {
+                mDemoPointingNotAlignedDurationMillis =
+                        getDemoPointingNotAlignedDurationMillisFromResources();
+            } else {
+                mDemoPointingNotAlignedDurationMillis = timeoutMillis;
+            }
         } else {
             logw("Invalid timeoutType=" + timeoutType);
             return false;
@@ -3207,6 +3264,9 @@ public class SatelliteController extends Handler {
         }
         mSatelliteSessionController = SatelliteSessionController.make(
                 mContext, getLooper(), supported);
+        logd("create a new SatelliteSessionController due to isSatelliteSupported state has "
+                + "changed to " + supported);
+
         if (supported) {
             registerForSatelliteProvisionStateChanged();
             registerForPendingDatagramCount();
@@ -3395,6 +3455,7 @@ public class SatelliteController extends Handler {
         synchronized (mNtnSignalsStrengthLock) {
             mNtnSignalStrength = ntnSignalStrength;
         }
+        mSessionMetricsStats.updateMaxNtnSignalStrengthLevel(ntnSignalStrength.getLevel());
 
         List<INtnSignalStrengthCallback> deadCallersList = new ArrayList<>();
         mNtnSignalStrengthChangedListeners.values().forEach(listener -> {
@@ -3467,6 +3528,10 @@ public class SatelliteController extends Handler {
                 }
             }
             mIsSatelliteSupported = supported;
+            mSatelliteSessionController = SatelliteSessionController.make(
+                    mContext, getLooper(), supported);
+            logd("create a new SatelliteSessionController due to isSatelliteSupported state has "
+                    + "changed to " + supported);
         }
 
         List<ISatelliteSupportedStateCallback> deadCallersList = new ArrayList<>();
@@ -3742,11 +3807,6 @@ public class SatelliteController extends Handler {
 
     private void processNewCarrierConfigData(int subId) {
         configureSatellitePlmnForCarrier(subId);
-        synchronized (mIsSatelliteEnabledLock) {
-            mSatelliteAttachRestrictionForCarrierArray.clear();
-            mIsSatelliteAttachEnabledForCarrierArrayPerSub.clear();
-        }
-
         setSatelliteAttachEnabledForCarrierOnSimLoaded(subId);
         updateRestrictReasonForEntitlementPerCarrier(subId);
     }
@@ -4132,9 +4192,12 @@ public class SatelliteController extends Handler {
                         mCarrierRoamingSatelliteSessionStatsMap.get(subId);
 
                 if (serviceState.isUsingNonTerrestrialNetwork()) {
-                    if (sessionStats != null && !mWasSatelliteConnectedViaCarrier.get(subId)) {
-                        // Log satellite connection start
-                        sessionStats.onConnectionStart();
+                    if (sessionStats != null) {
+                        sessionStats.onSignalStrength(phone);
+                        if (!mWasSatelliteConnectedViaCarrier.get(subId)) {
+                            // Log satellite connection start
+                            sessionStats.onConnectionStart();
+                        }
                     }
 
                     resetCarrierRoamingSatelliteModeParams(subId);
@@ -4203,8 +4266,8 @@ public class SatelliteController extends Handler {
             if (!lastNotifiedNtnMode && currNtnMode) {
                 // Log satellite session start
                 CarrierRoamingSatelliteSessionStats sessionStats =
-                        new CarrierRoamingSatelliteSessionStats(mContext, phone.getCarrierId());
-                sessionStats.onSessionStart();
+                        CarrierRoamingSatelliteSessionStats.getInstance(subId);
+                sessionStats.onSessionStart(phone.getCarrierId());
                 mCarrierRoamingSatelliteSessionStatsMap.put(subId, sessionStats);
             } else if (lastNotifiedNtnMode && !currNtnMode) {
                 // Log satellite session end
@@ -4423,6 +4486,7 @@ public class SatelliteController extends Handler {
             return;
         }
 
+        mLatestRequestedStateForNtnSignalStrengthReport.set(shouldReport);
         if (mIsModemEnabledReportingNtnSignalStrength.get() == shouldReport) {
             logd("handleCmdUpdateNtnSignalStrengthReporting: ignore request. "
                     + "mIsModemEnabledReportingNtnSignalStrength="
@@ -4621,6 +4685,40 @@ public class SatelliteController extends Handler {
             loge("notifyEnablementFailedToSatelliteSessionController: mSatelliteSessionController"
                     + " is not initialized yet");
         }
+    }
+
+    private long getDemoPointingAlignedDurationMillisFromResources() {
+        long durationMillis = 15000L;
+        try {
+            durationMillis = mContext.getResources().getInteger(
+                    R.integer.config_demo_pointing_aligned_duration_millis);
+        } catch (Resources.NotFoundException ex) {
+            loge("getPointingAlignedDurationMillis: ex=" + ex);
+        }
+
+        return durationMillis;
+    }
+
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
+    public long getDemoPointingAlignedDurationMillis() {
+        return mDemoPointingAlignedDurationMillis;
+    }
+
+    private long getDemoPointingNotAlignedDurationMillisFromResources() {
+        long durationMillis = 30000L;
+        try {
+            durationMillis = mContext.getResources().getInteger(
+                    R.integer.config_demo_pointing_not_aligned_duration_millis);
+        } catch (Resources.NotFoundException ex) {
+            loge("getPointingNotAlignedDurationMillis: ex=" + ex);
+        }
+
+        return durationMillis;
+    }
+
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
+    public long getDemoPointingNotAlignedDurationMillis() {
+        return mDemoPointingNotAlignedDurationMillis;
     }
 
     private static void logd(@NonNull String log) {

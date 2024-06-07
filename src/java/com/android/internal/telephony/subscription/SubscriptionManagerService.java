@@ -1454,6 +1454,11 @@ public class SubscriptionManagerService extends ISub.Stub {
             if (mSlotIndexToSubId.containsKey(phoneId)) {
                 markSubscriptionsInactive(phoneId);
             }
+
+            if (Flags.clearCachedImsPhoneNumberWhenDeviceLostImsRegistration()) {
+                // Clear the cached Ims phone number
+                setNumberFromIms(getSubId(phoneId), new String(""));
+            }
         } else if (simState == TelephonyManager.SIM_STATE_NOT_READY) {
             // Check if this is the final state. Only update the subscription if NOT_READY is a
             // final state.
@@ -1466,6 +1471,11 @@ public class SubscriptionManagerService extends ISub.Stub {
             } else {
                 logl("updateSubscription: UICC app disabled on slot " + phoneId);
                 markSubscriptionsInactive(phoneId);
+
+                if (Flags.clearCachedImsPhoneNumberWhenDeviceLostImsRegistration()) {
+                    // Clear the cached Ims phone number
+                    setNumberFromIms(getSubId(phoneId), new String(""));
+                }
             }
         } else {
             String iccId = getIccId(phoneId);
@@ -1572,12 +1582,6 @@ public class SubscriptionManagerService extends ISub.Stub {
                         }
                     } else {
                         loge("updateSubscription: ICC card is not available.");
-                    }
-
-                    if (Flags.clearCachedImsPhoneNumberWhenDeviceLostImsRegistration()) {
-                        // Clear the cached Ims phone number
-                        // before proceeding with Ims Registration
-                        setNumberFromIms(subId, new String(""));
                     }
 
                     // Attempt to restore SIM specific settings when SIM is loaded.
