@@ -16,6 +16,9 @@
 
 package com.android.internal.telephony.metrics;
 
+import static android.telephony.satellite.NtnSignalStrength.NTN_SIGNAL_STRENGTH_NONE;
+
+import android.telephony.satellite.NtnSignalStrength;
 import android.telephony.satellite.SatelliteManager;
 
 import com.android.internal.telephony.PhoneFactory;
@@ -31,9 +34,6 @@ import com.android.internal.telephony.nano.PersistAtomsProto.SatelliteSession;
 import com.android.internal.telephony.nano.PersistAtomsProto.SatelliteSosMessageRecommender;
 import com.android.internal.telephony.satellite.SatelliteConstants;
 import com.android.telephony.Rlog;
-
-import java.util.ArrayList;
-import java.util.List;
 
 /** Tracks Satellite metrics for each phone */
 public class SatelliteStats {
@@ -568,6 +568,7 @@ public class SatelliteStats {
         private final int mCountOfIncomingDatagramSuccess;
         private final int mCountOfIncomingDatagramFailed;
         private final boolean mIsDemoMode;
+        private final @NtnSignalStrength.NtnSignalStrengthLevel int mMaxNtnSignalStrengthLevel;
 
         private SatelliteSessionParams(Builder builder) {
             this.mSatelliteServiceInitializationResult =
@@ -583,6 +584,7 @@ public class SatelliteStats {
             this.mCountOfIncomingDatagramSuccess = builder.mCountOfIncomingDatagramSuccess;
             this.mCountOfIncomingDatagramFailed = builder.mCountOfIncomingDatagramFailed;
             this.mIsDemoMode = builder.mIsDemoMode;
+            this.mMaxNtnSignalStrengthLevel = builder.mMaxNtnSignalStrengthLevel;
         }
 
         public int getSatelliteServiceInitializationResult() {
@@ -629,6 +631,10 @@ public class SatelliteStats {
             return mIsDemoMode;
         }
 
+        public @NtnSignalStrength.NtnSignalStrengthLevel int getMaxNtnSignalStrengthLevel() {
+            return mMaxNtnSignalStrengthLevel;
+        }
+
         /**
          * A builder class to create {@link SatelliteSessionParams} data structure class
          */
@@ -644,6 +650,8 @@ public class SatelliteStats {
             private int mCountOfIncomingDatagramSuccess = -1;
             private int mCountOfIncomingDatagramFailed = -1;
             private boolean mIsDemoMode = false;
+            private @NtnSignalStrength.NtnSignalStrengthLevel int mMaxNtnSignalStrengthLevel =
+                    NTN_SIGNAL_STRENGTH_NONE;
 
             /**
              * Sets satelliteServiceInitializationResult value of {@link SatelliteSession}
@@ -719,6 +727,13 @@ public class SatelliteStats {
                 return this;
             }
 
+            /** Sets the max ntn signal strength for the satellite session */
+            public Builder setMaxNtnSignalStrengthLevel(
+                    @NtnSignalStrength.NtnSignalStrengthLevel int maxNtnSignalStrengthLevel) {
+                this.mMaxNtnSignalStrengthLevel = maxNtnSignalStrengthLevel;
+                return this;
+            }
+
             /**
              * Returns SessionParams, which contains whole component of
              * {@link SatelliteSession} atom
@@ -743,6 +758,7 @@ public class SatelliteStats {
                     + ", CountOfIncomingDatagramSuccess=" + mCountOfIncomingDatagramSuccess
                     + ", CountOfIncomingDatagramFailed=" + mCountOfIncomingDatagramFailed
                     + ", IsDemoMode=" + mIsDemoMode
+                    + ", MaxNtnSignalStrengthLevel=" + mMaxNtnSignalStrengthLevel
                     + ")";
         }
     }
@@ -1515,7 +1531,7 @@ public class SatelliteStats {
                     + ", rsrpAvg=" + mRsrpAvg
                     + ", rsrpMedian=" + mRsrpMedian
                     + ", rssnrAvg=" + mRssnrAvg
-                    + ", rssnrMedian=" + mRsrpMedian
+                    + ", rssnrMedian=" + mRssnrMedian
                     + ", countOfIncomingSms=" + mCountOfIncomingSms
                     + ", countOfOutgoingSms=" + mCountOfOutgoingSms
                     + ", countOfIncomingMms=" + mCountOfIncomingMms
@@ -1954,6 +1970,7 @@ public class SatelliteStats {
         proto.countOfIncomingDatagramSuccess = param.getCountOfIncomingDatagramSuccess();
         proto.countOfIncomingDatagramFailed = param.getCountOfOutgoingDatagramFailed();
         proto.isDemoMode = param.getIsDemoMode();
+        proto.maxNtnSignalStrengthLevel = param.getMaxNtnSignalStrengthLevel();
         mAtomsStorage.addSatelliteSessionStats(proto);
     }
 

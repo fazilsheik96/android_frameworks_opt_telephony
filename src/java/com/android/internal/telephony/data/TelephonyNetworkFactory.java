@@ -280,7 +280,7 @@ public class TelephonyNetworkFactory extends NetworkFactory {
     }
 
     @Override
-    public void needNetworkFor(NetworkRequest networkRequest) {
+    public void needNetworkFor(@NonNull NetworkRequest networkRequest) {
         Message msg = mInternalHandler.obtainMessage(EVENT_NETWORK_REQUEST);
         msg.obj = networkRequest;
         msg.sendToTarget();
@@ -295,7 +295,7 @@ public class TelephonyNetworkFactory extends NetworkFactory {
         return TelephonyManager.getDefault().hasIccCard(SECONDARY_SLOT);
     }
 
-    private void onNeedNetworkFor(Message msg) {
+    private void onNeedNetworkFor(@NonNull Message msg) {
         TelephonyNetworkRequest networkRequest =
                 new TelephonyNetworkRequest((NetworkRequest) msg.obj, mPhone, mFlags);
         boolean shouldApply = mPhoneSwitcher.shouldApplyNetworkRequest(
