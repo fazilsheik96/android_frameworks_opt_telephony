@@ -5045,8 +5045,8 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     /**
      * @return The data settings manager
      */
-    public @Nullable DataSettingsManager getDataSettingsManager() {
-        if (mDataNetworkController == null) return null;
+    @NonNull
+    public DataSettingsManager getDataSettingsManager() {
         return mDataNetworkController.getDataSettingsManager();
     }
 
