@@ -208,7 +208,7 @@ public class PhoneConfigurationManager {
                     " + isDsdsTransitionSupported : " + isDsdsTransitionSupported);
             TelephonyProperties.multi_sim_voice_capability(voiceCapability);
             TelephonyProperties.dsds_transition_supported(isDsdsTransitionSupported);
-            broadcastMsimVoiceCapabilityChanged();
+            broadcastMsimVoiceCapabilityChanged(voiceCapability);
         }
     };
 
@@ -865,9 +865,10 @@ public class PhoneConfigurationManager {
         return mPhones[0].mCi.getModemService();
     }
 
-    private void broadcastMsimVoiceCapabilityChanged() {
-        log("broadcastMsimVoiceCapabilityChanged");
+    private void broadcastMsimVoiceCapabilityChanged(int capability) {
+        log("broadcastMsimVoiceCapabilityChanged with capability: " + capability);
         Intent intent = new Intent(ACTION_MSIM_VOICE_CAPABILITY_CHANGED);
+        intent.putExtra(EXTRAS_MSIM_VOICE_CAPABILITY, capability);
         mContext.sendBroadcast(intent, PERMISSION_MSIM_VOICE_CAPABILITY_CHANGED);
     }
 
