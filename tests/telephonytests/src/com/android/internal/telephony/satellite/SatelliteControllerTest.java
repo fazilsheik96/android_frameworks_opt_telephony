@@ -52,7 +52,6 @@ import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_INVA
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_INVALID_TELEPHONY_STATE;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_MODEM_ERROR;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_MODEM_TIMEOUT;
-import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_NOT_AUTHORIZED;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_NOT_SUPPORTED;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_NO_RESOURCES;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_RADIO_NOT_AVAILABLE;
@@ -92,6 +91,7 @@ import static org.mockito.Mockito.verifyZeroInteractions;
 import static org.mockito.Mockito.when;
 
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.app.NotificationManager;
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -580,10 +580,6 @@ public class SatelliteControllerTest extends TelephonyTest {
                 Context.NOTIFICATION_SERVICE);
         mSatelliteControllerUT =
                 new TestSatelliteController(mContext, Looper.myLooper(), mFeatureFlags);
-        verify(mMockSatelliteModemInterface).registerForSatelliteProvisionStateChanged(
-                any(Handler.class),
-                eq(26) /* EVENT_SATELLITE_PROVISION_STATE_CHANGED */,
-                eq(null));
         verify(mMockSatelliteModemInterface).registerForPendingDatagrams(
                 any(Handler.class),
                 eq(27) /* EVENT_PENDING_DATAGRAMS */,
@@ -632,7 +628,7 @@ public class SatelliteControllerTest extends TelephonyTest {
                 mSatelliteVisibilityTimeReceiver);
         processAllMessages();
         assertTrue(waitForRequestTimeForNextSatelliteVisibilityResult(1));
-        assertEquals(SATELLITE_RESULT_INVALID_TELEPHONY_STATE,
+        assertEquals(SATELLITE_RESULT_SERVICE_NOT_PROVISIONED,
                 mQueriedSatelliteVisibilityTimeResultCode);
 
         resetSatelliteControllerUT();
@@ -803,7 +799,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         assertEquals(SATELLITE_RESULT_SERVICE_NOT_PROVISIONED,
                 (long) mIIntegerConsumerResults.get(0));
 
-        sendProvisionedStateChangedEvent(true, null);
+        setProvisionedState(true);
         processAllMessages();
         verifySatelliteProvisioned(true, SATELLITE_RESULT_SUCCESS);
 
@@ -963,7 +959,13 @@ public class SatelliteControllerTest extends TelephonyTest {
         assertEquals(SATELLITE_RESULT_REQUEST_IN_PROGRESS, (long) mIIntegerConsumerResults.get(0));
 
         mIIntegerConsumerResults.clear();
-        resetSatelliteControllerUTToSupportedAndProvisionedState();
+        resetSatelliteControllerUT();
+        setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
+        setProvisionedState(false);
+        verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
+        setProvisionedState(true);
+        processAllMessages();
+        verifySatelliteProvisioned(true, SATELLITE_RESULT_SUCCESS);
         // Should receive callback for the above request when satellite modem is turned off.
         assertTrue(waitForIIntegerConsumerResult(1));
         assertEquals(SATELLITE_RESULT_INVALID_MODEM_STATE, (long) mIIntegerConsumerResults.get(0));
@@ -989,13 +991,13 @@ public class SatelliteControllerTest extends TelephonyTest {
         assertTrue(waitForIIntegerConsumerResult(1));
         assertEquals(SATELLITE_RESULT_INVALID_MODEM_STATE, (long) mIIntegerConsumerResults.get(0));
 
-        verify(mMockSessionMetricsStats, times(15)).setInitializationResult(anyInt());
-        verify(mMockSessionMetricsStats, times(15)).setSatelliteTechnology(anyInt());
+        verify(mMockSessionMetricsStats, times(17)).setInitializationResult(anyInt());
+        verify(mMockSessionMetricsStats, times(17)).setSatelliteTechnology(anyInt());
         verify(mMockSessionMetricsStats, times(3)).setInitializationProcessingTime(anyLong());
         verify(mMockSessionMetricsStats, times(2)).setTerminationResult(anyInt());
         verify(mMockSessionMetricsStats, times(2)).setTerminationProcessingTime(anyLong());
         verify(mMockSessionMetricsStats, times(2)).setSessionDurationSec(anyInt());
-        verify(mMockSessionMetricsStats, times(15)).reportSessionMetrics();
+        verify(mMockSessionMetricsStats, times(17)).reportSessionMetrics();
 
         /**
          * Make areAllRadiosDisabled return false and move mWaitingForRadioDisabled to true, which
@@ -1062,7 +1064,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
 
         // Set provisioned state
-        sendProvisionedStateChangedEvent(true, null);
+        setProvisionedState(true);
         processAllMessages();
         verifySatelliteProvisioned(true, SATELLITE_RESULT_SUCCESS);
 
@@ -1165,7 +1167,7 @@ public class SatelliteControllerTest extends TelephonyTest {
                 mStartTransmissionUpdateCallback);
         processAllMessages();
         assertTrue(waitForIIntegerConsumerResult(1));
-        assertEquals(SATELLITE_RESULT_INVALID_TELEPHONY_STATE,
+        assertEquals(SATELLITE_RESULT_SERVICE_NOT_PROVISIONED,
                 (long) mIIntegerConsumerResults.get(0));
 
         resetSatelliteControllerUT();
@@ -1239,7 +1241,7 @@ public class SatelliteControllerTest extends TelephonyTest {
                 mStopTransmissionUpdateCallback);
         processAllMessages();
         assertTrue(waitForIIntegerConsumerResult(1));
-        assertEquals(SATELLITE_RESULT_INVALID_TELEPHONY_STATE,
+        assertEquals(SATELLITE_RESULT_SERVICE_NOT_PROVISIONED,
                 (long) mIIntegerConsumerResults.get(0));
 
         resetSatelliteControllerUT();
@@ -1303,7 +1305,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
         mSatelliteControllerUT.requestIsDemoModeEnabled(SUB_ID, mIsDemoModeEnabledReceiver);
         assertTrue(waitForRequestIsDemoModeEnabledResult(1));
-        assertEquals(SATELLITE_RESULT_INVALID_TELEPHONY_STATE, mQueriedIsDemoModeEnabledResultCode);
+        assertEquals(SATELLITE_RESULT_SERVICE_NOT_PROVISIONED, mQueriedIsDemoModeEnabledResultCode);
         assertFalse(mQueriedIsDemoModeEnabled);
 
         resetSatelliteControllerUT();
@@ -1349,7 +1351,6 @@ public class SatelliteControllerTest extends TelephonyTest {
     public void testOnSatelliteServiceConnected() {
         verifySatelliteSupported(false, SATELLITE_RESULT_RADIO_NOT_AVAILABLE);
         verifySatelliteEnabled(false, SATELLITE_RESULT_INVALID_TELEPHONY_STATE);
-        verifySatelliteProvisioned(false, SATELLITE_RESULT_INVALID_TELEPHONY_STATE);
 
         setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
         setUpResponseForRequestIsSatelliteProvisioned(true, SATELLITE_RESULT_SUCCESS);
@@ -1361,7 +1362,7 @@ public class SatelliteControllerTest extends TelephonyTest {
 
         verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
         verifySatelliteEnabled(false, SATELLITE_RESULT_SUCCESS);
-        verifySatelliteProvisioned(false, SATELLITE_RESULT_SUCCESS);
+        verifySatelliteProvisioned(true, SATELLITE_RESULT_SUCCESS);
     }
 
     @Test
@@ -1446,15 +1447,27 @@ public class SatelliteControllerTest extends TelephonyTest {
         verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
         errorCode = mSatelliteControllerUT.registerForSatelliteProvisionStateChanged(
                 SUB_ID, callback);
+        processAllMessages();
+        assertTrue(waitForForEvents(
+                semaphore, 1, "testRegisterForSatelliteProvisionStateChanged"));
         assertEquals(SATELLITE_RESULT_SUCCESS, errorCode);
 
-        sendProvisionedStateChangedEvent(true, null);
+        String mText = "This is test provision data.";
+        byte[] testProvisionData = mText.getBytes();
+        CancellationSignal cancellationSignal = new CancellationSignal();
+        ICancellationSignal cancelRemote = null;
+        mIIntegerConsumerResults.clear();
+        cancelRemote = mSatelliteControllerUT.provisionSatelliteService(SUB_ID,
+                TEST_SATELLITE_TOKEN,
+                testProvisionData, mIIntegerConsumer);
         processAllMessages();
         assertTrue(waitForForEvents(
                 semaphore, 1, "testRegisterForSatelliteProvisionStateChanged"));
 
         mSatelliteControllerUT.unregisterForSatelliteProvisionStateChanged(SUB_ID, callback);
-        sendProvisionedStateChangedEvent(true, null);
+        cancelRemote = mSatelliteControllerUT.provisionSatelliteService(SUB_ID,
+                TEST_SATELLITE_TOKEN,
+                testProvisionData, mIIntegerConsumer);
         processAllMessages();
         assertFalse(waitForForEvents(
                 semaphore, 1, "testRegisterForSatelliteProvisionStateChanged"));
@@ -1523,7 +1536,7 @@ public class SatelliteControllerTest extends TelephonyTest {
             mIIntegerConsumerResults.clear();
             setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
             verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
-            sendProvisionedStateChangedEvent(false, null);
+            setProvisionedState(false);
             processAllMessages();
             verifySatelliteProvisioned(false, SATELLITE_RESULT_SUCCESS);
             mSatelliteControllerUT.sendDatagram(SUB_ID, datagramType, datagram, true,
@@ -1536,7 +1549,7 @@ public class SatelliteControllerTest extends TelephonyTest {
                     eq(datagramType), eq(datagram), eq(true), any());
 
             mIIntegerConsumerResults.clear();
-            sendProvisionedStateChangedEvent(true, null);
+            setProvisionedState(true);
             processAllMessages();
             verifySatelliteProvisioned(true, SATELLITE_RESULT_SUCCESS);
             mSatelliteControllerUT.sendDatagram(SUB_ID, datagramType, datagram, true,
@@ -1563,7 +1576,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         mIIntegerConsumerResults.clear();
         setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
         verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
-        sendProvisionedStateChangedEvent(false, null);
+        setProvisionedState(false);
         processAllMessages();
         verifySatelliteProvisioned(false, SATELLITE_RESULT_SUCCESS);
         mSatelliteControllerUT.pollPendingDatagrams(SUB_ID, mIIntegerConsumer);
@@ -1574,7 +1587,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         verify(mMockDatagramController, never()).pollPendingSatelliteDatagrams(anyInt(), any());
 
         mIIntegerConsumerResults.clear();
-        sendProvisionedStateChangedEvent(true, null);
+        setProvisionedState(true);
         processAllMessages();
         verifySatelliteProvisioned(true, SATELLITE_RESULT_SUCCESS);
         mSatelliteControllerUT.pollPendingDatagrams(SUB_ID, mIIntegerConsumer);
@@ -1617,8 +1630,6 @@ public class SatelliteControllerTest extends TelephonyTest {
         setUpResponseForRequestIsSatelliteProvisioned(false, SATELLITE_RESULT_SUCCESS);
         verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
         verifySatelliteProvisioned(false, SATELLITE_RESULT_SUCCESS);
-        setUpResponseForProvisionSatelliteService(TEST_SATELLITE_TOKEN, testProvisionData,
-                SATELLITE_RESULT_SUCCESS);
         cancelRemote = mSatelliteControllerUT.provisionSatelliteService(SUB_ID,
                 TEST_SATELLITE_TOKEN,
                 testProvisionData, mIIntegerConsumer);
@@ -1637,61 +1648,12 @@ public class SatelliteControllerTest extends TelephonyTest {
         assertEquals(SATELLITE_RESULT_SUCCESS, (long) mIIntegerConsumerResults.get(0));
         assertNull(cancelRemote);
 
-        // Vendor service does not support the request requestIsSatelliteProvisioned. Telephony will
-        // make decision itself
-        resetSatelliteControllerUT();
-        mIIntegerConsumerResults.clear();
-        setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
-        setUpResponseForRequestIsSatelliteProvisioned(
-                false, SATELLITE_RESULT_REQUEST_NOT_SUPPORTED);
-        verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
-        verifySatelliteProvisioned(true, SATELLITE_RESULT_SUCCESS);
-
-        // Vendor service does not support the requests requestIsSatelliteProvisioned and
-        // provisionSatelliteService. Telephony will make decision itself
-        deprovisionSatelliteService();
-        resetSatelliteControllerUT();
-        mIIntegerConsumerResults.clear();
-        setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
-        setUpResponseForRequestIsSatelliteProvisioned(
-                false, SATELLITE_RESULT_REQUEST_NOT_SUPPORTED);
-        verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
-        verifySatelliteProvisioned(false, SATELLITE_RESULT_SUCCESS);
-        setUpResponseForProvisionSatelliteService(TEST_SATELLITE_TOKEN, testProvisionData,
-                SATELLITE_RESULT_REQUEST_NOT_SUPPORTED);
-        cancelRemote = mSatelliteControllerUT.provisionSatelliteService(SUB_ID,
-                TEST_SATELLITE_TOKEN,
-                testProvisionData, mIIntegerConsumer);
-        processAllMessages();
-        assertTrue(waitForIIntegerConsumerResult(1));
-        assertEquals(SATELLITE_RESULT_SUCCESS, (long) mIIntegerConsumerResults.get(0));
-        assertNotNull(cancelRemote);
-        verifySatelliteProvisioned(true, SATELLITE_RESULT_SUCCESS);
-
-        resetSatelliteControllerUT();
-        mIIntegerConsumerResults.clear();
-        setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
-        setUpResponseForRequestIsSatelliteProvisioned(false, SATELLITE_RESULT_SUCCESS);
-        verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
-        verifySatelliteProvisioned(false, SATELLITE_RESULT_SUCCESS);
-        setUpResponseForProvisionSatelliteService(TEST_SATELLITE_TOKEN, testProvisionData,
-                SATELLITE_RESULT_NOT_AUTHORIZED);
-        cancelRemote = mSatelliteControllerUT.provisionSatelliteService(SUB_ID,
-                TEST_SATELLITE_TOKEN,
-                testProvisionData, mIIntegerConsumer);
-        processAllMessages();
-        assertTrue(waitForIIntegerConsumerResult(1));
-        assertEquals(SATELLITE_RESULT_NOT_AUTHORIZED, (long) mIIntegerConsumerResults.get(0));
-        assertNotNull(cancelRemote);
-
         resetSatelliteControllerUT();
         mIIntegerConsumerResults.clear();
         setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
         verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
         setUpResponseForRequestIsSatelliteProvisioned(false, SATELLITE_RESULT_SUCCESS);
         verifySatelliteProvisioned(false, SATELLITE_RESULT_SUCCESS);
-        setUpResponseForProvisionSatelliteService(TEST_NEXT_SATELLITE_TOKEN, testProvisionData,
-                SATELLITE_RESULT_SUCCESS);
         cancelRemote = mSatelliteControllerUT.provisionSatelliteService(SUB_ID,
                 TEST_NEXT_SATELLITE_TOKEN, testProvisionData, mIIntegerConsumer);
         cancellationSignal.setRemote(cancelRemote);
@@ -1699,8 +1661,6 @@ public class SatelliteControllerTest extends TelephonyTest {
         processAllMessages();
         assertTrue(waitForIIntegerConsumerResult(1));
         assertEquals(SATELLITE_RESULT_SUCCESS, (long) mIIntegerConsumerResults.get(0));
-        verify(mMockSatelliteModemInterface).deprovisionSatelliteService(
-                eq(TEST_NEXT_SATELLITE_TOKEN), any(Message.class));
 
         resetSatelliteControllerUT();
         mIIntegerConsumerResults.clear();
@@ -1708,9 +1668,6 @@ public class SatelliteControllerTest extends TelephonyTest {
         verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
         setUpResponseForRequestIsSatelliteProvisioned(false, SATELLITE_RESULT_SUCCESS);
         verifySatelliteProvisioned(false, SATELLITE_RESULT_SUCCESS);
-        setUpNoResponseForProvisionSatelliteService(TEST_SATELLITE_TOKEN);
-        setUpResponseForProvisionSatelliteService(TEST_NEXT_SATELLITE_TOKEN, testProvisionData,
-                SATELLITE_RESULT_SUCCESS);
         cancelRemote = mSatelliteControllerUT.provisionSatelliteService(SUB_ID,
                 TEST_SATELLITE_TOKEN,
                 testProvisionData, mIIntegerConsumer);
@@ -1748,13 +1705,11 @@ public class SatelliteControllerTest extends TelephonyTest {
         mIIntegerConsumerResults.clear();
         setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
         verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
-        setUpResponseForDeprovisionSatelliteService(TEST_SATELLITE_TOKEN, SATELLITE_RESULT_SUCCESS);
         mSatelliteControllerUT.deprovisionSatelliteService(SUB_ID,
                 TEST_SATELLITE_TOKEN, mIIntegerConsumer);
         processAllMessages();
         assertTrue(waitForIIntegerConsumerResult(1));
-        assertEquals(SATELLITE_RESULT_INVALID_TELEPHONY_STATE,
-                (long) mIIntegerConsumerResults.get(0));
+        assertEquals(SATELLITE_RESULT_SUCCESS, (long) mIIntegerConsumerResults.get(0));
 
         resetSatelliteControllerUT();
         mIIntegerConsumerResults.clear();
@@ -1762,7 +1717,6 @@ public class SatelliteControllerTest extends TelephonyTest {
         setUpResponseForRequestIsSatelliteProvisioned(false, SATELLITE_RESULT_SUCCESS);
         verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
         verifySatelliteProvisioned(false, SATELLITE_RESULT_SUCCESS);
-        setUpResponseForDeprovisionSatelliteService(TEST_SATELLITE_TOKEN, SATELLITE_RESULT_SUCCESS);
         mSatelliteControllerUT.deprovisionSatelliteService(SUB_ID,
                 TEST_SATELLITE_TOKEN, mIIntegerConsumer);
         processAllMessages();
@@ -1772,20 +1726,6 @@ public class SatelliteControllerTest extends TelephonyTest {
         resetSatelliteControllerUT();
         provisionSatelliteService();
         mIIntegerConsumerResults.clear();
-        setUpResponseForDeprovisionSatelliteService(TEST_SATELLITE_TOKEN, SATELLITE_RESULT_SUCCESS);
-        mSatelliteControllerUT.deprovisionSatelliteService(SUB_ID,
-                TEST_SATELLITE_TOKEN, mIIntegerConsumer);
-        processAllMessages();
-        assertTrue(waitForIIntegerConsumerResult(1));
-        assertEquals(SATELLITE_RESULT_SUCCESS, (long) mIIntegerConsumerResults.get(0));
-        verifySatelliteProvisioned(false, SATELLITE_RESULT_SUCCESS);
-
-        // Vendor service does not support deprovisionSatelliteService
-        resetSatelliteControllerUT();
-        provisionSatelliteService();
-        mIIntegerConsumerResults.clear();
-        setUpResponseForDeprovisionSatelliteService(
-                TEST_SATELLITE_TOKEN, SATELLITE_RESULT_REQUEST_NOT_SUPPORTED);
         mSatelliteControllerUT.deprovisionSatelliteService(SUB_ID,
                 TEST_SATELLITE_TOKEN, mIIntegerConsumer);
         processAllMessages();
@@ -1794,16 +1734,16 @@ public class SatelliteControllerTest extends TelephonyTest {
         verifySatelliteProvisioned(false, SATELLITE_RESULT_SUCCESS);
 
         resetSatelliteControllerUT();
-        provisionSatelliteService();
+        setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
+        verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
+        setProvisionedState(null);
         mIIntegerConsumerResults.clear();
-        setUpResponseForDeprovisionSatelliteService(TEST_SATELLITE_TOKEN,
-                SATELLITE_RESULT_INVALID_MODEM_STATE);
         mSatelliteControllerUT.deprovisionSatelliteService(SUB_ID,
                 TEST_SATELLITE_TOKEN, mIIntegerConsumer);
         processAllMessages();
         assertTrue(waitForIIntegerConsumerResult(1));
-        assertEquals(SATELLITE_RESULT_INVALID_MODEM_STATE, (long) mIIntegerConsumerResults.get(0));
-        verifySatelliteProvisioned(true, SATELLITE_RESULT_SUCCESS);
+        assertEquals(SATELLITE_RESULT_SUCCESS, (long) mIIntegerConsumerResults.get(0));
+        verifySatelliteProvisioned(false, SATELLITE_RESULT_SUCCESS);
     }
 
     @Test
@@ -3436,7 +3376,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         mIIntegerConsumerResults.clear();
         setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
         verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
-        sendProvisionedStateChangedEvent(true, null);
+        setProvisionedState(true);
         processAllMessages();
         verifySatelliteProvisioned(true, SATELLITE_RESULT_SUCCESS);
 
@@ -3532,9 +3472,9 @@ public class SatelliteControllerTest extends TelephonyTest {
         doReturn(true).when(mMockSatelliteModemInterface).isSatelliteServiceSupported();
         setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
         verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
-        sendProvisionedStateChangedEvent(true, null);
+        setProvisionedState(true);
         setUpResponseForRequestIsSatelliteProvisioned(true, SATELLITE_RESULT_SUCCESS);
-        sendProvisionedStateChangedEvent(true, null);
+        setProvisionedState(true);
         processAllMessages();
         verifySatelliteProvisioned(true, SATELLITE_RESULT_SUCCESS);
 
@@ -3676,7 +3616,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
 
         // Successfully enable satellite
-        sendProvisionedStateChangedEvent(true, null);
+        setProvisionedState(true);
         processAllMessages();
         verifySatelliteProvisioned(true, SATELLITE_RESULT_SUCCESS);
         mIIntegerConsumerResults.clear();
@@ -3995,12 +3935,13 @@ public class SatelliteControllerTest extends TelephonyTest {
         setUpResponseForRequestIsSatelliteSupported(false, SATELLITE_RESULT_RADIO_NOT_AVAILABLE);
         doNothing().when(mMockSatelliteModemInterface)
                 .setSatelliteServicePackageName(anyString());
-        mSatelliteControllerUT.setSatelliteServicePackageName("TestSatelliteService");
+        mSatelliteControllerUT.setSatelliteServicePackageName("TestSatelliteService", null);
         processAllMessages();
 
         setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
+        setProvisionedState(false);
         verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
-        sendProvisionedStateChangedEvent(true, null);
+        setProvisionedState(true);
         processAllMessages();
         verifySatelliteProvisioned(true, SATELLITE_RESULT_SUCCESS);
     }
@@ -4015,7 +3956,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         setUpResponseForRequestIsSatelliteSupported(false, SATELLITE_RESULT_RADIO_NOT_AVAILABLE);
         doNothing().when(mMockSatelliteModemInterface)
                 .setSatelliteServicePackageName(anyString());
-        mSatelliteControllerUT.setSatelliteServicePackageName("TestSatelliteService");
+        mSatelliteControllerUT.setSatelliteServicePackageName("TestSatelliteService", null);
         processAllMessages();
     }
 
@@ -4023,7 +3964,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         resetSatelliteControllerUT();
         setUpResponseForRequestIsSatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
         verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
-        sendProvisionedStateChangedEvent(true, null);
+        setProvisionedState(true);
         processAllMessages();
         verifySatelliteProvisioned(true, SATELLITE_RESULT_SUCCESS);
     }
@@ -4104,15 +4045,7 @@ public class SatelliteControllerTest extends TelephonyTest {
 
     private void setUpResponseForRequestIsSatelliteProvisioned(
             boolean isSatelliteProvisioned, @SatelliteManager.SatelliteResult int error) {
-        SatelliteException exception = (error == SATELLITE_RESULT_SUCCESS)
-                ? null : new SatelliteException(error);
-        int[] provisioned = new int[]{isSatelliteProvisioned ? 1 : 0};
-        doAnswer(invocation -> {
-            Message message = (Message) invocation.getArguments()[0];
-            AsyncResult.forMessage(message, provisioned, exception);
-            message.sendToTarget();
-            return null;
-        }).when(mMockSatelliteModemInterface).requestIsSatelliteProvisioned(any(Message.class));
+        mSatelliteControllerUT.setSatelliteProvisioned(isSatelliteProvisioned);
     }
 
     private void setUpResponseForRequestSatelliteEnabled(
@@ -4151,37 +4084,6 @@ public class SatelliteControllerTest extends TelephonyTest {
         doNothing().when(mMockSatelliteModemInterface)
                 .requestSatelliteEnabled(eq(enabled), eq(demoMode), eq(emergency),
                         any(Message.class));
-    }
-
-    private void setUpResponseForProvisionSatelliteService(
-            String token, byte[] provisionData, @SatelliteManager.SatelliteResult int error) {
-        SatelliteException exception = (error == SATELLITE_RESULT_SUCCESS)
-                ? null : new SatelliteException(error);
-        doAnswer(invocation -> {
-            Message message = (Message) invocation.getArguments()[2];
-            AsyncResult.forMessage(message, null, exception);
-            message.sendToTarget();
-            return null;
-        }).when(mMockSatelliteModemInterface)
-                .provisionSatelliteService(eq(token), any(byte[].class), any(Message.class));
-    }
-
-    private void setUpNoResponseForProvisionSatelliteService(String token) {
-        doNothing().when(mMockSatelliteModemInterface)
-                .provisionSatelliteService(eq(token), any(), any(Message.class));
-    }
-
-    private void setUpResponseForDeprovisionSatelliteService(String token,
-            @SatelliteManager.SatelliteResult int error) {
-        SatelliteException exception = (error == SATELLITE_RESULT_SUCCESS)
-                ? null : new SatelliteException(error);
-        doAnswer(invocation -> {
-            Message message = (Message) invocation.getArguments()[1];
-            AsyncResult.forMessage(message, null, exception);
-            message.sendToTarget();
-            return null;
-        }).when(mMockSatelliteModemInterface)
-                .deprovisionSatelliteService(eq(token), any(Message.class));
     }
 
     private void setUpResponseForRequestSatelliteCapabilities(
@@ -4459,11 +4361,8 @@ public class SatelliteControllerTest extends TelephonyTest {
         assertEquals(signalStrengthLevel, mQueriedNtnSignalStrengthLevel);
     }
 
-    private void sendProvisionedStateChangedEvent(boolean provisioned, Throwable exception) {
-        Message msg = mSatelliteControllerUT.obtainMessage(
-                26 /* EVENT_SATELLITE_PROVISION_STATE_CHANGED */);
-        msg.obj = new AsyncResult(null, provisioned, exception);
-        msg.sendToTarget();
+    private void setProvisionedState(@Nullable Boolean provisioned) {
+        mSatelliteControllerUT.setSatelliteProvisioned(provisioned);
     }
 
     private void sendSatelliteModemStateChangedEvent(int state, Throwable exception) {
@@ -4549,8 +4448,6 @@ public class SatelliteControllerTest extends TelephonyTest {
         setUpResponseForRequestIsSatelliteProvisioned(false, SATELLITE_RESULT_SUCCESS);
         verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
         verifySatelliteProvisioned(false, SATELLITE_RESULT_SUCCESS);
-        setUpResponseForProvisionSatelliteService(TEST_SATELLITE_TOKEN, testProvisionData,
-                SATELLITE_RESULT_SUCCESS);
         cancelRemote = mSatelliteControllerUT.provisionSatelliteService(SUB_ID,
                 TEST_SATELLITE_TOKEN,
                 testProvisionData, mIIntegerConsumer);
@@ -4563,7 +4460,6 @@ public class SatelliteControllerTest extends TelephonyTest {
 
     private void deprovisionSatelliteService() {
         mIIntegerConsumerResults.clear();
-        setUpResponseForDeprovisionSatelliteService(TEST_SATELLITE_TOKEN, SATELLITE_RESULT_SUCCESS);
         mSatelliteControllerUT.deprovisionSatelliteService(SUB_ID,
                 TEST_SATELLITE_TOKEN, mIIntegerConsumer);
         processAllMessages();
@@ -4792,6 +4688,12 @@ public class SatelliteControllerTest extends TelephonyTest {
                 }
             }
             return false;
+        }
+
+        void setSatelliteProvisioned(@Nullable Boolean isProvisioned) {
+            synchronized (mSatelliteViaOemProvisionLock) {
+                mIsSatelliteViaOemProvisioned = isProvisioned;
+            }
         }
     }
 }
