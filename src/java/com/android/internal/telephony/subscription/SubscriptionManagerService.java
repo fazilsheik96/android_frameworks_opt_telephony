@@ -4732,9 +4732,6 @@ public class SubscriptionManagerService extends ISub.Stub {
             return false;
         }
 
-        if (spn.isEmpty()) {
-            return false;
-        }
         final int id = R.string.config_satellite_sim_spn_identifier;
         String overlaySpn = null;
         try {
