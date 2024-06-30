@@ -448,6 +448,11 @@ public class DataNetworkController extends Handler {
     @NonNull
     private final FeatureFlags mFeatureFlags;
 
+    /**
+     * True indicates internet data connection state is needed to be initiated, especially in case
+     * of phone hot restart */
+    private boolean mInitInternetDataConnectionState = true;
+
     /** The broadcast receiver. */
     private final BroadcastReceiver mIntentReceiver = new BroadcastReceiver() {
         @Override
@@ -1016,6 +1021,7 @@ public class DataNetworkController extends Handler {
                                 sendMessage(
                                         obtainMessage(EVENT_REEVALUATE_UNSATISFIED_NETWORK_REQUESTS,
                                         DataEvaluationReason.DATA_PROFILES_CHANGED));
+                                initiateInternetDataConnectionState();
                             }
                         });
         mDataStallRecoveryManager = new DataStallRecoveryManager(mPhone, this, mDataServiceManagers
@@ -2848,6 +2854,37 @@ public class DataNetworkController extends Handler {
             }
             mSubId = mPhone.getSubId();
             updateSubscriptionPlans();
+            if (!SubscriptionManager.isValidSubscriptionId(mSubId)) {
+                mInitInternetDataConnectionState = true;
+            }
+            initiateInternetDataConnectionState();
+        }
+    }
+
+    private void initiateInternetDataConnectionState() {
+        if (SubscriptionManager.isValidSubscriptionId(mSubId)) {
+            log("initiateInternetDataConnectionState on " + mSubId);
+            if (mInitInternetDataConnectionState) {
+                TelephonyNetworkRequest tnr = new TelephonyNetworkRequest(
+                        new NetworkRequest.Builder()
+                            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                            .build(), mPhone, mFeatureFlags);
+                int networkType = getDataNetworkType(AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
+                if (networkType == TelephonyManager.NETWORK_TYPE_UNKNOWN) {
+                    networkType = mServiceState.getVoiceNetworkType();
+                }
+                DataProfile dataProfile = mDataProfileManager.getDataProfileForNetworkRequest(
+                        tnr, networkType, false, false, false);
+
+                if (dataProfile != null && dataProfile.getApnSetting() != null) {
+                    mPhone.notifyDataConnection(
+                            DataNetwork.getPreciseDisconnectedDataConnectionState(
+                                    dataProfile.getApnSetting()));
+                    mInitInternetDataConnectionState = false;
+                    log("initiateInternetDataConnectionState apnSetting = "
+                            + dataProfile.getApnSetting());
+                }
+            }
         }
     }
 
@@ -3986,6 +4023,7 @@ public class DataNetworkController extends Handler {
                 }
             }
             mServiceState = newServiceState;
+            initiateInternetDataConnectionState();
         } else {
             debugMessage.append("not changed");
         }
