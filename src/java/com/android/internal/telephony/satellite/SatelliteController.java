@@ -5291,7 +5291,7 @@ public class SatelliteController extends Handler {
                                 + "subscriberId.");
                         continue;
                     }
-                    list.add(new ProvisionSubscriberId(subscriberId, carrierId));
+                    list.add(new ProvisionSubscriberId(subscriberId, carrierId, ""));
                     mSubscriberIdPerSub.put(subscriberId, info.getSubscriptionId());
                 }
             }
