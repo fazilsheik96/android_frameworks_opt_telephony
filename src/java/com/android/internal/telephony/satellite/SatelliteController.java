@@ -82,8 +82,11 @@ import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.provider.Telephony;
+import android.telephony.AccessNetworkConstants;
 import android.telephony.CarrierConfigManager;
+import android.telephony.DropBoxManagerLoggerBackend;
 import android.telephony.NetworkRegistrationInfo;
+import android.telephony.PersistentLogger;
 import android.telephony.Rlog;
 import android.telephony.ServiceState;
 import android.telephony.SubscriptionManager;
@@ -155,6 +158,7 @@ public class SatelliteController extends Handler {
     private static final boolean DEBUG = !"user".equals(Build.TYPE);
     /** File used to store shared preferences related to satellite. */
     public static final String SATELLITE_SHARED_PREF = "satellite_shared_pref";
+    public static final String SATELLITE_SUBSCRIPTION_ID = "satellite_subscription_id";
     /** Value to pass for the setting key SATELLITE_MODE_ENABLED, enabled = 1, disabled = 0 */
     public static final int SATELLITE_MODE_ENABLED_TRUE = 1;
     public static final int SATELLITE_MODE_ENABLED_FALSE = 0;
@@ -164,6 +168,10 @@ public class SatelliteController extends Handler {
      * to enable satellite.
      */
     public static final int TIMEOUT_TYPE_WAIT_FOR_SATELLITE_ENABLING_RESPONSE = 1;
+    /** This is used by CTS to override demo pointing aligned duration. */
+    public static final int TIMEOUT_TYPE_DEMO_POINTING_ALIGNED_DURATION_MILLIS = 2;
+    /** This is used by CTS to override demo pointing not aligned duration. */
+    public static final int TIMEOUT_TYPE_DEMO_POINTING_NOT_ALIGNED_DURATION_MILLIS = 3;
 
     /** Key used to read/write OEM-enabled satellite provision status in shared preferences. */
     private static final String OEM_ENABLED_SATELLITE_PROVISION_STATUS_KEY =
@@ -216,7 +224,8 @@ public class SatelliteController extends Handler {
     @NonNull private static SatelliteController sInstance;
     @NonNull private final Context mContext;
     @NonNull private final SatelliteModemInterface mSatelliteModemInterface;
-    @NonNull private SatelliteSessionController mSatelliteSessionController;
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    @NonNull protected SatelliteSessionController mSatelliteSessionController;
     @NonNull private final PointingAppController mPointingAppController;
     @NonNull private final DatagramController mDatagramController;
     @NonNull private final ControllerMetricsStats mControllerMetricsStats;
@@ -269,6 +278,8 @@ public class SatelliteController extends Handler {
             new AtomicBoolean(false);
     private final AtomicBoolean mIsModemEnabledReportingNtnSignalStrength =
             new AtomicBoolean(false);
+    private final AtomicBoolean mLatestRequestedStateForNtnSignalStrengthReport =
+            new AtomicBoolean(false);
     private final AtomicBoolean mRegisteredForSatelliteSupportedStateChanged =
             new AtomicBoolean(false);
     /**
@@ -307,6 +318,8 @@ public class SatelliteController extends Handler {
     private final Object mIsSatelliteEnabledLock = new Object();
     @GuardedBy("mIsSatelliteEnabledLock")
     private Boolean mIsSatelliteEnabled = null;
+    private final Object mIsRadioOnLock = new Object();
+    @GuardedBy("mIsRadioOnLock")
     private boolean mIsRadioOn = false;
     private final Object mSatelliteViaOemProvisionLock = new Object();
     @GuardedBy("mSatelliteViaOemProvisionLock")
@@ -389,6 +402,8 @@ public class SatelliteController extends Handler {
     private int mDelayInSendingEventDisplayEmergencyMessage = 0;
     @NonNull private SharedPreferences mSharedPreferences = null;
 
+    @Nullable private PersistentLogger mPersistentLogger = null;
+
     /**
      * Key : Subscription ID, Value: {@code true} if the EntitlementStatus is enabled,
      * {@code false} otherwise.
@@ -408,6 +423,13 @@ public class SatelliteController extends Handler {
     private final SparseArray<List<String>> mMergedPlmnListPerCarrier = new SparseArray<>();
     private static AtomicLong sNextSatelliteEnableRequestId = new AtomicLong(0);
     private long mWaitTimeForSatelliteEnablingResponse;
+    private long mDemoPointingAlignedDurationMillis;
+    private long mDemoPointingNotAlignedDurationMillis;
+    private final Object mLock = new Object();
+    @GuardedBy("mLock")
+    private long mLastEmergencyCallTime;
+    private long mSatelliteEmergencyModeDurationMillis;
+    private static final int DEFAULT_SATELLITE_EMERGENCY_MODE_DURATION_SECONDS = 300;
 
     /** Key used to read/write satellite system notification done in shared preferences. */
     private static final String SATELLITE_SYSTEM_NOTIFICATION_DONE_KEY =
@@ -425,6 +447,9 @@ public class SatelliteController extends Handler {
 
     private long mSessionStartTimeStamp;
     private long mSessionProcessingTimeStamp;
+
+    // Variable for backup and restore device's screen rotation settings.
+    private String mDeviceRotationLockToBackupAndRestore = null;
 
     /**
      * @return The singleton instance of SatelliteController.
@@ -462,6 +487,11 @@ public class SatelliteController extends Handler {
             @NonNull Context context, @NonNull Looper looper, @NonNull FeatureFlags featureFlags) {
         super(looper);
 
+        if (isSatellitePersistentLoggingEnabled(context, featureFlags)) {
+            mPersistentLogger = new PersistentLogger(
+                    DropBoxManagerLoggerBackend.getInstance(context));
+        }
+
         mContext = context;
         mFeatureFlags = featureFlags;
         Phone phone = SatelliteServiceUtils.getPhone();
@@ -469,11 +499,12 @@ public class SatelliteController extends Handler {
         mDSM = phone.getDeviceStateMonitor();
         // Create the SatelliteModemInterface singleton, which is used to manage connections
         // to the satellite service and HAL interface.
-        mSatelliteModemInterface = SatelliteModemInterface.make(mContext, this);
+        mSatelliteModemInterface = SatelliteModemInterface.make(
+                mContext, this, mFeatureFlags);
 
         // Create the PointingUIController singleton,
         // which is used to manage interactions with PointingUI app.
-        mPointingAppController = PointingAppController.make(mContext);
+        mPointingAppController = PointingAppController.make(mContext, mFeatureFlags);
 
         // Create the SatelliteControllerMetrics to report controller metrics
         // should be called before making DatagramController
@@ -486,10 +517,14 @@ public class SatelliteController extends Handler {
 
         // Create the DatagramController singleton,
         // which is used to send and receive satellite datagrams.
-        mDatagramController = DatagramController.make(mContext, looper, mPointingAppController);
+        mDatagramController = DatagramController.make(
+                mContext, looper, mFeatureFlags, mPointingAppController);
 
         mCi.registerForRadioStateChanged(this, EVENT_RADIO_STATE_CHANGED, null);
-        mIsRadioOn = phone.isRadioOn();
+        synchronized (mIsRadioOnLock) {
+            mIsRadioOn = phone.isRadioOn();
+        }
+
         registerForSatelliteProvisionStateChanged();
         registerForPendingDatagramCount();
         registerForSatelliteModemStateChanged();
@@ -537,6 +572,11 @@ public class SatelliteController extends Handler {
                 null);
         loadSatelliteSharedPreferences();
         mWaitTimeForSatelliteEnablingResponse = getWaitForSatelliteEnablingResponseTimeoutMillis();
+        mDemoPointingAlignedDurationMillis = getDemoPointingAlignedDurationMillisFromResources();
+        mDemoPointingNotAlignedDurationMillis =
+                getDemoPointingNotAlignedDurationMillisFromResources();
+        mSatelliteEmergencyModeDurationMillis =
+                getSatelliteEmergencyModeDurationFromOverlayConfig(context);
     }
 
     /**
@@ -600,10 +640,10 @@ public class SatelliteController extends Handler {
                 String satelliteModeRadios = Settings.Global.getString(mContentResolver,
                         Settings.Global.SATELLITE_MODE_RADIOS);
                 if (satelliteModeRadios == null) {
-                    loge("initializeSatelliteModeRadios: satelliteModeRadios is null");
+                    ploge("initializeSatelliteModeRadios: satelliteModeRadios is null");
                     return;
                 }
-                logd("Radios To be checked when satellite is on: " + satelliteModeRadios);
+                plogd("Radios To be checked when satellite is on: " + satelliteModeRadios);
 
                 if (satelliteModeRadios.contains(Settings.Global.RADIO_BLUETOOTH)) {
                     BluetoothAdapter bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
@@ -640,7 +680,7 @@ public class SatelliteController extends Handler {
                     // Unregister receiver before registering it.
                     mContext.unregisterReceiver(mBTWifiNFCSateReceiver);
                 } catch (IllegalArgumentException e) {
-                    logd("initializeSatelliteModeRadios: unregisterReceiver, e=" + e);
+                    plogd("initializeSatelliteModeRadios: unregisterReceiver, e=" + e);
                 }
                 mContext.registerReceiver(mBTWifiNFCSateReceiver, radioStateIntentFilter);
 
@@ -661,12 +701,12 @@ public class SatelliteController extends Handler {
                     }
                 }
 
-                logd("mDisableBTOnSatelliteEnabled: " + mDisableBTOnSatelliteEnabled
+                plogd("mDisableBTOnSatelliteEnabled: " + mDisableBTOnSatelliteEnabled
                         + " mDisableNFCOnSatelliteEnabled: " + mDisableNFCOnSatelliteEnabled
                         + " mDisableWifiOnSatelliteEnabled: " + mDisableWifiOnSatelliteEnabled
                         + " mDisableUWBOnSatelliteEnabled: " + mDisableUWBOnSatelliteEnabled);
 
-                logd("mBTStateEnabled: " + mBTStateEnabled
+                plogd("mBTStateEnabled: " + mBTStateEnabled
                         + " mNfcStateEnabled: " + mNfcStateEnabled
                         + " mWifiStateEnabled: " + mWifiStateEnabled
                         + " mUwbStateEnabled: " + mUwbStateEnabled);
@@ -694,8 +734,8 @@ public class SatelliteController extends Handler {
 
         @Override
         public void onStateChanged(int state, int reason) {
-            logd("UwbAdapterStateCallback#onStateChanged() called, state = " + toString(state));
-            logd("Adapter state changed reason " + String.valueOf(reason));
+            plogd("UwbAdapterStateCallback#onStateChanged() called, state = " + toString(state));
+            plogd("Adapter state changed reason " + String.valueOf(reason));
             synchronized (mRadioStateLock) {
                 if (state == UwbManager.AdapterStateCallback.STATE_DISABLED) {
                     mUwbStateEnabled = false;
@@ -703,7 +743,7 @@ public class SatelliteController extends Handler {
                 } else {
                     mUwbStateEnabled = true;
                 }
-                logd("mUwbStateEnabled: " + mUwbStateEnabled);
+                plogd("mUwbStateEnabled: " + mUwbStateEnabled);
             }
         }
     }
@@ -713,7 +753,7 @@ public class SatelliteController extends Handler {
         public void onReceive(Context context, Intent intent) {
             final String action = intent.getAction();
             if (action == null) {
-                logd("BTWifiNFCStateReceiver NULL action for intent " + intent);
+                plogd("BTWifiNFCStateReceiver NULL action for intent " + intent);
                 return;
             }
 
@@ -730,7 +770,7 @@ public class SatelliteController extends Handler {
                             mBTStateEnabled = true;
                         }
                         if (currentBTStateEnabled != mBTStateEnabled) {
-                            logd("mBTStateEnabled=" + mBTStateEnabled);
+                            plogd("mBTStateEnabled=" + mBTStateEnabled);
                         }
                     }
                     break;
@@ -746,7 +786,7 @@ public class SatelliteController extends Handler {
                             evaluateToSendSatelliteEnabledSuccess();
                         }
                         if (currentNfcStateEnabled != mNfcStateEnabled) {
-                            logd("mNfcStateEnabled=" + mNfcStateEnabled);
+                            plogd("mNfcStateEnabled=" + mNfcStateEnabled);
                         }
                     }
                     break;
@@ -763,7 +803,7 @@ public class SatelliteController extends Handler {
                             evaluateToSendSatelliteEnabledSuccess();
                         }
                         if (currentWifiStateEnabled != mWifiStateEnabled) {
-                            logd("mWifiStateEnabled=" + mWifiStateEnabled);
+                            plogd("mWifiStateEnabled=" + mWifiStateEnabled);
                         }
                     }
                     break;
@@ -952,14 +992,14 @@ public class SatelliteController extends Handler {
                 RequestSatelliteEnabledArgument argument =
                         (RequestSatelliteEnabledArgument) request.argument;
                 int error =  SatelliteServiceUtils.getSatelliteError(ar, "setSatelliteEnabled");
-                logd("EVENT_SET_SATELLITE_ENABLED_DONE = " + error);
+                plogd("EVENT_SET_SATELLITE_ENABLED_DONE = " + error);
 
                 /*
                  * The timer to wait for EVENT_SET_SATELLITE_ENABLED_DONE might have expired and
                  * thus the request resources might have been cleaned up.
                  */
                 if (!shouldProcessEventSetSatelliteEnabledDone(argument)) {
-                    logw("The request ID=" + argument.requestId + ", enableSatellite="
+                    plogw("The request ID=" + argument.requestId + ", enableSatellite="
                             + argument.enableSatellite + " was already processed");
                     return;
                 }
@@ -971,6 +1011,7 @@ public class SatelliteController extends Handler {
                             mWaitingForRadioDisabled = true;
                         }
                         setSettingsKeyForSatelliteMode(SATELLITE_MODE_ENABLED_TRUE);
+                        setSettingsKeyToAllowDeviceRotation(SATELLITE_MODE_ENABLED_TRUE);
                         evaluateToSendSatelliteEnabledSuccess();
                     } else {
                         /**
@@ -997,13 +1038,14 @@ public class SatelliteController extends Handler {
                                         SATELLITE_RESULT_SUCCESS,
                                         argument.callback);
                             } else {
-                                logd("Wait for satellite modem off before updating satellite"
+                                plogd("Wait for satellite modem off before updating satellite"
                                         + " modem state");
                             }
                             mWaitingForDisableSatelliteModemResponse = false;
                         }
                     }
                     // Request Ntn signal strength report when satellite enabled or disabled done.
+                    mLatestRequestedStateForNtnSignalStrengthReport.set(argument.enableSatellite);
                     updateNtnSignalStrengthReporting(argument.enableSatellite);
                 } else {
                     synchronized (mSatelliteEnabledRequestLock) {
@@ -1050,6 +1092,8 @@ public class SatelliteController extends Handler {
 
                     mControllerMetricsStats.onSatelliteDisabled();
 
+                    handlePersistentLoggingOnSessionEnd(mIsEmergency);
+
                     synchronized (mIsSatelliteEnabledLock) {
                         mWaitingForDisableSatelliteModemResponse = false;
                     }
@@ -1077,11 +1121,11 @@ public class SatelliteController extends Handler {
                 Bundle bundle = new Bundle();
                 if (error == SATELLITE_RESULT_SUCCESS) {
                     if (ar.result == null) {
-                        loge("isSatelliteEnabled: result is null");
+                        ploge("isSatelliteEnabled: result is null");
                         error = SatelliteManager.SATELLITE_RESULT_INVALID_TELEPHONY_STATE;
                     } else {
                         boolean enabled = ((int[]) ar.result)[0] == 1;
-                        if (DBG) logd("isSatelliteEnabled: " + enabled);
+                        if (DBG) plogd("isSatelliteEnabled: " + enabled);
                         bundle.putBoolean(SatelliteManager.KEY_SATELLITE_ENABLED, enabled);
                         updateSatelliteEnabledState(enabled, "EVENT_IS_SATELLITE_ENABLED_DONE");
                     }
@@ -1106,11 +1150,11 @@ public class SatelliteController extends Handler {
                 Bundle bundle = new Bundle();
                 if (error == SATELLITE_RESULT_SUCCESS) {
                     if (ar.result == null) {
-                        loge("isSatelliteSupported: result is null");
+                        ploge("isSatelliteSupported: result is null");
                         error = SatelliteManager.SATELLITE_RESULT_INVALID_TELEPHONY_STATE;
                     } else {
                         boolean supported = (boolean) ar.result;
-                        logd("isSatelliteSupported: " + supported);
+                        plogd("isSatelliteSupported: " + supported);
                         bundle.putBoolean(SatelliteManager.KEY_SATELLITE_SUPPORTED, supported);
                         updateSatelliteSupportedStateWhenSatelliteServiceConnected(supported);
                     }
@@ -1134,14 +1178,14 @@ public class SatelliteController extends Handler {
                 Bundle bundle = new Bundle();
                 if (error == SATELLITE_RESULT_SUCCESS) {
                     if (ar.result == null) {
-                        loge("getSatelliteCapabilities: result is null");
+                        ploge("getSatelliteCapabilities: result is null");
                         error = SatelliteManager.SATELLITE_RESULT_INVALID_TELEPHONY_STATE;
                     } else {
                         SatelliteCapabilities capabilities = (SatelliteCapabilities) ar.result;
                         synchronized (mNeedsSatellitePointingLock) {
                             mNeedsSatellitePointing = capabilities.isPointingRequired();
                         }
-                        if (DBG) logd("getSatelliteCapabilities: " + capabilities);
+                        if (DBG) plogd("getSatelliteCapabilities: " + capabilities);
                         bundle.putParcelable(SatelliteManager.KEY_SATELLITE_CAPABILITIES,
                                 capabilities);
                         synchronized (mSatelliteCapabilitiesLock) {
@@ -1169,13 +1213,13 @@ public class SatelliteController extends Handler {
                 Bundle bundle = new Bundle();
                 if (error == SATELLITE_RESULT_SUCCESS) {
                     if (ar.result == null) {
-                        loge("requestTimeForNextSatelliteVisibility: result is null");
+                        ploge("requestTimeForNextSatelliteVisibility: result is null");
                         error = SatelliteManager.SATELLITE_RESULT_INVALID_TELEPHONY_STATE;
                     } else {
                         int nextVisibilityDuration = ((int[]) ar.result)[0];
                         if (DBG) {
-                            logd("requestTimeForNextSatelliteVisibility: " +
-                                    nextVisibilityDuration);
+                            plogd("requestTimeForNextSatelliteVisibility: "
+                                    + nextVisibilityDuration);
                         }
                         bundle.putInt(SatelliteManager.KEY_SATELLITE_NEXT_VISIBILITY,
                                 nextVisibilityDuration);
@@ -1186,11 +1230,13 @@ public class SatelliteController extends Handler {
             }
 
             case EVENT_RADIO_STATE_CHANGED: {
-                if (mCi.getRadioState() == TelephonyManager.RADIO_POWER_ON) {
-                    mIsRadioOn = true;
-                } else if (mCi.getRadioState() == TelephonyManager.RADIO_POWER_OFF) {
-                    mIsRadioOn = false;
-                    resetCarrierRoamingSatelliteModeParams();
+                synchronized (mIsRadioOnLock) {
+                    logd("EVENT_RADIO_STATE_CHANGED: radioState=" + mCi.getRadioState());
+                    if (mCi.getRadioState() == TelephonyManager.RADIO_POWER_ON) {
+                        mIsRadioOn = true;
+                    } else if (mCi.getRadioState() == TelephonyManager.RADIO_POWER_OFF) {
+                        resetCarrierRoamingSatelliteModeParams();
+                    }
                 }
 
                 if (mCi.getRadioState() != TelephonyManager.RADIO_POWER_UNAVAILABLE) {
@@ -1201,7 +1247,7 @@ public class SatelliteController extends Handler {
                                     @Override
                                     protected void onReceiveResult(
                                             int resultCode, Bundle resultData) {
-                                        logd("onRadioStateChanged.requestIsSatelliteSupported: "
+                                        plogd("onRadioStateChanged.requestIsSatelliteSupported: "
                                                 + "resultCode=" + resultCode
                                                 + ", resultData=" + resultData);
                                     }
@@ -1229,18 +1275,18 @@ public class SatelliteController extends Handler {
             case EVENT_SATELLITE_PROVISION_STATE_CHANGED:
                 ar = (AsyncResult) msg.obj;
                 if (ar.result == null) {
-                    loge("EVENT_SATELLITE_PROVISION_STATE_CHANGED: result is null");
+                    ploge("EVENT_SATELLITE_PROVISION_STATE_CHANGED: result is null");
                 } else {
                     handleEventSatelliteProvisionStateChanged((boolean) ar.result);
                 }
                 break;
 
             case EVENT_PENDING_DATAGRAMS:
-                logd("Received EVENT_PENDING_DATAGRAMS");
+                plogd("Received EVENT_PENDING_DATAGRAMS");
                 IIntegerConsumer internalCallback = new IIntegerConsumer.Stub() {
                     @Override
                     public void accept(int result) {
-                        logd("pollPendingSatelliteDatagram result: " + result);
+                        plogd("pollPendingSatelliteDatagram result: " + result);
                     }
                 };
                 pollPendingDatagrams(
@@ -1250,7 +1296,7 @@ public class SatelliteController extends Handler {
             case EVENT_SATELLITE_MODEM_STATE_CHANGED:
                 ar = (AsyncResult) msg.obj;
                 if (ar.result == null) {
-                    loge("EVENT_SATELLITE_MODEM_STATE_CHANGED: result is null");
+                    ploge("EVENT_SATELLITE_MODEM_STATE_CHANGED: result is null");
                 } else {
                     handleEventSatelliteModemStateChanged((int) ar.result);
                 }
@@ -1261,7 +1307,7 @@ public class SatelliteController extends Handler {
                 break;
 
             case CMD_EVALUATE_SATELLITE_ATTACH_RESTRICTION_CHANGE: {
-                logd("CMD_EVALUATE_SATELLITE_ATTACH_RESTRICTION_CHANGE");
+                plogd("CMD_EVALUATE_SATELLITE_ATTACH_RESTRICTION_CHANGE");
                 request = (SatelliteControllerHandlerRequest) msg.obj;
                 handleRequestSatelliteAttachRestrictionForCarrierCmd(request);
                 break;
@@ -1292,7 +1338,7 @@ public class SatelliteController extends Handler {
             }
 
             case CMD_REQUEST_NTN_SIGNAL_STRENGTH: {
-                logd("CMD_REQUEST_NTN_SIGNAL_STRENGTH");
+                plogd("CMD_REQUEST_NTN_SIGNAL_STRENGTH");
                 request = (SatelliteControllerHandlerRequest) msg.obj;
                 onCompleted = obtainMessage(EVENT_REQUEST_NTN_SIGNAL_STRENGTH_DONE, request);
                 mSatelliteModemInterface.requestNtnSignalStrength(onCompleted);
@@ -1321,7 +1367,7 @@ public class SatelliteController extends Handler {
                                         NTN_SIGNAL_STRENGTH_NONE);
                             }
                         }
-                        loge("EVENT_REQUEST_NTN_SIGNAL_STRENGTH_DONE: ntnSignalStrength is null");
+                        ploge("EVENT_REQUEST_NTN_SIGNAL_STRENGTH_DONE: ntnSignalStrength is null");
                         result.send(SatelliteManager.SATELLITE_RESULT_REQUEST_FAILED, null);
                     }
                 } else {
@@ -1338,7 +1384,7 @@ public class SatelliteController extends Handler {
             case EVENT_NTN_SIGNAL_STRENGTH_CHANGED: {
                 ar = (AsyncResult) msg.obj;
                 if (ar.result == null) {
-                    loge("EVENT_NTN_SIGNAL_STRENGTH_CHANGED: result is null");
+                    ploge("EVENT_NTN_SIGNAL_STRENGTH_CHANGED: result is null");
                 } else {
                     handleEventNtnSignalStrengthChanged((NtnSignalStrength) ar.result);
                 }
@@ -1349,7 +1395,7 @@ public class SatelliteController extends Handler {
                 ar = (AsyncResult) msg.obj;
                 boolean shouldReport = (boolean) ar.result;
                 if (DBG) {
-                    logd("CMD_UPDATE_NTN_SIGNAL_STRENGTH_REPORTING: shouldReport=" + shouldReport);
+                    plogd("CMD_UPDATE_NTN_SIGNAL_STRENGTH_REPORTING: shouldReport=" + shouldReport);
                 }
                 handleCmdUpdateNtnSignalStrengthReporting(shouldReport);
                 break;
@@ -1364,6 +1410,13 @@ public class SatelliteController extends Handler {
                                 + shouldReport);
                 if (errorCode == SATELLITE_RESULT_SUCCESS) {
                     mIsModemEnabledReportingNtnSignalStrength.set(shouldReport);
+                    if (mLatestRequestedStateForNtnSignalStrengthReport.get()
+                            != mIsModemEnabledReportingNtnSignalStrength.get()) {
+                        logd("mLatestRequestedStateForNtnSignalStrengthReport does not match with "
+                                + "mIsModemEnabledReportingNtnSignalStrength");
+                        updateNtnSignalStrengthReporting(
+                                mLatestRequestedStateForNtnSignalStrengthReport.get());
+                    }
                 } else {
                     loge(((boolean) request.argument ? "startSendingNtnSignalStrength"
                             : "stopSendingNtnSignalStrength") + "returns " + errorCode);
@@ -1379,7 +1432,7 @@ public class SatelliteController extends Handler {
             case EVENT_SATELLITE_CAPABILITIES_CHANGED: {
                 ar = (AsyncResult) msg.obj;
                 if (ar.result == null) {
-                    loge("EVENT_SATELLITE_CAPABILITIES_CHANGED: result is null");
+                    ploge("EVENT_SATELLITE_CAPABILITIES_CHANGED: result is null");
                 } else {
                     handleEventSatelliteCapabilitiesChanged((SatelliteCapabilities) ar.result);
                 }
@@ -1389,7 +1442,7 @@ public class SatelliteController extends Handler {
             case EVENT_SATELLITE_SUPPORTED_STATE_CHANGED: {
                 ar = (AsyncResult) msg.obj;
                 if (ar.result == null) {
-                    loge("EVENT_SATELLITE_SUPPORTED_STATE_CHANGED: result is null");
+                    ploge("EVENT_SATELLITE_SUPPORTED_STATE_CHANGED: result is null");
                 } else {
                     handleEventSatelliteSupportedStateChanged((boolean) ar.result);
                 }
@@ -1424,7 +1477,7 @@ public class SatelliteController extends Handler {
                 processNewCarrierConfigData(subId);
             }
         } else {
-            loge("updateSupportedSatelliteServicesForActiveSubscriptions: "
+            ploge("updateSupportedSatelliteServicesForActiveSubscriptions: "
                     + "activeSubIds is null");
         }
     }
@@ -1449,7 +1502,7 @@ public class SatelliteController extends Handler {
      */
     public void requestSatelliteEnabled(int subId, boolean enableSatellite, boolean enableDemoMode,
             boolean isEmergency, @NonNull IIntegerConsumer callback) {
-        logd("requestSatelliteEnabled subId: " + subId + " enableSatellite: " + enableSatellite
+        plogd("requestSatelliteEnabled subId: " + subId + " enableSatellite: " + enableSatellite
                 + " enableDemoMode: " + enableDemoMode + " isEmergency: " + isEmergency);
         Consumer<Integer> result = FunctionalUtils.ignoreRemoteException(callback::accept);
         int error = evaluateOemSatelliteRequestAllowed(true);
@@ -1459,11 +1512,13 @@ public class SatelliteController extends Handler {
         }
 
         if (enableSatellite) {
-            if (!mIsRadioOn) {
-                loge("Radio is not on, can not enable satellite");
-                sendErrorAndReportSessionMetrics(
-                        SatelliteManager.SATELLITE_RESULT_INVALID_MODEM_STATE, result);
-                return;
+            synchronized (mIsRadioOnLock) {
+                if (!mIsRadioOn) {
+                    ploge("Radio is not on, can not enable satellite");
+                    sendErrorAndReportSessionMetrics(
+                            SatelliteManager.SATELLITE_RESULT_INVALID_MODEM_STATE, result);
+                    return;
+                }
             }
         } else {
             /* if disable satellite, always assume demo is also disabled */
@@ -1474,13 +1529,13 @@ public class SatelliteController extends Handler {
             if (mIsSatelliteEnabled != null) {
                 if (mIsSatelliteEnabled == enableSatellite) {
                     if (enableDemoMode != mIsDemoModeEnabled) {
-                        loge("Received invalid demo mode while satellite session is enabled"
+                        ploge("Received invalid demo mode while satellite session is enabled"
                                 + " enableDemoMode = " + enableDemoMode);
                         sendErrorAndReportSessionMetrics(
                                 SatelliteManager.SATELLITE_RESULT_INVALID_ARGUMENTS, result);
                         return;
                     } else {
-                        logd("Enable request matches with current state"
+                        plogd("Enable request matches with current state"
                                 + " enableSatellite = " + enableSatellite);
                         sendErrorAndReportSessionMetrics(
                                 SatelliteManager.SATELLITE_RESULT_SUCCESS, result);
@@ -1507,14 +1562,14 @@ public class SatelliteController extends Handler {
             if (mSatelliteEnabledRequest == null) {
                 mSatelliteEnabledRequest = request;
             } else if (mSatelliteEnabledRequest.enableSatellite == request.enableSatellite) {
-                logd("requestSatelliteEnabled enableSatellite: " + enableSatellite
+                plogd("requestSatelliteEnabled enableSatellite: " + enableSatellite
                         + " is already in progress.");
                 sendErrorAndReportSessionMetrics(
                         SatelliteManager.SATELLITE_RESULT_REQUEST_IN_PROGRESS, result);
                 return;
             } else if (mSatelliteEnabledRequest.enableSatellite == false
                     && request.enableSatellite == true) {
-                logd("requestSatelliteEnabled enableSatellite: " + enableSatellite + " cannot be "
+                plogd("requestSatelliteEnabled enableSatellite: " + enableSatellite + " cannot be "
                         + "processed. Disable satellite is already in progress.");
                 sendErrorAndReportSessionMetrics(
                         SatelliteManager.SATELLITE_RESULT_ERROR, result);
@@ -1560,7 +1615,7 @@ public class SatelliteController extends Handler {
      */
     public boolean isSatelliteEnabled() {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("isSatelliteEnabled: oemEnabledSatelliteFlag is disabled");
+            plogd("isSatelliteEnabled: oemEnabledSatelliteFlag is disabled");
             return false;
         }
         if (mIsSatelliteEnabled == null) return false;
@@ -1574,7 +1629,7 @@ public class SatelliteController extends Handler {
      */
     public boolean isSatelliteBeingEnabled() {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("isSatelliteBeingEnabled: oemEnabledSatelliteFlag is disabled");
+            plogd("isSatelliteBeingEnabled: oemEnabledSatelliteFlag is disabled");
             return false;
         }
 
@@ -1611,7 +1666,7 @@ public class SatelliteController extends Handler {
      */
     public boolean isDemoModeEnabled() {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("isDemoModeEnabled: oemEnabledSatelliteFlag is disabled");
+            plogd("isDemoModeEnabled: oemEnabledSatelliteFlag is disabled");
             return false;
         }
         return mIsDemoModeEnabled;
@@ -1626,7 +1681,7 @@ public class SatelliteController extends Handler {
      */
     public void requestIsSatelliteSupported(int subId, @NonNull ResultReceiver result) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("requestIsSatelliteSupported: oemEnabledSatelliteFlag is disabled");
+            plogd("requestIsSatelliteSupported: oemEnabledSatelliteFlag is disabled");
             result.send(SatelliteManager.SATELLITE_RESULT_NOT_SUPPORTED, null);
             return;
         }
@@ -1635,6 +1690,7 @@ public class SatelliteController extends Handler {
                 /* We have already successfully queried the satellite modem. */
                 Bundle bundle = new Bundle();
                 bundle.putBoolean(SatelliteManager.KEY_SATELLITE_SUPPORTED, mIsSatelliteSupported);
+                bundle.putInt(SATELLITE_SUBSCRIPTION_ID, subId);
                 result.send(SATELLITE_RESULT_SUCCESS, bundle);
                 return;
             }
@@ -1838,7 +1894,7 @@ public class SatelliteController extends Handler {
     public void unregisterForSatelliteProvisionStateChanged(
             int subId, @NonNull ISatelliteProvisionStateCallback callback) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("unregisterForSatelliteProvisionStateChanged: "
+            plogd("unregisterForSatelliteProvisionStateChanged: "
                     + "oemEnabledSatelliteFlag is disabled");
             return;
         }
@@ -1884,13 +1940,13 @@ public class SatelliteController extends Handler {
     @SatelliteManager.SatelliteResult public int registerForSatelliteModemStateChanged(int subId,
             @NonNull ISatelliteModemStateCallback callback) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("registerForSatelliteModemStateChanged: oemEnabledSatelliteFlag is disabled");
+            plogd("registerForSatelliteModemStateChanged: oemEnabledSatelliteFlag is disabled");
             return SatelliteManager.SATELLITE_RESULT_NOT_SUPPORTED;
         }
         if (mSatelliteSessionController != null) {
             mSatelliteSessionController.registerForSatelliteModemStateChanged(callback);
         } else {
-            loge("registerForSatelliteModemStateChanged: mSatelliteSessionController"
+            ploge("registerForSatelliteModemStateChanged: mSatelliteSessionController"
                     + " is not initialized yet");
             return SatelliteManager.SATELLITE_RESULT_INVALID_TELEPHONY_STATE;
         }
@@ -1908,13 +1964,13 @@ public class SatelliteController extends Handler {
     public void unregisterForModemStateChanged(int subId,
             @NonNull ISatelliteModemStateCallback callback) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("unregisterForModemStateChanged: oemEnabledSatelliteFlag is disabled");
+            plogd("unregisterForModemStateChanged: oemEnabledSatelliteFlag is disabled");
             return;
         }
         if (mSatelliteSessionController != null) {
             mSatelliteSessionController.unregisterForSatelliteModemStateChanged(callback);
         } else {
-            loge("unregisterForModemStateChanged: mSatelliteSessionController"
+            ploge("unregisterForModemStateChanged: mSatelliteSessionController"
                     + " is not initialized yet");
         }
     }
@@ -1930,13 +1986,13 @@ public class SatelliteController extends Handler {
     @SatelliteManager.SatelliteResult public int registerForIncomingDatagram(int subId,
             @NonNull ISatelliteDatagramCallback callback) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("registerForIncomingDatagram: oemEnabledSatelliteFlag is disabled");
+            plogd("registerForIncomingDatagram: oemEnabledSatelliteFlag is disabled");
             return SatelliteManager.SATELLITE_RESULT_NOT_SUPPORTED;
         }
         if (!mSatelliteModemInterface.isSatelliteServiceSupported()) {
             return SatelliteManager.SATELLITE_RESULT_NOT_SUPPORTED;
         }
-        logd("registerForIncomingDatagram: callback=" + callback);
+        plogd("registerForIncomingDatagram: callback=" + callback);
         return mDatagramController.registerForSatelliteDatagram(subId, callback);
     }
 
@@ -1951,13 +2007,13 @@ public class SatelliteController extends Handler {
     public void unregisterForIncomingDatagram(int subId,
             @NonNull ISatelliteDatagramCallback callback) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("unregisterForIncomingDatagram: oemEnabledSatelliteFlag is disabled");
+            plogd("unregisterForIncomingDatagram: oemEnabledSatelliteFlag is disabled");
             return;
         }
         if (!mSatelliteModemInterface.isSatelliteServiceSupported()) {
             return;
         }
-        logd("unregisterForIncomingDatagram: callback=" + callback);
+        plogd("unregisterForIncomingDatagram: callback=" + callback);
         mDatagramController.unregisterForSatelliteDatagram(subId, callback);
     }
 
@@ -2003,7 +2059,7 @@ public class SatelliteController extends Handler {
     public void sendDatagram(int subId, @SatelliteManager.DatagramType int datagramType,
             SatelliteDatagram datagram, boolean needFullScreenPointingUI,
             @NonNull IIntegerConsumer callback) {
-        logd("sendSatelliteDatagram: subId: " + subId + " datagramType: " + datagramType
+        plogd("sendSatelliteDatagram: subId: " + subId + " datagramType: " + datagramType
                 + " needFullScreenPointingUI: " + needFullScreenPointingUI);
 
         Consumer<Integer> result = FunctionalUtils.ignoreRemoteException(callback::accept);
@@ -2052,9 +2108,11 @@ public class SatelliteController extends Handler {
      */
     public void setDeviceAlignedWithSatellite(@NonNull int subId, @NonNull boolean isAligned) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("setDeviceAlignedWithSatellite: oemEnabledSatelliteFlag is disabled");
+            plogd("setDeviceAlignedWithSatellite: oemEnabledSatelliteFlag is disabled");
             return;
         }
+
+        DemoSimulator.getInstance().setDeviceAlignedWithSatellite(isAligned);
         mDatagramController.setDeviceAlignedWithSatellite(isAligned);
     }
 
@@ -2167,7 +2225,7 @@ public class SatelliteController extends Handler {
      * strength of the satellite connection.
      */
     public void requestNtnSignalStrength(int subId, @NonNull ResultReceiver result) {
-        if (DBG) logd("requestNtnSignalStrength()");
+        if (DBG) plogd("requestNtnSignalStrength()");
 
         int error = evaluateOemSatelliteRequestAllowed(true);
         if (error != SATELLITE_RESULT_SUCCESS) {
@@ -2206,7 +2264,7 @@ public class SatelliteController extends Handler {
      */
     public void registerForNtnSignalStrengthChanged(int subId,
             @NonNull INtnSignalStrengthCallback callback) throws RemoteException {
-        if (DBG) logd("registerForNtnSignalStrengthChanged()");
+        if (DBG) plogd("registerForNtnSignalStrengthChanged()");
 
         int error = evaluateOemSatelliteRequestAllowed(true);
         if (error == SATELLITE_RESULT_SUCCESS) {
@@ -2227,7 +2285,7 @@ public class SatelliteController extends Handler {
      */
     public void unregisterForNtnSignalStrengthChanged(
             int subId, @NonNull INtnSignalStrengthCallback callback) {
-        if (DBG) logd("unregisterForNtnSignalStrengthChanged()");
+        if (DBG) plogd("unregisterForNtnSignalStrengthChanged()");
 
         int error = evaluateOemSatelliteRequestAllowed(true);
         if (error == SATELLITE_RESULT_SUCCESS) {
@@ -2245,7 +2303,7 @@ public class SatelliteController extends Handler {
      */
     @SatelliteManager.SatelliteResult public int registerForCapabilitiesChanged(
             int subId, @NonNull ISatelliteCapabilitiesCallback callback) {
-        if (DBG) logd("registerForCapabilitiesChanged()");
+        if (DBG) plogd("registerForCapabilitiesChanged()");
 
         int error = evaluateOemSatelliteRequestAllowed(true);
         if (error != SATELLITE_RESULT_SUCCESS) return error;
@@ -2265,7 +2323,7 @@ public class SatelliteController extends Handler {
      */
     public void unregisterForCapabilitiesChanged(
             int subId, @NonNull ISatelliteCapabilitiesCallback callback) {
-        if (DBG) logd("unregisterForCapabilitiesChanged()");
+        if (DBG) plogd("unregisterForCapabilitiesChanged()");
 
         int error = evaluateOemSatelliteRequestAllowed(true);
         if (error == SATELLITE_RESULT_SUCCESS) {
@@ -2284,7 +2342,7 @@ public class SatelliteController extends Handler {
     @SatelliteManager.SatelliteResult public int registerForSatelliteSupportedStateChanged(
             int subId, @NonNull ISatelliteSupportedStateCallback callback) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("registerForSatelliteSupportedStateChanged: oemEnabledSatelliteFlag is disabled");
+            plogd("registerForSatelliteSupportedStateChanged: oemEnabledSatelliteFlag is disabled");
             return SatelliteManager.SATELLITE_RESULT_REQUEST_NOT_SUPPORTED;
         }
 
@@ -2303,7 +2361,7 @@ public class SatelliteController extends Handler {
     public void unregisterForSatelliteSupportedStateChanged(
             int subId, @NonNull ISatelliteSupportedStateCallback callback) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("unregisterForSatelliteSupportedStateChanged: "
+            plogd("unregisterForSatelliteSupportedStateChanged: "
                     + "oemEnabledSatelliteFlag is disabled");
             return;
         }
@@ -2319,16 +2377,16 @@ public class SatelliteController extends Handler {
      */
     public boolean setSatelliteServicePackageName(@Nullable String servicePackageName) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("setSatelliteServicePackageName: oemEnabledSatelliteFlag is disabled");
+            plogd("setSatelliteServicePackageName: oemEnabledSatelliteFlag is disabled");
             return false;
         }
         if (!isMockModemAllowed()) {
-            logd("setSatelliteServicePackageName: mock modem not allowed");
+            plogd("setSatelliteServicePackageName: mock modem not allowed");
             return false;
         }
 
         // Cached states need to be cleared whenever switching satellite vendor services.
-        logd("setSatelliteServicePackageName: Resetting cached states");
+        plogd("setSatelliteServicePackageName: Resetting cached states");
         synchronized (mIsSatelliteSupportedLock) {
             mIsSatelliteSupported = null;
         }
@@ -2355,11 +2413,11 @@ public class SatelliteController extends Handler {
      */
     public boolean setSatelliteListeningTimeoutDuration(long timeoutMillis) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("setSatelliteListeningTimeoutDuration: oemEnabledSatelliteFlag is disabled");
+            plogd("setSatelliteListeningTimeoutDuration: oemEnabledSatelliteFlag is disabled");
             return false;
         }
         if (mSatelliteSessionController == null) {
-            loge("mSatelliteSessionController is not initialized yet");
+            ploge("mSatelliteSessionController is not initialized yet");
             return false;
         }
         return mSatelliteSessionController.setSatelliteListeningTimeoutDuration(timeoutMillis);
@@ -2375,13 +2433,32 @@ public class SatelliteController extends Handler {
     public boolean setDatagramControllerTimeoutDuration(
             boolean reset, int timeoutType, long timeoutMillis) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("setDatagramControllerTimeoutDuration: oemEnabledSatelliteFlag is disabled");
+            plogd("setDatagramControllerTimeoutDuration: oemEnabledSatelliteFlag is disabled");
             return false;
         }
-        logd("setDatagramControllerTimeoutDuration: reset=" + reset + ", timeoutType="
+        plogd("setDatagramControllerTimeoutDuration: reset=" + reset + ", timeoutType="
                 + timeoutType + ", timeoutMillis=" + timeoutMillis);
         return mDatagramController.setDatagramControllerTimeoutDuration(
                 reset, timeoutType, timeoutMillis);
+    }
+
+    /**
+     * This API can be used by only CTS to override the boolean configs used by the
+     * DatagramController module.
+     *
+     * @param enable Whether to enable or disable boolean config.
+     * @return {@code true} if the boolean config is set successfully, {@code false} otherwise.
+     */
+    public boolean setDatagramControllerBooleanConfig(
+            boolean reset, int booleanType, boolean enable) {
+        if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
+            logd("setDatagramControllerBooleanConfig: oemEnabledSatelliteFlag is disabled");
+            return false;
+        }
+        logd("setDatagramControllerBooleanConfig: reset=" + reset + ", booleanType="
+                + booleanType + ", enable=" + enable);
+        return mDatagramController.setDatagramControllerBooleanConfig(
+                reset, booleanType, enable);
     }
 
     /**
@@ -2394,14 +2471,14 @@ public class SatelliteController extends Handler {
     public boolean setSatelliteControllerTimeoutDuration(
             boolean reset, int timeoutType, long timeoutMillis) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("setSatelliteControllerTimeoutDuration: oemEnabledSatelliteFlag is disabled");
+            plogd("setSatelliteControllerTimeoutDuration: oemEnabledSatelliteFlag is disabled");
             return false;
         }
         if (!isMockModemAllowed()) {
-            logd("setSatelliteControllerTimeoutDuration: mock modem is not allowed");
+            plogd("setSatelliteControllerTimeoutDuration: mock modem is not allowed");
             return false;
         }
-        logd("setSatelliteControllerTimeoutDuration: reset=" + reset + ", timeoutType="
+        plogd("setSatelliteControllerTimeoutDuration: reset=" + reset + ", timeoutType="
                 + timeoutType + ", timeoutMillis=" + timeoutMillis);
         if (timeoutType == TIMEOUT_TYPE_WAIT_FOR_SATELLITE_ENABLING_RESPONSE) {
             if (reset) {
@@ -2410,9 +2487,23 @@ public class SatelliteController extends Handler {
             } else {
                 mWaitTimeForSatelliteEnablingResponse = timeoutMillis;
             }
-            logd("mWaitTimeForSatelliteEnablingResponse=" + mWaitTimeForSatelliteEnablingResponse);
+            plogd("mWaitTimeForSatelliteEnablingResponse=" + mWaitTimeForSatelliteEnablingResponse);
+        } else if (timeoutType == TIMEOUT_TYPE_DEMO_POINTING_ALIGNED_DURATION_MILLIS) {
+            if (reset) {
+                mDemoPointingAlignedDurationMillis =
+                        getDemoPointingAlignedDurationMillisFromResources();
+            } else {
+                mDemoPointingAlignedDurationMillis = timeoutMillis;
+            }
+        } else if (timeoutType == TIMEOUT_TYPE_DEMO_POINTING_NOT_ALIGNED_DURATION_MILLIS) {
+            if (reset) {
+                mDemoPointingNotAlignedDurationMillis =
+                        getDemoPointingNotAlignedDurationMillisFromResources();
+            } else {
+                mDemoPointingNotAlignedDurationMillis = timeoutMillis;
+            }
         } else {
-            logw("Invalid timeoutType=" + timeoutType);
+            plogw("Invalid timeoutType=" + timeoutType);
             return false;
         }
         return true;
@@ -2427,11 +2518,11 @@ public class SatelliteController extends Handler {
      */
     public boolean setSatelliteGatewayServicePackageName(@Nullable String servicePackageName) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("setSatelliteGatewayServicePackageName: oemEnabledSatelliteFlag is disabled");
+            plogd("setSatelliteGatewayServicePackageName: oemEnabledSatelliteFlag is disabled");
             return false;
         }
         if (mSatelliteSessionController == null) {
-            loge("mSatelliteSessionController is not initialized yet");
+            ploge("mSatelliteSessionController is not initialized yet");
             return false;
         }
         return mSatelliteSessionController.setSatelliteGatewayServicePackageName(
@@ -2449,7 +2540,7 @@ public class SatelliteController extends Handler {
     public boolean setSatellitePointingUiClassName(
             @Nullable String packageName, @Nullable String className) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("setSatellitePointingUiClassName: oemEnabledSatelliteFlag is disabled");
+            plogd("setSatellitePointingUiClassName: oemEnabledSatelliteFlag is disabled");
             return false;
         }
         return mPointingAppController.setSatellitePointingUiClassName(packageName, className);
@@ -2470,7 +2561,7 @@ public class SatelliteController extends Handler {
      */
     public boolean setEmergencyCallToSatelliteHandoverType(int handoverType, int delaySeconds) {
         if (!isMockModemAllowed()) {
-            loge("setEmergencyCallToSatelliteHandoverType: mock modem not allowed");
+            ploge("setEmergencyCallToSatelliteHandoverType: mock modem not allowed");
             return false;
         }
         if (isHandoverTypeValid(handoverType)) {
@@ -2494,7 +2585,7 @@ public class SatelliteController extends Handler {
      */
     public boolean setOemEnabledSatelliteProvisionStatus(boolean reset, boolean isProvisioned) {
         if (!isMockModemAllowed()) {
-            loge("setOemEnabledSatelliteProvisionStatus: mock modem not allowed");
+            ploge("setOemEnabledSatelliteProvisionStatus: mock modem not allowed");
             return false;
         }
         synchronized (mSatelliteViaOemProvisionLock) {
@@ -2539,7 +2630,7 @@ public class SatelliteController extends Handler {
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
     public void onSatelliteServiceConnected() {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("onSatelliteServiceConnected: oemEnabledSatelliteFlag is disabled");
+            plogd("onSatelliteServiceConnected: oemEnabledSatelliteFlag is disabled");
             return;
         }
         if (mSatelliteModemInterface.isSatelliteServiceSupported()) {
@@ -2549,7 +2640,7 @@ public class SatelliteController extends Handler {
                         @Override
                         protected void onReceiveResult(
                                 int resultCode, Bundle resultData) {
-                            logd("onSatelliteServiceConnected.requestIsSatelliteSupported:"
+                            plogd("onSatelliteServiceConnected.requestIsSatelliteSupported:"
                                     + " resultCode=" + resultCode);
                         }
                     };
@@ -2558,7 +2649,7 @@ public class SatelliteController extends Handler {
                 }
             }
         } else {
-            logd("onSatelliteServiceConnected: Satellite vendor service is not supported."
+            plogd("onSatelliteServiceConnected: Satellite vendor service is not supported."
                     + " Ignored the event");
         }
     }
@@ -2569,18 +2660,21 @@ public class SatelliteController extends Handler {
      * modem. {@link SatelliteController} will then power off the satellite modem.
      */
     public void onCellularRadioPowerOffRequested() {
+        logd("onCellularRadioPowerOffRequested()");
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("onCellularRadioPowerOffRequested: oemEnabledSatelliteFlag is disabled");
+            plogd("onCellularRadioPowerOffRequested: oemEnabledSatelliteFlag is disabled");
             return;
         }
 
-        mIsRadioOn = false;
+        synchronized (mIsRadioOnLock) {
+            mIsRadioOn = false;
+        }
         requestSatelliteEnabled(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
                 false /* enableSatellite */, false /* enableDemoMode */, false /* isEmergency */,
                 new IIntegerConsumer.Stub() {
                     @Override
                     public void accept(int result) {
-                        logd("onRadioPowerOffRequested: requestSatelliteEnabled result=" + result);
+                        plogd("onRadioPowerOffRequested: requestSatelliteEnabled result=" + result);
                     }
                 });
     }
@@ -2591,7 +2685,7 @@ public class SatelliteController extends Handler {
      */
     public boolean isSatelliteSupportedViaOem() {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("isSatelliteSupported: oemEnabledSatelliteFlag is disabled");
+            plogd("isSatelliteSupported: oemEnabledSatelliteFlag is disabled");
             return false;
         }
         Boolean supported = isSatelliteSupportedViaOemInternal();
@@ -2672,13 +2766,13 @@ public class SatelliteController extends Handler {
      */
     public boolean isSatelliteAttachRequired() {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("isSatelliteAttachRequired: oemEnabledSatelliteFlag is disabled");
+            plogd("isSatelliteAttachRequired: oemEnabledSatelliteFlag is disabled");
             return false;
         }
 
         synchronized (mSatelliteCapabilitiesLock) {
             if (mSatelliteCapabilities == null) {
-                loge("isSatelliteAttachRequired: mSatelliteCapabilities is null");
+                ploge("isSatelliteAttachRequired: mSatelliteCapabilities is null");
                 return false;
             }
             if (mSatelliteCapabilities.getSupportedRadioTechnologies().contains(
@@ -2807,7 +2901,7 @@ public class SatelliteController extends Handler {
             return true;
         }
 
-        if (serviceState.getState() == ServiceState.STATE_IN_SERVICE) {
+        if (getWwanIsInService(serviceState)) {
             // Device is connected to terrestrial network which has coverage
             resetCarrierRoamingSatelliteModeParams(subId);
             return false;
@@ -2855,6 +2949,20 @@ public class SatelliteController extends Handler {
     }
 
     /**
+     * Request to get the {@link SatelliteSessionStats} of the satellite service.
+     *
+     * @param subId The subId of the subscription to the satellite session stats for.
+     * @param result The result receiver that returns the {@link SatelliteSessionStats}
+     *               if the request is successful or an error code if the request failed.
+     */
+    public void requestSatelliteSessionStats(int subId, @NonNull ResultReceiver result) {
+        if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
+            return;
+        }
+        mSessionMetricsStats.requestSatelliteSessionStats(subId, result);
+    }
+
+    /**
      * Get the carrier-enabled emergency call wait for connection timeout millis
      */
     public long getCarrierEmergencyCallWaitForConnectionTimeoutMillis() {
@@ -2889,6 +2997,29 @@ public class SatelliteController extends Handler {
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
     protected long getElapsedRealtime() {
         return SystemClock.elapsedRealtime();
+    }
+
+    /**
+     * Register the handler for SIM Refresh notifications.
+     * @param handler Handler for notification message.
+     * @param what User-defined message code.
+     */
+    public void registerIccRefresh(Handler handler, int what) {
+        for (Phone phone : PhoneFactory.getPhones()) {
+            CommandsInterface ci = phone.mCi;
+            ci.registerForIccRefresh(handler, what, null);
+        }
+    }
+
+    /**
+     * Unregister the handler for SIM Refresh notifications.
+     * @param handler Handler for notification message.
+     */
+    public void unRegisterIccRefresh(Handler handler) {
+        for (Phone phone : PhoneFactory.getPhones()) {
+            CommandsInterface ci = phone.mCi;
+            ci.unregisterForIccRefresh(handler);
+        }
     }
 
     /**
@@ -2970,7 +3101,7 @@ public class SatelliteController extends Handler {
     private boolean isValidPlmnList(@NonNull List<String> plmnList) {
         for (String plmn : plmnList) {
             if (!TelephonyUtils.isValidPlmn(plmn)) {
-                loge("Invalid PLMN = " + plmn);
+                ploge("Invalid PLMN = " + plmn);
                 return false;
             }
         }
@@ -2996,7 +3127,7 @@ public class SatelliteController extends Handler {
                 new ResultReceiver(this) {
                     @Override
                     protected void onReceiveResult(int resultCode, Bundle resultData) {
-                        logd("isSatelliteSupportedViaOemInternal.requestIsSatelliteSupported:"
+                        plogd("isSatelliteSupportedViaOemInternal.requestIsSatelliteSupported:"
                                 + " resultCode=" + resultCode);
                     }
                 });
@@ -3006,12 +3137,12 @@ public class SatelliteController extends Handler {
     private void handleEventProvisionSatelliteServiceDone(
             @NonNull ProvisionSatelliteServiceArgument arg,
             @SatelliteManager.SatelliteResult int result) {
-        logd("handleEventProvisionSatelliteServiceDone: result="
+        plogd("handleEventProvisionSatelliteServiceDone: result="
                 + result + ", subId=" + arg.subId);
 
         Consumer<Integer> callback = mSatelliteProvisionCallbacks.remove(arg.subId);
         if (callback == null) {
-            loge("handleEventProvisionSatelliteServiceDone: callback is null for subId="
+            ploge("handleEventProvisionSatelliteServiceDone: callback is null for subId="
                     + arg.subId);
             mProvisionMetricsStats
                     .setResultCode(SatelliteManager.SATELLITE_RESULT_INVALID_TELEPHONY_STATE)
@@ -3042,10 +3173,10 @@ public class SatelliteController extends Handler {
             @NonNull ProvisionSatelliteServiceArgument arg,
             @SatelliteManager.SatelliteResult int result) {
         if (arg == null) {
-            loge("handleEventDeprovisionSatelliteServiceDone: arg is null");
+            ploge("handleEventDeprovisionSatelliteServiceDone: arg is null");
             return;
         }
-        logd("handleEventDeprovisionSatelliteServiceDone: result="
+        plogd("handleEventDeprovisionSatelliteServiceDone: result="
                 + result + ", subId=" + arg.subId);
 
         if (result == SATELLITE_RESULT_SUCCESS
@@ -3153,7 +3284,7 @@ public class SatelliteController extends Handler {
                 new ResultReceiver(this) {
                     @Override
                     protected void onReceiveResult(int resultCode, Bundle resultData) {
-                        logd("isSatelliteViaOemProvisioned: resultCode=" + resultCode);
+                        plogd("isSatelliteViaOemProvisioned: resultCode=" + resultCode);
                     }
                 });
         return null;
@@ -3162,10 +3293,11 @@ public class SatelliteController extends Handler {
     private void handleSatelliteEnabled(SatelliteControllerHandlerRequest request) {
         RequestSatelliteEnabledArgument argument =
                 (RequestSatelliteEnabledArgument) request.argument;
+        handlePersistentLoggingOnSessionStart(argument);
         if (mSatelliteSessionController != null) {
             mSatelliteSessionController.onSatelliteEnablementStarted(argument.enableSatellite);
         } else {
-            loge("handleSatelliteEnabled: mSatelliteSessionController is not initialized yet");
+            ploge("handleSatelliteEnabled: mSatelliteSessionController is not initialized yet");
         }
 
         if (!argument.enableSatellite && mSatelliteModemInterface.isSatelliteServiceSupported()) {
@@ -3206,27 +3338,29 @@ public class SatelliteController extends Handler {
             mIsSatelliteSupported = supported;
         }
         mSatelliteSessionController = SatelliteSessionController.make(
-                mContext, getLooper(), supported);
+                mContext, getLooper(), mFeatureFlags, supported);
+        plogd("create a new SatelliteSessionController due to isSatelliteSupported state has "
+                + "changed to " + supported);
+
         if (supported) {
             registerForSatelliteProvisionStateChanged();
             registerForPendingDatagramCount();
             registerForSatelliteModemStateChanged();
             registerForNtnSignalStrengthChanged();
             registerForCapabilitiesChanged();
-            registerForSatelliteSupportedStateChanged();
 
             requestIsSatelliteProvisioned(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
                     new ResultReceiver(this) {
                         @Override
                         protected void onReceiveResult(int resultCode, Bundle resultData) {
-                            logd("requestIsSatelliteProvisioned: resultCode=" + resultCode
+                            plogd("requestIsSatelliteProvisioned: resultCode=" + resultCode
                                     + ", resultData=" + resultData);
                             requestSatelliteEnabled(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
                                     false, false, false,
                                     new IIntegerConsumer.Stub() {
                                         @Override
                                         public void accept(int result) {
-                                            logd("requestSatelliteEnabled: result=" + result);
+                                            plogd("requestSatelliteEnabled: result=" + result);
                                         }
                                     });
                         }
@@ -3235,11 +3369,12 @@ public class SatelliteController extends Handler {
                     new ResultReceiver(this) {
                         @Override
                         protected void onReceiveResult(int resultCode, Bundle resultData) {
-                            logd("requestSatelliteCapabilities: resultCode=" + resultCode
+                            plogd("requestSatelliteCapabilities: resultCode=" + resultCode
                                     + ", resultData=" + resultData);
                         }
                     });
         }
+        registerForSatelliteSupportedStateChanged();
     }
 
     private void updateSatelliteEnabledState(boolean enabled, String caller) {
@@ -3250,7 +3385,7 @@ public class SatelliteController extends Handler {
             mSatelliteSessionController.onSatelliteEnabledStateChanged(enabled);
             mSatelliteSessionController.setDemoMode(mIsDemoModeEnabled);
         } else {
-            loge(caller + ": mSatelliteSessionController is not initialized yet");
+            ploge(caller + ": mSatelliteSessionController is not initialized yet");
         }
         if (!enabled) {
             mIsModemEnabledReportingNtnSignalStrength.set(false);
@@ -3289,7 +3424,7 @@ public class SatelliteController extends Handler {
 
     private void registerForNtnSignalStrengthChanged() {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("registerForNtnSignalStrengthChanged: oemEnabledSatelliteFlag is disabled");
+            plogd("registerForNtnSignalStrengthChanged: oemEnabledSatelliteFlag is disabled");
             return;
         }
 
@@ -3304,7 +3439,7 @@ public class SatelliteController extends Handler {
 
     private void registerForCapabilitiesChanged() {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("registerForCapabilitiesChanged: oemEnabledSatelliteFlag is disabled");
+            plogd("registerForCapabilitiesChanged: oemEnabledSatelliteFlag is disabled");
             return;
         }
 
@@ -3328,7 +3463,7 @@ public class SatelliteController extends Handler {
     }
 
     private void handleEventSatelliteProvisionStateChanged(boolean provisioned) {
-        logd("handleSatelliteProvisionStateChangedEvent: provisioned=" + provisioned);
+        plogd("handleSatelliteProvisionStateChangedEvent: provisioned=" + provisioned);
 
         synchronized (mSatelliteViaOemProvisionLock) {
             persistOemEnabledSatelliteProvisionStatus(provisioned);
@@ -3340,7 +3475,7 @@ public class SatelliteController extends Handler {
             try {
                 listener.onSatelliteProvisionStateChanged(provisioned);
             } catch (RemoteException e) {
-                logd("handleSatelliteProvisionStateChangedEvent RemoteException: " + e);
+                plogd("handleSatelliteProvisionStateChangedEvent RemoteException: " + e);
                 deadCallersList.add(listener);
             }
         });
@@ -3351,7 +3486,7 @@ public class SatelliteController extends Handler {
 
     private void handleEventSatelliteModemStateChanged(
             @SatelliteManager.SatelliteModemState int state) {
-        logd("handleEventSatelliteModemStateChanged: state=" + state);
+        plogd("handleEventSatelliteModemStateChanged: state=" + state);
         if (state == SatelliteManager.SATELLITE_MODEM_STATE_UNAVAILABLE
                 || state == SatelliteManager.SATELLITE_MODEM_STATE_OFF) {
             synchronized (mIsSatelliteEnabledLock) {
@@ -3369,8 +3504,8 @@ public class SatelliteController extends Handler {
                     }
                     moveSatelliteToOffStateAndCleanUpResources(error, callback);
                 } else {
-                    logd("Either waiting for the response of disabling satellite modem or the event"
-                            + " should be ignored because isSatelliteEnabled="
+                    plogd("Either waiting for the response of disabling satellite modem or the"
+                            + " event should be ignored because isSatelliteEnabled="
                             + isSatelliteEnabled()
                             + ", mIsSatelliteEnabled=" + mIsSatelliteEnabled);
                 }
@@ -3380,7 +3515,7 @@ public class SatelliteController extends Handler {
             if (mSatelliteSessionController != null) {
                 mSatelliteSessionController.onSatelliteModemStateChanged(state);
             } else {
-                loge("handleEventSatelliteModemStateChanged: mSatelliteSessionController is null");
+                ploge("handleEventSatelliteModemStateChanged: mSatelliteSessionController is null");
             }
         }
     }
@@ -3395,13 +3530,14 @@ public class SatelliteController extends Handler {
         synchronized (mNtnSignalsStrengthLock) {
             mNtnSignalStrength = ntnSignalStrength;
         }
+        mSessionMetricsStats.updateMaxNtnSignalStrengthLevel(ntnSignalStrength.getLevel());
 
         List<INtnSignalStrengthCallback> deadCallersList = new ArrayList<>();
         mNtnSignalStrengthChangedListeners.values().forEach(listener -> {
             try {
                 listener.onNtnSignalStrengthChanged(ntnSignalStrength);
             } catch (RemoteException e) {
-                logd("handleEventNtnSignalStrengthChanged RemoteException: " + e);
+                plogd("handleEventNtnSignalStrengthChanged RemoteException: " + e);
                 deadCallersList.add(listener);
             }
         });
@@ -3411,9 +3547,9 @@ public class SatelliteController extends Handler {
     }
 
     private void handleEventSatelliteCapabilitiesChanged(SatelliteCapabilities capabilities) {
-        logd("handleEventSatelliteCapabilitiesChanged()");
+        plogd("handleEventSatelliteCapabilitiesChanged()");
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("handleEventSatelliteCapabilitiesChanged: oemEnabledSatelliteFlag is disabled");
+            plogd("handleEventSatelliteCapabilitiesChanged: oemEnabledSatelliteFlag is disabled");
             return;
         }
 
@@ -3426,7 +3562,7 @@ public class SatelliteController extends Handler {
             try {
                 listener.onSatelliteCapabilitiesChanged(capabilities);
             } catch (RemoteException e) {
-                logd("handleEventSatelliteCapabilitiesChanged RemoteException: " + e);
+                plogd("handleEventSatelliteCapabilitiesChanged RemoteException: " + e);
                 deadCallersList.add(listener);
             }
         });
@@ -3436,21 +3572,24 @@ public class SatelliteController extends Handler {
     }
 
     private void handleEventSatelliteSupportedStateChanged(boolean supported) {
-        logd("handleSatelliteSupportedStateChangedEvent: supported=" + supported);
+        plogd("handleSatelliteSupportedStateChangedEvent: supported=" + supported);
 
         synchronized (mIsSatelliteSupportedLock) {
             if (mIsSatelliteSupported != null && mIsSatelliteSupported == supported) {
                 if (DBG) {
-                    logd("current satellite support state and new supported state are matched,"
+                    plogd("current satellite support state and new supported state are matched,"
                             + " ignore update.");
                 }
                 return;
             }
+
+            updateSatelliteSupportedStateWhenSatelliteServiceConnected(supported);
+
             /* In case satellite has been reported as not support from modem, but satellite is
                enabled, request disable satellite. */
             synchronized (mIsSatelliteEnabledLock) {
                 if (!supported && mIsSatelliteEnabled != null && mIsSatelliteEnabled) {
-                    logd("Invoke requestSatelliteEnabled(), supported=false, "
+                    plogd("Invoke requestSatelliteEnabled(), supported=false, "
                             + "mIsSatelliteEnabled=true");
                     requestSatelliteEnabled(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
                             false /* enableSatellite */, false /* enableDemoMode */,
@@ -3458,7 +3597,7 @@ public class SatelliteController extends Handler {
                             new IIntegerConsumer.Stub() {
                                 @Override
                                 public void accept(int result) {
-                                    logd("handleSatelliteSupportedStateChangedEvent: request "
+                                    plogd("handleSatelliteSupportedStateChangedEvent: request "
                                             + "satellite disable, result="
                                             + result);
                                 }
@@ -3474,7 +3613,7 @@ public class SatelliteController extends Handler {
             try {
                 listener.onSatelliteSupportedStateChanged(supported);
             } catch (RemoteException e) {
-                logd("handleSatelliteSupportedStateChangedEvent RemoteException: " + e);
+                plogd("handleSatelliteSupportedStateChangedEvent RemoteException: " + e);
                 deadCallersList.add(listener);
             }
         });
@@ -3485,9 +3624,112 @@ public class SatelliteController extends Handler {
 
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
     protected void setSettingsKeyForSatelliteMode(int val) {
-        logd("setSettingsKeyForSatelliteMode val: " + val);
+        plogd("setSettingsKeyForSatelliteMode val: " + val);
         Settings.Global.putInt(mContext.getContentResolver(),
                     Settings.Global.SATELLITE_MODE_ENABLED, val);
+    }
+
+    /**
+     * Allow screen rotation temporary in rotation locked foldable device.
+     * <p>
+     * Temporarily allow screen rotation user to catch satellite signals properly by UI guide in
+     * emergency situations. Unlock the setting value so that the screen rotation is not locked, and
+     * return it to the original value when the satellite service is finished.
+     * <p>
+     * Note that, only the unfolded screen will be temporarily allowed screen rotation.
+     *
+     * @param val {@link SATELLITE_MODE_ENABLED_TRUE} if satellite mode is enabled,
+     *     {@link SATELLITE_MODE_ENABLED_FALSE} satellite mode is not enabled.
+     */
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    protected void setSettingsKeyToAllowDeviceRotation(int val) {
+        // Only allows on a foldable device type.
+        if (!isFoldable(mContext)) {
+            return;
+        }
+
+        switch (val) {
+            case SATELLITE_MODE_ENABLED_TRUE:
+                mDeviceRotationLockToBackupAndRestore =
+                        Settings.Secure.getString(mContentResolver,
+                                Settings.Secure.DEVICE_STATE_ROTATION_LOCK);
+                String unlockedRotationSettings = replaceDeviceRotationValue(
+                        mDeviceRotationLockToBackupAndRestore == null
+                                ? "" : mDeviceRotationLockToBackupAndRestore,
+                        Settings.Secure.DEVICE_STATE_ROTATION_KEY_UNFOLDED,
+                        Settings.Secure.DEVICE_STATE_ROTATION_LOCK_UNLOCKED);
+                Settings.Secure.putString(mContentResolver,
+                        Settings.Secure.DEVICE_STATE_ROTATION_LOCK, unlockedRotationSettings);
+                logd("setSettingsKeyToAllowDeviceRotation(TRUE), RotationSettings is changed"
+                        + " from " + mDeviceRotationLockToBackupAndRestore
+                        + " to " + unlockedRotationSettings);
+                break;
+            case SATELLITE_MODE_ENABLED_FALSE:
+                if (mDeviceRotationLockToBackupAndRestore == null) {
+                    break;
+                }
+                Settings.Secure.putString(mContentResolver,
+                        Settings.Secure.DEVICE_STATE_ROTATION_LOCK,
+                        mDeviceRotationLockToBackupAndRestore);
+                logd("setSettingsKeyToAllowDeviceRotation(FALSE), RotationSettings is restored to"
+                        + mDeviceRotationLockToBackupAndRestore);
+                mDeviceRotationLockToBackupAndRestore = "";
+                break;
+            default:
+                loge("setSettingsKeyToAllowDeviceRotation(" + val + "), never reach here.");
+                break;
+        }
+    }
+
+    /**
+     * If the device type is foldable.
+     *
+     * @param context context
+     * @return {@code true} if device type is foldable. {@code false} for otherwise.
+     */
+    private boolean isFoldable(Context context) {
+        return context.getResources().getIntArray(R.array.config_foldedDeviceStates).length > 0;
+    }
+
+    /**
+     * Replaces a value of given a target key with a new value in a string of key-value pairs.
+     * <p>
+     * Replaces the value corresponding to the target key with a new value. If the key value is not
+     * found in the device rotation information, it is not replaced.
+     *
+     * @param deviceRotationValue Device rotation key values separated by colon(':').
+     * @param targetKey The key of the new item caller wants to add.
+     * @param newValue  The value of the new item caller want to add.
+     * @return A new string where all the key-value pairs.
+     */
+    private static String replaceDeviceRotationValue(
+            @NonNull String deviceRotationValue, int targetKey, int newValue) {
+        // Use list of Key-Value pair
+        List<Pair<Integer, Integer>> keyValuePairs = new ArrayList<>();
+
+        String[] pairs = deviceRotationValue.split(":");
+        if (pairs.length % 2 != 0) {
+            // Return without modifying. The key-value may be incorrect if length is an odd number.
+            loge("The length of key-value pair do not match. Return without modification.");
+            return deviceRotationValue;
+        }
+
+        // collect into keyValuePairs
+        for (int i = 0; i < pairs.length; i += 2) {
+            try {
+                int key = Integer.parseInt(pairs[i]);
+                int value = Integer.parseInt(pairs[i + 1]);
+                keyValuePairs.add(new Pair<>(key, key == targetKey ? newValue : value));
+            } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {
+                // Return without modifying if got exception.
+                loge("got error while parsing key-value. Return without modification. e:" + e);
+                return deviceRotationValue;
+            }
+        }
+
+        return keyValuePairs.stream()
+                .map(pair -> pair.first + ":" + pair.second) // Convert to "key:value" format
+                .collect(Collectors.joining(":")); // Join pairs with colons
     }
 
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
@@ -3497,20 +3739,20 @@ public class SatelliteController extends Handler {
                     || (mDisableNFCOnSatelliteEnabled && mNfcStateEnabled)
                     || (mDisableWifiOnSatelliteEnabled && mWifiStateEnabled)
                     || (mDisableUWBOnSatelliteEnabled && mUwbStateEnabled)) {
-                logd("All radios are not disabled yet.");
+                plogd("All radios are not disabled yet.");
                 return false;
             }
-            logd("All radios are disabled.");
+            plogd("All radios are disabled.");
             return true;
         }
     }
 
     private void evaluateToSendSatelliteEnabledSuccess() {
-        logd("evaluateToSendSatelliteEnabledSuccess");
+        plogd("evaluateToSendSatelliteEnabledSuccess");
         synchronized (mSatelliteEnabledRequestLock) {
             if (areAllRadiosDisabled() && (mSatelliteEnabledRequest != null)
                     && mWaitingForRadioDisabled) {
-                logd("Sending success to callback that sent enable satellite request");
+                plogd("Sending success to callback that sent enable satellite request");
                 setDemoModeEnabled(mSatelliteEnabledRequest.enableDemoMode);
                 mIsEmergency = mSatelliteEnabledRequest.isEmergency;
                 synchronized (mIsSatelliteEnabledLock) {
@@ -3527,7 +3769,7 @@ public class SatelliteController extends Handler {
     }
 
     private void resetSatelliteEnabledRequest() {
-        logd("resetSatelliteEnabledRequest");
+        plogd("resetSatelliteEnabledRequest");
         synchronized (mSatelliteEnabledRequestLock) {
             mSatelliteEnabledRequest = null;
             mWaitingForRadioDisabled = false;
@@ -3536,13 +3778,15 @@ public class SatelliteController extends Handler {
 
     private void moveSatelliteToOffStateAndCleanUpResources(
             @SatelliteManager.SatelliteResult int error, @Nullable Consumer<Integer> callback) {
-        logd("moveSatelliteToOffStateAndCleanUpResources");
+        plogd("moveSatelliteToOffStateAndCleanUpResources");
         synchronized (mIsSatelliteEnabledLock) {
             resetSatelliteEnabledRequest();
             setDemoModeEnabled(false);
+            handlePersistentLoggingOnSessionEnd(mIsEmergency);
             mIsEmergency = false;
             mIsSatelliteEnabled = false;
             setSettingsKeyForSatelliteMode(SATELLITE_MODE_ENABLED_FALSE);
+            setSettingsKeyToAllowDeviceRotation(SATELLITE_MODE_ENABLED_FALSE);
             if (callback != null) callback.accept(error);
             updateSatelliteEnabledState(
                     false, "moveSatelliteToOffStateAndCleanUpResources");
@@ -3552,7 +3796,7 @@ public class SatelliteController extends Handler {
     private void setDemoModeEnabled(boolean enabled) {
         mIsDemoModeEnabled = enabled;
         mDatagramController.setDemoMode(mIsDemoModeEnabled);
-        logd("setDemoModeEnabled: mIsDemoModeEnabled=" + mIsDemoModeEnabled);
+        plogd("setDemoModeEnabled: mIsDemoModeEnabled=" + mIsDemoModeEnabled);
     }
 
     private boolean isMockModemAllowed() {
@@ -3610,19 +3854,19 @@ public class SatelliteController extends Handler {
      * Otherwise, If the carrierPlmnList exist then used it.
      */
     private void updatePlmnListPerCarrier(int subId) {
-        logd("updatePlmnListPerCarrier: subId=" + subId);
+        plogd("updatePlmnListPerCarrier: subId=" + subId);
         synchronized (mSupportedSatelliteServicesLock) {
             List<String> carrierPlmnList, entitlementPlmnList;
             if (getConfigForSubId(subId).getBoolean(KEY_SATELLITE_ENTITLEMENT_SUPPORTED_BOOL,
                     false)) {
                 entitlementPlmnList = mEntitlementPlmnListPerCarrier.get(subId,
                         new ArrayList<>()).stream().toList();
-                logd("updatePlmnListPerCarrier: entitlementPlmnList="
+                plogd("updatePlmnListPerCarrier: entitlementPlmnList="
                         + String.join(",", entitlementPlmnList)
                         + " size=" + entitlementPlmnList.size());
                 if (!entitlementPlmnList.isEmpty()) {
                     mMergedPlmnListPerCarrier.put(subId, entitlementPlmnList);
-                    logd("mMergedPlmnListPerCarrier is updated by Entitlement");
+                    plogd("mMergedPlmnListPerCarrier is updated by Entitlement");
                     mCarrierRoamingSatelliteControllerStats.reportConfigDataSource(
                             SatelliteConstants.CONFIG_DATA_SOURCE_ENTITLEMENT);
                     return;
@@ -3635,7 +3879,7 @@ public class SatelliteController extends Handler {
                 int carrierId = tm.createForSubscriptionId(subId).getSimCarrierId();
                 List<String> plmnList = satelliteConfig.getAllSatellitePlmnsForCarrier(carrierId);
                 if (!plmnList.isEmpty()) {
-                    logd("mMergedPlmnListPerCarrier is updated by ConfigUpdater : "
+                    plogd("mMergedPlmnListPerCarrier is updated by ConfigUpdater : "
                             + String.join(",", plmnList));
                     mMergedPlmnListPerCarrier.put(subId, plmnList);
                     mCarrierRoamingSatelliteControllerStats.reportConfigDataSource(
@@ -3648,20 +3892,20 @@ public class SatelliteController extends Handler {
                     && mSatelliteServicesSupportedByCarriers.get(subId) != null) {
                 carrierPlmnList =
                         mSatelliteServicesSupportedByCarriers.get(subId).keySet().stream().toList();
-                logd("mMergedPlmnListPerCarrier is updated by carrier config: "
+                plogd("mMergedPlmnListPerCarrier is updated by carrier config: "
                         + String.join(",", carrierPlmnList));
                 mCarrierRoamingSatelliteControllerStats.reportConfigDataSource(
                         SatelliteConstants.CONFIG_DATA_SOURCE_CARRIER_CONFIG);
             } else {
                 carrierPlmnList = new ArrayList<>();
-                logd("Empty mMergedPlmnListPerCarrier");
+                plogd("Empty mMergedPlmnListPerCarrier");
             }
             mMergedPlmnListPerCarrier.put(subId, carrierPlmnList);
         }
     }
 
     private void updateSupportedSatelliteServices(int subId) {
-        logd("updateSupportedSatelliteServices with subId " + subId);
+        plogd("updateSupportedSatelliteServices with subId " + subId);
         synchronized (mSupportedSatelliteServicesLock) {
             SatelliteConfig satelliteConfig = getSatelliteConfig();
 
@@ -3673,19 +3917,19 @@ public class SatelliteController extends Handler {
                         satelliteConfig.getSupportedSatelliteServices(carrierId);
                 if (!supportedServicesPerPlmn.isEmpty()) {
                     mSatelliteServicesSupportedByCarriers.put(subId, supportedServicesPerPlmn);
-                    logd("updateSupportedSatelliteServices using ConfigUpdater, "
+                    plogd("updateSupportedSatelliteServices using ConfigUpdater, "
                             + "supportedServicesPerPlmn = " + supportedServicesPerPlmn.size());
                     updatePlmnListPerCarrier(subId);
                     return;
                 } else {
-                    logd("supportedServicesPerPlmn is empty");
+                    plogd("supportedServicesPerPlmn is empty");
                 }
             }
 
             mSatelliteServicesSupportedByCarriers.put(
                     subId, readSupportedSatelliteServicesFromCarrierConfig(subId));
             updatePlmnListPerCarrier(subId);
-            logd("updateSupportedSatelliteServices using carrier config");
+            plogd("updateSupportedSatelliteServices using carrier config");
         }
     }
 
@@ -3726,7 +3970,7 @@ public class SatelliteController extends Handler {
 
     private void handleCarrierConfigChanged(int slotIndex, int subId, int carrierId,
             int specificCarrierId) {
-        logd("handleCarrierConfigChanged(): slotIndex(" + slotIndex + "), subId("
+        plogd("handleCarrierConfigChanged(): slotIndex(" + slotIndex + "), subId("
                 + subId + "), carrierId(" + carrierId + "), specificCarrierId("
                 + specificCarrierId + ")");
         if (subId == SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
@@ -3742,11 +3986,6 @@ public class SatelliteController extends Handler {
 
     private void processNewCarrierConfigData(int subId) {
         configureSatellitePlmnForCarrier(subId);
-        synchronized (mIsSatelliteEnabledLock) {
-            mSatelliteAttachRestrictionForCarrierArray.clear();
-            mIsSatelliteAttachEnabledForCarrierArrayPerSub.clear();
-        }
-
         setSatelliteAttachEnabledForCarrierOnSimLoaded(subId);
         updateRestrictReasonForEntitlementPerCarrier(subId);
     }
@@ -3764,21 +4003,21 @@ public class SatelliteController extends Handler {
      */
     private void updateEntitlementPlmnListPerCarrier(int subId) {
         if (!getConfigForSubId(subId).getBoolean(KEY_SATELLITE_ENTITLEMENT_SUPPORTED_BOOL, false)) {
-            logd("don't support entitlement");
+            plogd("don't support entitlement");
             return;
         }
 
         synchronized (mSupportedSatelliteServicesLock) {
             if (mEntitlementPlmnListPerCarrier.indexOfKey(subId) < 0) {
-                logd("updateEntitlementPlmnListPerCarrier: no correspondent cache, load from "
+                plogd("updateEntitlementPlmnListPerCarrier: no correspondent cache, load from "
                         + "persist storage");
                 List<String> entitlementPlmnList =
                         mSubscriptionManagerService.getSatelliteEntitlementPlmnList(subId);
                 if (entitlementPlmnList.isEmpty()) {
-                    logd("updateEntitlementPlmnListPerCarrier: read empty list");
+                    plogd("updateEntitlementPlmnListPerCarrier: read empty list");
                     return;
                 }
-                logd("updateEntitlementPlmnListPerCarrier: entitlementPlmnList="
+                plogd("updateEntitlementPlmnListPerCarrier: entitlementPlmnList="
                         + String.join(",", entitlementPlmnList));
                 mEntitlementPlmnListPerCarrier.put(subId, entitlementPlmnList);
             }
@@ -3808,7 +4047,7 @@ public class SatelliteController extends Handler {
         try {
             strArray = mContext.getResources().getStringArray(id);
         } catch (Resources.NotFoundException ex) {
-            loge("readStringArrayFromOverlayConfig: id= " + id + ", ex=" + ex);
+            ploge("readStringArrayFromOverlayConfig: id= " + id + ", ex=" + ex);
         }
         if (strArray == null) {
             strArray = new String[0];
@@ -3838,7 +4077,7 @@ public class SatelliteController extends Handler {
                 return !cachedRestrictionSet.contains(
                         SATELLITE_COMMUNICATION_RESTRICTION_REASON_USER);
             } else {
-                logd("isSatelliteAttachEnabledForCarrierByUser() no correspondent cache, "
+                plogd("isSatelliteAttachEnabledForCarrierByUser() no correspondent cache, "
                         + "load from persist storage");
                 try {
                     String enabled =
@@ -3847,13 +4086,13 @@ public class SatelliteController extends Handler {
                                     mContext.getOpPackageName(), mContext.getAttributionTag());
 
                     if (enabled == null) {
-                        loge("isSatelliteAttachEnabledForCarrierByUser: invalid subId, subId="
+                        ploge("isSatelliteAttachEnabledForCarrierByUser: invalid subId, subId="
                                 + subId);
                         return false;
                     }
 
                     if (enabled.isEmpty()) {
-                        loge("isSatelliteAttachEnabledForCarrierByUser: no data for subId(" + subId
+                        ploge("isSatelliteAttachEnabledForCarrierByUser: no data for subId(" + subId
                                 + ")");
                         return false;
                     }
@@ -3868,7 +4107,7 @@ public class SatelliteController extends Handler {
                         return result;
                     }
                 } catch (IllegalArgumentException | SecurityException ex) {
-                    loge("isSatelliteAttachEnabledForCarrierByUser: ex=" + ex);
+                    ploge("isSatelliteAttachEnabledForCarrierByUser: ex=" + ex);
                     return false;
                 }
             }
@@ -3891,19 +4130,19 @@ public class SatelliteController extends Handler {
 
     private void updateRestrictReasonForEntitlementPerCarrier(int subId) {
         if (!getConfigForSubId(subId).getBoolean(KEY_SATELLITE_ENTITLEMENT_SUPPORTED_BOOL, false)) {
-            logd("don't support entitlement");
+            plogd("don't support entitlement");
             return;
         }
 
         IIntegerConsumer callback = new IIntegerConsumer.Stub() {
             @Override
             public void accept(int result) {
-                logd("updateRestrictReasonForEntitlementPerCarrier:" + result);
+                plogd("updateRestrictReasonForEntitlementPerCarrier:" + result);
             }
         };
         synchronized (mSupportedSatelliteServicesLock) {
             if (mSatelliteEntitlementStatusPerCarrier.indexOfKey(subId) < 0) {
-                logd("updateRestrictReasonForEntitlementPerCarrier: no correspondent cache, "
+                plogd("updateRestrictReasonForEntitlementPerCarrier: no correspondent cache, "
                         + "load from persist storage");
                 String entitlementStatus = null;
                 try {
@@ -3912,17 +4151,17 @@ public class SatelliteController extends Handler {
                                     SATELLITE_ENTITLEMENT_STATUS, mContext.getOpPackageName(),
                                     mContext.getAttributionTag());
                 } catch (IllegalArgumentException | SecurityException e) {
-                    loge("updateRestrictReasonForEntitlementPerCarrier, e=" + e);
+                    ploge("updateRestrictReasonForEntitlementPerCarrier, e=" + e);
                 }
 
                 if (entitlementStatus == null) {
-                    loge("updateRestrictReasonForEntitlementPerCarrier: invalid subId, subId="
+                    ploge("updateRestrictReasonForEntitlementPerCarrier: invalid subId, subId="
                             + subId + " set to default value");
                     entitlementStatus = "0";
                 }
 
                 if (entitlementStatus.isEmpty()) {
-                    loge("updateRestrictReasonForEntitlementPerCarrier: no data for subId(" + subId
+                    ploge("updateRestrictReasonForEntitlementPerCarrier: no data for subId(" + subId
                             + "). set to default value");
                     entitlementStatus = "0";
                 }
@@ -3947,9 +4186,9 @@ public class SatelliteController extends Handler {
      */
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
     protected boolean persistSatelliteAttachEnabledForCarrierSetting(int subId) {
-        logd("persistSatelliteAttachEnabledForCarrierSetting");
+        plogd("persistSatelliteAttachEnabledForCarrierSetting");
         if (!isValidSubscriptionId(subId)) {
-            loge("persistSatelliteAttachEnabledForCarrierSetting: subId is not valid,"
+            ploge("persistSatelliteAttachEnabledForCarrierSetting: subId is not valid,"
                     + " subId=" + subId);
             return false;
         }
@@ -3962,7 +4201,7 @@ public class SatelliteController extends Handler {
                                 .contains(SATELLITE_COMMUNICATION_RESTRICTION_REASON_USER)
                                 ? "0" : "1");
             } catch (IllegalArgumentException | SecurityException ex) {
-                loge("persistSatelliteAttachEnabledForCarrierSetting, ex=" + ex);
+                ploge("persistSatelliteAttachEnabledForCarrierSetting, ex=" + ex);
                 return false;
             }
         }
@@ -4011,12 +4250,12 @@ public class SatelliteController extends Handler {
     private void evaluateEnablingSatelliteForCarrier(int subId, int reason,
             @Nullable Consumer<Integer> callback) {
         if (callback == null) {
-            callback = errorCode -> logd("evaluateEnablingSatelliteForCarrier: "
+            callback = errorCode -> plogd("evaluateEnablingSatelliteForCarrier: "
                     + "SetSatelliteAttachEnableForCarrier error code =" + errorCode);
         }
 
         if (!isSatelliteSupportedViaCarrier(subId)) {
-            logd("Satellite for carrier is not supported. Only user setting is stored");
+            plogd("Satellite for carrier is not supported. Only user setting is stored");
             callback.accept(SATELLITE_RESULT_SUCCESS);
             return;
         }
@@ -4048,17 +4287,17 @@ public class SatelliteController extends Handler {
     @SatelliteManager.SatelliteResult private int evaluateOemSatelliteRequestAllowed(
             boolean isProvisionRequired) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("oemEnabledSatelliteFlag is disabled");
+            plogd("oemEnabledSatelliteFlag is disabled");
             return SatelliteManager.SATELLITE_RESULT_REQUEST_NOT_SUPPORTED;
         }
         if (!mSatelliteModemInterface.isSatelliteServiceSupported()) {
-            logd("evaluateOemSatelliteRequestAllowed: satellite service is not supported");
+            plogd("evaluateOemSatelliteRequestAllowed: satellite service is not supported");
             return SatelliteManager.SATELLITE_RESULT_REQUEST_NOT_SUPPORTED;
         }
 
         Boolean satelliteSupported = isSatelliteSupportedViaOemInternal();
         if (satelliteSupported == null) {
-            logd("evaluateOemSatelliteRequestAllowed: satelliteSupported is null");
+            plogd("evaluateOemSatelliteRequestAllowed: satelliteSupported is null");
             return SatelliteManager.SATELLITE_RESULT_INVALID_TELEPHONY_STATE;
         }
         if (!satelliteSupported) {
@@ -4068,7 +4307,7 @@ public class SatelliteController extends Handler {
         if (isProvisionRequired) {
             Boolean satelliteProvisioned = isSatelliteViaOemProvisioned();
             if (satelliteProvisioned == null) {
-                logd("evaluateOemSatelliteRequestAllowed: satelliteProvisioned is null");
+                plogd("evaluateOemSatelliteRequestAllowed: satelliteProvisioned is null");
                 return SatelliteManager.SATELLITE_RESULT_INVALID_TELEPHONY_STATE;
             }
             if (!satelliteProvisioned) {
@@ -4132,9 +4371,12 @@ public class SatelliteController extends Handler {
                         mCarrierRoamingSatelliteSessionStatsMap.get(subId);
 
                 if (serviceState.isUsingNonTerrestrialNetwork()) {
-                    if (sessionStats != null && !mWasSatelliteConnectedViaCarrier.get(subId)) {
-                        // Log satellite connection start
-                        sessionStats.onConnectionStart();
+                    if (sessionStats != null) {
+                        sessionStats.onSignalStrength(phone);
+                        if (!mWasSatelliteConnectedViaCarrier.get(subId)) {
+                            // Log satellite connection start
+                            sessionStats.onConnectionStart(phone);
+                        }
                     }
 
                     resetCarrierRoamingSatelliteModeParams(subId);
@@ -4149,14 +4391,14 @@ public class SatelliteController extends Handler {
                     }
                 } else {
                     Boolean connected = mWasSatelliteConnectedViaCarrier.get(subId);
-                    if (serviceState.getState() == ServiceState.STATE_IN_SERVICE) {
+                    if (getWwanIsInService(serviceState)) {
                         resetCarrierRoamingSatelliteModeParams(subId);
                     } else if (connected != null && connected) {
                         // The device just got disconnected from a satellite network
                         // and is not connected to any terrestrial network that  has coverage
                         mLastSatelliteDisconnectedTimesMillis.put(subId, getElapsedRealtime());
 
-                        logd("sendMessageDelayed subId:" + subId
+                        plogd("sendMessageDelayed subId:" + subId
                                 + " phoneId:" + phone.getPhoneId()
                                 + " time:" + getSatelliteConnectionHysteresisTimeMillis(subId));
                         sendMessageDelayed(obtainMessage(EVENT_NOTIFY_NTN_HYSTERESIS_TIMED_OUT,
@@ -4203,8 +4445,8 @@ public class SatelliteController extends Handler {
             if (!lastNotifiedNtnMode && currNtnMode) {
                 // Log satellite session start
                 CarrierRoamingSatelliteSessionStats sessionStats =
-                        new CarrierRoamingSatelliteSessionStats(mContext, phone.getCarrierId());
-                sessionStats.onSessionStart();
+                        CarrierRoamingSatelliteSessionStats.getInstance(subId);
+                sessionStats.onSessionStart(phone.getCarrierId(), phone);
                 mCarrierRoamingSatelliteSessionStatsMap.put(subId, sessionStats);
             } else if (lastNotifiedNtnMode && !currNtnMode) {
                 // Log satellite session end
@@ -4224,12 +4466,12 @@ public class SatelliteController extends Handler {
 
     private void persistOemEnabledSatelliteProvisionStatus(boolean isProvisioned) {
         synchronized (mSatelliteViaOemProvisionLock) {
-            logd("persistOemEnabledSatelliteProvisionStatus: isProvisioned=" + isProvisioned);
+            plogd("persistOemEnabledSatelliteProvisionStatus: isProvisioned=" + isProvisioned);
 
             if (!loadSatelliteSharedPreferences()) return;
 
             if (mSharedPreferences == null) {
-                loge("persistOemEnabledSatelliteProvisionStatus: mSharedPreferences is null");
+                ploge("persistOemEnabledSatelliteProvisionStatus: mSharedPreferences is null");
             } else {
                 mSharedPreferences.edit().putBoolean(
                         OEM_ENABLED_SATELLITE_PROVISION_STATUS_KEY, isProvisioned).apply();
@@ -4242,7 +4484,7 @@ public class SatelliteController extends Handler {
             if (!loadSatelliteSharedPreferences()) return false;
 
             if (mSharedPreferences == null) {
-                loge("getPersistedOemEnabledSatelliteProvisionStatus: mSharedPreferences is null");
+                ploge("getPersistedOemEnabledSatelliteProvisionStatus: mSharedPreferences is null");
                 return false;
             } else {
                 return mSharedPreferences.getBoolean(
@@ -4258,7 +4500,7 @@ public class SatelliteController extends Handler {
                         mContext.getSharedPreferences(SATELLITE_SHARED_PREF,
                                 Context.MODE_PRIVATE);
             } catch (Exception e) {
-                loge("loadSatelliteSharedPreferences: Cannot get default "
+                ploge("loadSatelliteSharedPreferences: Cannot get default "
                         + "shared preferences, e=" + e);
                 return false;
             }
@@ -4273,18 +4515,18 @@ public class SatelliteController extends Handler {
         boolean isSatelliteProvisionedInModem = false;
         if (error == SATELLITE_RESULT_SUCCESS) {
             if (ar.result == null) {
-                loge("handleIsSatelliteProvisionedDoneEvent: result is null");
+                ploge("handleIsSatelliteProvisionedDoneEvent: result is null");
                 error = SatelliteManager.SATELLITE_RESULT_INVALID_TELEPHONY_STATE;
             } else {
                 isSatelliteProvisionedInModem = ((int[]) ar.result)[0] == 1;
             }
         } else if (error == SATELLITE_RESULT_REQUEST_NOT_SUPPORTED) {
-            logd("handleIsSatelliteProvisionedDoneEvent: Modem does not support this request");
+            plogd("handleIsSatelliteProvisionedDoneEvent: Modem does not support this request");
             isSatelliteProvisionedInModem = true;
         }
         boolean isSatelliteViaOemProvisioned =
                 isSatelliteProvisionedInModem && getPersistedOemEnabledSatelliteProvisionStatus();
-        logd("isSatelliteProvisionedInModem=" + isSatelliteProvisionedInModem
+        plogd("isSatelliteProvisionedInModem=" + isSatelliteProvisionedInModem
                 + ", isSatelliteViaOemProvisioned=" + isSatelliteViaOemProvisioned);
         Bundle bundle = new Bundle();
         bundle.putBoolean(SatelliteManager.KEY_SATELLITE_PROVISIONED, isSatelliteViaOemProvisioned);
@@ -4303,11 +4545,11 @@ public class SatelliteController extends Handler {
             @NonNull RequestSatelliteEnabledArgument argument) {
         synchronized (mSatelliteEnabledRequestLock) {
             if (hasMessages(EVENT_WAIT_FOR_SATELLITE_ENABLING_RESPONSE_TIMED_OUT, argument)) {
-                logd("WaitForSatelliteEnablingResponseTimer of request ID "
+                plogd("WaitForSatelliteEnablingResponseTimer of request ID "
                         + argument.requestId + " was already started");
                 return;
             }
-            logd("Start timer to wait for response of the satellite enabling request ID="
+            plogd("Start timer to wait for response of the satellite enabling request ID="
                     + argument.requestId + ", enableSatellite=" + argument.enableSatellite
                     + ", mWaitTimeForSatelliteEnablingResponse="
                     + mWaitTimeForSatelliteEnablingResponse);
@@ -4319,7 +4561,7 @@ public class SatelliteController extends Handler {
     private void stopWaitForSatelliteEnablingResponseTimer(
             @NonNull RequestSatelliteEnabledArgument argument) {
         synchronized (mSatelliteEnabledRequestLock) {
-            logd("Stop timer to wait for response of the satellite enabling request ID="
+            plogd("Stop timer to wait for response of the satellite enabling request ID="
                     + argument.requestId + ", enableSatellite=" + argument.enableSatellite);
             removeMessages(EVENT_WAIT_FOR_SATELLITE_ENABLING_RESPONSE_TIMED_OUT, argument);
         }
@@ -4337,7 +4579,7 @@ public class SatelliteController extends Handler {
 
     private void handleEventWaitForSatelliteEnablingResponseTimedOut(
             @NonNull RequestSatelliteEnabledArgument argument) {
-        logw("Timed out to wait for response of the satellite enabling request ID="
+        plogw("Timed out to wait for response of the satellite enabling request ID="
                 + argument.requestId + ", enableSatellite=" + argument.enableSatellite);
 
         synchronized (mSatelliteEnabledRequestLock) {
@@ -4362,7 +4604,7 @@ public class SatelliteController extends Handler {
                     IIntegerConsumer callback = new IIntegerConsumer.Stub() {
                         @Override
                         public void accept(int result) {
-                            logd("handleEventWaitForSatelliteEnablingResponseTimedOut: "
+                            plogd("handleEventWaitForSatelliteEnablingResponseTimedOut: "
                                     + "disable satellite result=" + result);
                         }
                     };
@@ -4412,19 +4654,20 @@ public class SatelliteController extends Handler {
 
     private void handleCmdUpdateNtnSignalStrengthReporting(boolean shouldReport) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("handleCmdUpdateNtnSignalStrengthReporting: oemEnabledSatelliteFlag is "
+            plogd("handleCmdUpdateNtnSignalStrengthReporting: oemEnabledSatelliteFlag is "
                     + "disabled");
             return;
         }
 
         if (!isSatelliteEnabled()) {
-            logd("handleCmdUpdateNtnSignalStrengthReporting: ignore request, satellite is "
+            plogd("handleCmdUpdateNtnSignalStrengthReporting: ignore request, satellite is "
                     + "disabled");
             return;
         }
 
+        mLatestRequestedStateForNtnSignalStrengthReport.set(shouldReport);
         if (mIsModemEnabledReportingNtnSignalStrength.get() == shouldReport) {
-            logd("handleCmdUpdateNtnSignalStrengthReporting: ignore request. "
+            plogd("handleCmdUpdateNtnSignalStrengthReporting: ignore request. "
                     + "mIsModemEnabledReportingNtnSignalStrength="
                     + mIsModemEnabledReportingNtnSignalStrength.get());
             return;
@@ -4435,7 +4678,7 @@ public class SatelliteController extends Handler {
 
     private void updateNtnSignalStrengthReporting(boolean shouldReport) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("updateNtnSignalStrengthReporting: oemEnabledSatelliteFlag is "
+            plogd("updateNtnSignalStrengthReporting: oemEnabledSatelliteFlag is "
                     + "disabled");
             return;
         }
@@ -4445,10 +4688,10 @@ public class SatelliteController extends Handler {
         Message onCompleted = obtainMessage(EVENT_UPDATE_NTN_SIGNAL_STRENGTH_REPORTING_DONE,
                 request);
         if (shouldReport) {
-            logd("updateNtnSignalStrengthReporting: startSendingNtnSignalStrength");
+            plogd("updateNtnSignalStrengthReporting: startSendingNtnSignalStrength");
             mSatelliteModemInterface.startSendingNtnSignalStrength(onCompleted);
         } else {
-            logd("updateNtnSignalStrengthReporting: stopSendingNtnSignalStrength");
+            plogd("updateNtnSignalStrengthReporting: stopSendingNtnSignalStrength");
             mSatelliteModemInterface.stopSendingNtnSignalStrength(onCompleted);
         }
     }
@@ -4465,12 +4708,12 @@ public class SatelliteController extends Handler {
      */
     public boolean setShouldSendDatagramToModemInDemoMode(boolean shouldSendToModemInDemoMode) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("setShouldSendDatagramToModemInDemoMode: oemEnabledSatelliteFlag is disabled");
+            plogd("setShouldSendDatagramToModemInDemoMode: oemEnabledSatelliteFlag is disabled");
             return false;
         }
 
         if (!isMockModemAllowed()) {
-            logd("setShouldSendDatagramToModemInDemoMode: mock modem not allowed.");
+            plogd("setShouldSendDatagramToModemInDemoMode: mock modem not allowed.");
             return false;
         }
 
@@ -4507,7 +4750,7 @@ public class SatelliteController extends Handler {
     }
 
     private void showSatelliteSystemNotification(int subId) {
-        logd("showSatelliteSystemNotification");
+        plogd("showSatelliteSystemNotification");
         final NotificationChannel notificationChannel = new NotificationChannel(
                 NOTIFICATION_CHANNEL_ID,
                 NOTIFICATION_CHANNEL,
@@ -4545,7 +4788,7 @@ public class SatelliteController extends Handler {
             intent.addCategory(Intent.CATEGORY_HOME);
             return intent;
         }).orElseGet(() -> {
-            loge("showSatelliteSystemNotification: no default sms package name, Invoke "
+            ploge("showSatelliteSystemNotification: no default sms package name, Invoke "
                     + "default sms compose window instead");
             Intent newIntent = new Intent(Intent.ACTION_VIEW);
             newIntent.setData(Uri.parse("sms:"));
@@ -4618,9 +4861,62 @@ public class SatelliteController extends Handler {
         if (mSatelliteSessionController != null) {
             mSatelliteSessionController.onSatelliteEnablementFailed();
         } else {
-            loge("notifyEnablementFailedToSatelliteSessionController: mSatelliteSessionController"
+            ploge("notifyEnablementFailedToSatelliteSessionController: mSatelliteSessionController"
                     + " is not initialized yet");
         }
+    }
+
+    private long getDemoPointingAlignedDurationMillisFromResources() {
+        long durationMillis = 15000L;
+        try {
+            durationMillis = mContext.getResources().getInteger(
+                    R.integer.config_demo_pointing_aligned_duration_millis);
+        } catch (Resources.NotFoundException ex) {
+            loge("getPointingAlignedDurationMillis: ex=" + ex);
+        }
+
+        return durationMillis;
+    }
+
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
+    public long getDemoPointingAlignedDurationMillis() {
+        return mDemoPointingAlignedDurationMillis;
+    }
+
+    private long getDemoPointingNotAlignedDurationMillisFromResources() {
+        long durationMillis = 30000L;
+        try {
+            durationMillis = mContext.getResources().getInteger(
+                    R.integer.config_demo_pointing_not_aligned_duration_millis);
+        } catch (Resources.NotFoundException ex) {
+            loge("getPointingNotAlignedDurationMillis: ex=" + ex);
+        }
+
+        return durationMillis;
+    }
+
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
+    public long getDemoPointingNotAlignedDurationMillis() {
+        return mDemoPointingNotAlignedDurationMillis;
+    }
+
+    private boolean getWwanIsInService(ServiceState serviceState) {
+        List<NetworkRegistrationInfo> nriList = serviceState
+                .getNetworkRegistrationInfoListForTransportType(
+                        AccessNetworkConstants.TRANSPORT_TYPE_WWAN);
+        for (NetworkRegistrationInfo nri : nriList) {
+            if (nri.isInService()) {
+                logv("getWwanIsInService: return true");
+                return true;
+            }
+        }
+
+        logv("getWwanIsInService: return false");
+        return false;
+    }
+
+    private static void logv(@NonNull String log) {
+        Rlog.v(TAG, log);
     }
 
     private static void logd(@NonNull String log) {
@@ -4633,5 +4929,99 @@ public class SatelliteController extends Handler {
 
     private static void loge(@NonNull String log) {
         Rlog.e(TAG, log);
+    }
+
+    private boolean isSatellitePersistentLoggingEnabled(
+            @NonNull Context context, @NonNull FeatureFlags featureFlags) {
+        if (featureFlags.satellitePersistentLogging()) {
+            return true;
+        }
+        try {
+            return context.getResources().getBoolean(
+                    R.bool.config_dropboxmanager_persistent_logging_enabled);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    private void plogd(@NonNull String log) {
+        Rlog.d(TAG, log);
+        if (mPersistentLogger != null) {
+            mPersistentLogger.debug(TAG, log);
+        }
+    }
+
+    private void plogw(@NonNull String log) {
+        Rlog.w(TAG, log);
+        if (mPersistentLogger != null) {
+            mPersistentLogger.warn(TAG, log);
+        }
+    }
+
+    private void ploge(@NonNull String log) {
+        Rlog.e(TAG, log);
+        if (mPersistentLogger != null) {
+            mPersistentLogger.error(TAG, log);
+        }
+    }
+
+    private void handlePersistentLoggingOnSessionStart(RequestSatelliteEnabledArgument argument) {
+        if (mPersistentLogger == null) {
+            return;
+        }
+        if (argument.isEmergency) {
+            DropBoxManagerLoggerBackend.getInstance(mContext).setLoggingEnabled(true);
+        }
+    }
+
+    private void handlePersistentLoggingOnSessionEnd(boolean isEmergency) {
+        if (mPersistentLogger == null) {
+            return;
+        }
+        DropBoxManagerLoggerBackend loggerBackend =
+                DropBoxManagerLoggerBackend.getInstance(mContext);
+        // Flush persistent satellite logs on eSOS session end
+        if (isEmergency) {
+            loggerBackend.flushAsync();
+        }
+        // Also turn off persisted logging until new session is started
+        loggerBackend.setLoggingEnabled(false);
+    }
+
+    /**
+     * Set last emergency call time to the current time.
+     */
+    public void setLastEmergencyCallTime() {
+        synchronized (mLock) {
+            mLastEmergencyCallTime = getElapsedRealtime();
+            plogd("mLastEmergencyCallTime=" + mLastEmergencyCallTime);
+        }
+    }
+
+    /**
+     * Check if satellite is in emergency mode.
+     */
+    public boolean isInEmergencyMode() {
+        synchronized (mLock) {
+            if (mLastEmergencyCallTime == 0) return false;
+
+            long currentTime = getElapsedRealtime();
+            if ((currentTime - mLastEmergencyCallTime) <= mSatelliteEmergencyModeDurationMillis) {
+                plogd("Satellite is in emergency mode");
+                return true;
+            }
+            return false;
+        }
+    }
+
+    private long getSatelliteEmergencyModeDurationFromOverlayConfig(@NonNull Context context) {
+        Integer duration = DEFAULT_SATELLITE_EMERGENCY_MODE_DURATION_SECONDS;
+        try {
+            duration = context.getResources().getInteger(com.android.internal.R.integer
+                    .config_satellite_emergency_mode_duration);
+        } catch (Resources.NotFoundException ex) {
+            ploge("getSatelliteEmergencyModeDurationFromOverlayConfig: got ex=" + ex);
+        }
+        return TimeUnit.SECONDS.toMillis(duration);
     }
 }

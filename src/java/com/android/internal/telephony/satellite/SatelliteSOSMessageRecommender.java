@@ -24,6 +24,7 @@ import static android.telephony.TelephonyManager.EXTRA_EMERGENCY_CALL_TO_SATELLI
 import static android.telephony.satellite.SatelliteManager.EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_SOS;
 import static android.telephony.satellite.SatelliteManager.EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_T911;
 
+import static com.android.internal.telephony.flags.Flags.satellitePersistentLogging;
 import static com.android.internal.telephony.satellite.SatelliteController.INVALID_EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE;
 
 import android.annotation.NonNull;
@@ -42,6 +43,10 @@ import android.os.OutcomeReceiver;
 import android.os.SystemProperties;
 import android.provider.DeviceConfig;
 import android.telecom.Connection;
+import android.telephony.AccessNetworkConstants;
+import android.telephony.DropBoxManagerLoggerBackend;
+import android.telephony.NetworkRegistrationInfo;
+import android.telephony.PersistentLogger;
 import android.telephony.Rlog;
 import android.telephony.ServiceState;
 import android.telephony.SubscriptionManager;
@@ -65,6 +70,7 @@ import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.SmsApplication;
 import com.android.internal.telephony.metrics.SatelliteStats;
 
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 
@@ -109,13 +115,16 @@ public class SatelliteSOSMessageRecommender extends Handler {
     protected int mCountOfTimerStarted = 0;
     private final Object mLock = new Object();
 
+    @Nullable private PersistentLogger mPersistentLogger = null;
+
     /**
      * Create an instance of SatelliteSOSMessageRecommender.
      *
      * @param context The Context for the SatelliteSOSMessageRecommender.
      * @param looper The looper used with the handler of this class.
      */
-    public SatelliteSOSMessageRecommender(@NonNull Context context, @NonNull Looper looper) {
+    public SatelliteSOSMessageRecommender(@NonNull Context context,
+            @NonNull Looper looper) {
         this(context, looper, SatelliteController.getInstance(), null);
     }
 
@@ -131,8 +140,13 @@ public class SatelliteSOSMessageRecommender extends Handler {
      */
     @VisibleForTesting
     protected SatelliteSOSMessageRecommender(@NonNull Context context, @NonNull Looper looper,
-            @NonNull SatelliteController satelliteController, ImsManager imsManager) {
+            @NonNull SatelliteController satelliteController,
+            ImsManager imsManager) {
         super(looper);
+        if (isSatellitePersistentLoggingEnabled(context)) {
+            mPersistentLogger = new PersistentLogger(
+                    DropBoxManagerLoggerBackend.getInstance(context));
+        }
         mContext = context;
         mSatelliteController = satelliteController;
         mImsManager = imsManager;
@@ -141,7 +155,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
         mISatelliteProvisionStateCallback = new ISatelliteProvisionStateCallback.Stub() {
             @Override
             public void onSatelliteProvisionStateChanged(boolean provisioned) {
-                logd("onSatelliteProvisionStateChanged: provisioned=" + provisioned);
+                plogd("onSatelliteProvisionStateChanged: provisioned=" + provisioned);
                 sendMessage(obtainMessage(EVENT_SATELLITE_PROVISIONED_STATE_CHANGED, provisioned));
             }
         };
@@ -172,7 +186,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
                 handleSatelliteAccessRestrictionCheckingResult((boolean) msg.obj);
                 break;
             default:
-                logd("handleMessage: unexpected message code: " + msg.what);
+                plogd("handleMessage: unexpected message code: " + msg.what);
                 break;
         }
     }
@@ -184,9 +198,8 @@ public class SatelliteSOSMessageRecommender extends Handler {
      *                   call.
      */
     public void onEmergencyCallStarted(@NonNull Connection connection) {
-        if (!mSatelliteController.isSatelliteSupportedViaOem()
-                && !mSatelliteController.isSatelliteEmergencyMessagingSupportedViaCarrier()) {
-            logd("onEmergencyCallStarted: satellite is not supported");
+        if (!isSatelliteSupported()) {
+            plogd("onEmergencyCallStarted: satellite is not supported");
             return;
         }
 
@@ -215,10 +228,9 @@ public class SatelliteSOSMessageRecommender extends Handler {
      */
     public void onEmergencyCallConnectionStateChanged(
             String callId, @Connection.ConnectionState int state) {
-        logd("callId=" + callId + ", state=" + state);
-        if (!mSatelliteController.isSatelliteSupportedViaOem()
-                && !mSatelliteController.isSatelliteEmergencyMessagingSupportedViaCarrier()) {
-            logd("onEmergencyCallConnectionStateChanged: satellite is not supported");
+        plogd("callId=" + callId + ", state=" + state);
+        if (!isSatelliteSupported()) {
+            plogd("onEmergencyCallConnectionStateChanged: satellite is not supported");
             return;
         }
         Pair<String, Integer> argument = new Pair<>(callId, state);
@@ -231,6 +243,8 @@ public class SatelliteSOSMessageRecommender extends Handler {
     }
 
     private void handleEmergencyCallStartedEvent(@NonNull Connection connection) {
+        mSatelliteController.setLastEmergencyCallTime();
+
         if (sendEventDisplayEmergencyMessageForcefully(connection)) {
             return;
         }
@@ -263,12 +277,12 @@ public class SatelliteSOSMessageRecommender extends Handler {
     private void evaluateSendingConnectionEventDisplayEmergencyMessage() {
         synchronized (mLock) {
             if (mEmergencyConnection == null) {
-                loge("No emergency call is ongoing...");
+                ploge("No emergency call is ongoing...");
                 return;
             }
 
             if (!mIsTimerTimedOut || mCheckingAccessRestrictionInProgress) {
-                logd("mIsTimerTimedOut=" + mIsTimerTimedOut
+                plogd("mIsTimerTimedOut=" + mIsTimerTimedOut
                         + ", mCheckingAccessRestrictionInProgress="
                         + mCheckingAccessRestrictionInProgress);
                 return;
@@ -286,14 +300,14 @@ public class SatelliteSOSMessageRecommender extends Handler {
                     && isSatelliteAllowed()
                     && (isSatelliteViaOemAvailable() || isSatelliteViaCarrierAvailable())
                     && shouldTrackCall(mEmergencyConnection.getState())) {
-                logd("handleTimeoutEvent: Sent EVENT_DISPLAY_EMERGENCY_MESSAGE to Dialer");
+                plogd("handleTimeoutEvent: Sent EVENT_DISPLAY_EMERGENCY_MESSAGE to Dialer");
                 Bundle extras = createExtraBundleForEventDisplayEmergencyMessage();
                 mEmergencyConnection.sendConnectionEvent(
                         TelephonyManager.EVENT_DISPLAY_EMERGENCY_MESSAGE, extras);
                 isDialerNotified = true;
 
             }
-            logd("handleTimeoutEvent: isImsRegistered=" + isImsRegistered()
+            plogd("handleTimeoutEvent: isImsRegistered=" + isImsRegistered()
                     + ", isCellularAvailable=" + isCellularAvailable()
                     + ", isSatelliteAllowed=" + isSatelliteAllowed()
                     + ", shouldTrackCall=" + shouldTrackCall(mEmergencyConnection.getState()));
@@ -332,6 +346,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
 
     private void handleEmergencyCallConnectionStateChangedEvent(
             @NonNull Pair<String, Integer> arg) {
+        mSatelliteController.setLastEmergencyCallTime();
         if (mEmergencyConnection == null) {
             // Either the call was not created or the timer already timed out.
             return;
@@ -340,7 +355,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
         String callId = arg.first;
         int state = arg.second;
         if (!mEmergencyConnection.getTelecomCallId().equals(callId)) {
-            loge("handleEmergencyCallConnectionStateChangedEvent: unexpected state changed event "
+            ploge("handleEmergencyCallConnectionStateChangedEvent: unexpected state changed event "
                     + ", mEmergencyConnection=" + mEmergencyConnection + ", callId=" + callId
                     + ", state=" + state);
             /*
@@ -409,7 +424,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
             imsManager.addRegistrationCallback(
                     getOrCreateImsRegistrationCallback(phone.getPhoneId()), this::post);
         } catch (ImsException ex) {
-            loge("registerForImsRegistrationStateChanged: ex=" + ex);
+            ploge("registerForImsRegistrationStateChanged: ex=" + ex);
         }
     }
 
@@ -430,7 +445,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
             imsManager.removeRegistrationListener(
                     mImsRegistrationCallbacks.get(phone.getPhoneId()));
         } else {
-            loge("Phone ID=" + phone.getPhoneId() + " was not registered with ImsManager");
+            ploge("Phone ID=" + phone.getPhoneId() + " was not registered with ImsManager");
         }
     }
 
@@ -441,13 +456,41 @@ public class SatelliteSOSMessageRecommender extends Handler {
                 int state = serviceState.getState();
                 if ((state == STATE_IN_SERVICE || state == STATE_EMERGENCY_ONLY
                         || serviceState.isEmergencyOnly())
-                        && !serviceState.isUsingNonTerrestrialNetwork()) {
+                        && !isSatellitePlmn(phone.getSubId(), serviceState)) {
                     logv("isCellularAvailable true");
                     return true;
                 }
             }
         }
         logv("isCellularAvailable false");
+        return false;
+    }
+
+    private boolean isSatellitePlmn(int subId, @NonNull ServiceState serviceState) {
+        List<String> satellitePlmnList =
+                mSatelliteController.getSatellitePlmnsForCarrier(subId);
+        if (satellitePlmnList.isEmpty()) {
+            logv("isSatellitePlmn: satellitePlmnList is empty");
+            return false;
+        }
+
+        for (NetworkRegistrationInfo nri :
+                serviceState.getNetworkRegistrationInfoListForTransportType(
+                        AccessNetworkConstants.TRANSPORT_TYPE_WWAN)) {
+            String registeredPlmn = nri.getRegisteredPlmn();
+            String mccmnc = nri.getCellIdentity().getMccString()
+                    + nri.getCellIdentity().getMncString();
+            for (String satellitePlmn : satellitePlmnList) {
+                if (TextUtils.equals(satellitePlmn, registeredPlmn)
+                        || TextUtils.equals(satellitePlmn, mccmnc)) {
+                    logv("isSatellitePlmn: return true, satellitePlmn:" + satellitePlmn
+                            + " registeredPlmn:" + registeredPlmn + " mccmnc:" + mccmnc);
+                    return true;
+                }
+            }
+        }
+
+        logv("isSatellitePlmn: return false");
         return false;
     }
 
@@ -523,7 +566,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
         } else {
             mTimeoutMillis = mOemEnabledTimeoutMillis;
         }
-        logd("mTimeoutMillis = " + mTimeoutMillis);
+        plogd("mTimeoutMillis = " + mTimeoutMillis);
     }
 
     private static long getOemEnabledEmergencyCallWaitForConnectionTimeoutMillis(
@@ -631,7 +674,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
             packageName = defaultSmsAppComponent.getPackageName();
             className = defaultSmsAppComponent.getClassName();
         }
-        logd("EVENT_DISPLAY_EMERGENCY_MESSAGE: handoverType=" + handoverType + ", packageName="
+        plogd("EVENT_DISPLAY_EMERGENCY_MESSAGE: handoverType=" + handoverType + ", packageName="
                 + packageName + ", className=" + className + ", action=" + action);
 
         Bundle result = new Bundle();
@@ -652,7 +695,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
             if (mEmergencyConnection != null) {
                 emergencyNumber = mEmergencyConnection.getAddress().getSchemeSpecificPart();
             }
-            logd("emergencyNumber=" + emergencyNumber);
+            plogd("emergencyNumber=" + emergencyNumber);
 
             Uri uri = Uri.parse("smsto:" + emergencyNumber);
             intent = new Intent(Intent.ACTION_SENDTO, uri);
@@ -684,7 +727,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
 
     private void handleCmdSendEventDisplayEmergencyMessageForcefully(
             @NonNull Connection connection) {
-        logd("Sent EVENT_DISPLAY_EMERGENCY_MESSAGE to Dialer forcefully.");
+        plogd("Sent EVENT_DISPLAY_EMERGENCY_MESSAGE to Dialer forcefully.");
         mEmergencyConnection = connection;
         Bundle extras = createExtraBundleForEventDisplayEmergencyMessage();
         connection.sendConnectionEvent(TelephonyManager.EVENT_DISPLAY_EMERGENCY_MESSAGE, extras);
@@ -694,7 +737,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
     private boolean isMultiSim() {
         TelephonyManager telephonyManager = mContext.getSystemService(TelephonyManager.class);
         if (telephonyManager == null) {
-            loge("isMultiSim: telephonyManager is null");
+            ploge("isMultiSim: telephonyManager is null");
             return false;
         }
         return telephonyManager.isMultiSimEnabled();
@@ -711,7 +754,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
     private void requestIsSatelliteAllowedForCurrentLocation() {
         synchronized (mLock) {
             if (mCheckingAccessRestrictionInProgress) {
-                logd("requestIsSatelliteCommunicationAllowedForCurrentLocation was already sent");
+                plogd("requestIsSatelliteCommunicationAllowedForCurrentLocation was already sent");
                 return;
             }
             mCheckingAccessRestrictionInProgress = true;
@@ -721,14 +764,14 @@ public class SatelliteSOSMessageRecommender extends Handler {
                 new OutcomeReceiver<>() {
                     @Override
                     public void onResult(Boolean result) {
-                        logd("requestIsSatelliteAllowedForCurrentLocation: result=" + result);
+                        plogd("requestIsSatelliteAllowedForCurrentLocation: result=" + result);
                         sendMessage(obtainMessage(
                                 EVENT_SATELLITE_ACCESS_RESTRICTION_CHECKING_RESULT, result));
                     }
 
                     @Override
                     public void onError(SatelliteManager.SatelliteException ex) {
-                        logd("requestIsSatelliteAllowedForCurrentLocation: onError, ex=" + ex);
+                        plogd("requestIsSatelliteAllowedForCurrentLocation: onError, ex=" + ex);
                         sendMessage(obtainMessage(
                                 EVENT_SATELLITE_ACCESS_RESTRICTION_CHECKING_RESULT, false));
                     }
@@ -749,6 +792,19 @@ public class SatelliteSOSMessageRecommender extends Handler {
                 || SystemProperties.getBoolean(BOOT_ALLOW_MOCK_MODEM_PROPERTY, false));
     }
 
+    private boolean isSatelliteSupported() {
+        if (mSatelliteController.isSatelliteEmergencyMessagingSupportedViaCarrier()) return true;
+        if (mSatelliteController.isSatelliteSupportedViaOem() && isSatelliteViaOemProvisioned()) {
+            return true;
+        }
+        return false;
+    }
+
+    private boolean isSatelliteViaOemProvisioned() {
+        Boolean provisioned = mSatelliteController.isSatelliteViaOemProvisioned();
+        return (provisioned != null) && provisioned;
+    }
+
     private static void logv(@NonNull String log) {
         Rlog.v(TAG, log);
     }
@@ -759,5 +815,32 @@ public class SatelliteSOSMessageRecommender extends Handler {
 
     private static void loge(@NonNull String log) {
         Rlog.e(TAG, log);
+    }
+
+    private boolean isSatellitePersistentLoggingEnabled(
+            @NonNull Context context) {
+        if (satellitePersistentLogging()) {
+            return true;
+        }
+        try {
+            return context.getResources().getBoolean(
+                    R.bool.config_dropboxmanager_persistent_logging_enabled);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    private void plogd(@NonNull String log) {
+        Rlog.d(TAG, log);
+        if (mPersistentLogger != null) {
+            mPersistentLogger.debug(TAG, log);
+        }
+    }
+
+    private void ploge(@NonNull String log) {
+        Rlog.e(TAG, log);
+        if (mPersistentLogger != null) {
+            mPersistentLogger.error(TAG, log);
+        }
     }
 }

@@ -468,7 +468,7 @@ public class GsmCdmaPhone extends Phone {
     };
 
     private boolean hasCalling() {
-        if (!mFeatureFlags.minimalTelephonyCdmCheck()) return true;
+        if (!TelephonyCapabilities.minimalTelephonyCdmCheck(mFeatureFlags)) return true;
         return mContext.getPackageManager().hasSystemFeature(
             PackageManager.FEATURE_TELEPHONY_CALLING);
     }
@@ -3076,12 +3076,12 @@ public class GsmCdmaPhone extends Phone {
 
     @Override
     public void registerForCallWaiting(Handler h, int what, Object obj) {
-        mCT.registerForCallWaiting(h, what, obj);
+        if (mCT != null) mCT.registerForCallWaiting(h, what, obj);
     }
 
     @Override
     public void unregisterForCallWaiting(Handler h) {
-        mCT.unregisterForCallWaiting(h);
+        if (mCT != null) mCT.unregisterForCallWaiting(h);
     }
 
     /**
