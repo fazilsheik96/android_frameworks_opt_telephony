@@ -399,13 +399,45 @@ public class TelephonyNetworkRequest {
      * if there is no APN type capabilities in this network request.
      */
     @NetCapability
-    public int getApnTypeNetworkCapability() {
+    public int getHighestPriorityApnTypeNetworkCapability() {
         if (!hasAttribute(CAPABILITY_ATTRIBUTE_APN_SETTING)) return -1;
         return Arrays.stream(getCapabilities()).boxed()
                 .filter(cap -> DataUtils.networkCapabilityToApnType(cap) != ApnSetting.TYPE_NONE)
                 .max(Comparator.comparingInt(mDataConfigManager::getNetworkCapabilityPriority))
                 .orElse(-1);
     }
+
+    // TODO: Remove it after proprietary code is adapted.
+    @NetCapability
+    public int getApnTypeNetworkCapability() {
+        return getHighestPriorityApnTypeNetworkCapability();
+    }
+
+    /**
+     * A parent set of {@link #getHighestPriorityApnTypeNetworkCapability()}.
+     * Get the network capability from the network request that can lead to data setup. If there are
+     * multiple capabilities, the highest priority one will be returned.
+     *
+     * @return The highest priority traffic descriptor type network capability from this network
+     * request. -1 if there is no traffic descriptor type capabilities in this network request.
+     */
+    @NetCapability
+    public int getHighestPrioritySupportedNetworkCapability() {
+        return Arrays.stream(getCapabilities()).boxed()
+                .filter(CAPABILITY_ATTRIBUTE_MAP::containsKey)
+                .max(Comparator.comparingInt(mDataConfigManager::getNetworkCapabilityPriority))
+                .orElse(-1);
+    }
+
+    /**
+     * @return Get all the network capabilities that can lead to data setup.
+     */
+    @NonNull
+    @NetCapability
+    public static List<Integer> getAllSupportedNetworkCapabilities() {
+        return CAPABILITY_ATTRIBUTE_MAP.keySet().stream().toList();
+    }
+
     /**
      * @return The native network request.
      */
