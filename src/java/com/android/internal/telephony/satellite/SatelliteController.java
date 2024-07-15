@@ -3135,6 +3135,31 @@ public class SatelliteController extends Handler {
     }
 
     /**
+     * @return {@code true} if device is in carrier roaming nb iot ntn mode,
+     * else {@return false}
+     */
+    public boolean isInCarrierRoamingNbIotNtn() {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            plogd("isInCarrierRoamingNbIotNtn: carrier roaming nb iot ntn "
+                    + "feature flag is disabled");
+            return false;
+        }
+
+        if (!isSatelliteEnabled()) {
+            plogd("iisInCarrierRoamingNbIotNtn: satellite is disabled");
+            return false;
+        }
+
+        Phone satellitePhone = getSatellitePhone();
+        if (!isCarrierRoamingNtnEligible(satellitePhone)) {
+            plogd("isInCarrierRoamingNbIotNtn: not carrier roaming ntn eligible.");
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
      * Return capabilities of carrier roaming satellite network.
      *
      * @param phone phone object
@@ -5635,6 +5660,7 @@ public class SatelliteController extends Handler {
         sendRequestAsync(CMD_PROVISION_SATELLITE_TOKEN_UPDATED, request, null);
     }
 
+
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
     protected void setSatellitePhone(int subId) {
         synchronized (mSatellitePhoneLock) {
@@ -5725,6 +5751,27 @@ public class SatelliteController extends Handler {
             }
         }
         return false;
+    }
+
+    /** return satellite phone */
+    @Nullable
+    public Phone getSatellitePhone() {
+        synchronized (mSatellitePhoneLock) {
+            return mSatellitePhone;
+        }
+    }
+
+    /** Start PointingUI if it is required. */
+    public void startPointingUI() {
+        synchronized (mNeedsSatellitePointingLock) {
+            plogd("startPointingUI: mNeedsSatellitePointing=" + mNeedsSatellitePointing
+                    + ", mIsDemoModeEnabled=" + mIsDemoModeEnabled
+                    + ", mIsEmergency=" + mIsEmergency);
+            if (mNeedsSatellitePointing) {
+                mPointingAppController.startPointingUI(false /*needFullScreenPointingUI*/,
+                        mIsDemoModeEnabled, mIsEmergency);
+            }
+        }
     }
 
     private void requestIsSatelliteAllowedForCurrentLocation() {
