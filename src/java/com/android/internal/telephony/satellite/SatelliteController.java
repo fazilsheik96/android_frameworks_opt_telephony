@@ -26,6 +26,7 @@ import static android.telephony.CarrierConfigManager.KEY_EMERGENCY_CALL_TO_SATEL
 import static android.telephony.CarrierConfigManager.KEY_EMERGENCY_MESSAGING_SUPPORTED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ATTACH_SUPPORTED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_CONNECTION_HYSTERESIS_SEC_INT;
+import static android.telephony.CarrierConfigManager.KEY_SATELLITE_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ENTITLEMENT_SUPPORTED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ESOS_SUPPORTED_BOOL;
 import static android.telephony.SubscriptionManager.SATELLITE_ATTACH_ENABLED_FOR_CARRIER;
@@ -4214,7 +4215,8 @@ public class SatelliteController extends Handler {
                     KEY_EMERGENCY_CALL_TO_SATELLITE_T911_HANDOVER_TIMEOUT_MILLIS_INT,
                     KEY_SATELLITE_ESOS_SUPPORTED_BOOL,
                     KEY_CARRIER_ROAMING_NTN_CONNECT_TYPE_INT,
-                    KEY_CARRIER_SUPPORTED_SATELLITE_NOTIFICATION_HYSTERESIS_SEC_INT
+                    KEY_CARRIER_SUPPORTED_SATELLITE_NOTIFICATION_HYSTERESIS_SEC_INT,
+                    KEY_SATELLITE_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT
             );
         }
         if (config == null || config.isEmpty()) {
@@ -5225,8 +5227,15 @@ public class SatelliteController extends Handler {
         }
     }
 
+    /**
+     * Read carrier config items for satellite
+     *
+     * @param subId Associated subscription ID
+     * @return PersistableBundle including carrier config values
+     */
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
     @NonNull
-    private PersistableBundle getPersistableBundle(int subId) {
+    public PersistableBundle getPersistableBundle(int subId) {
         synchronized (mCarrierConfigArrayLock) {
             PersistableBundle config = mCarrierConfigArray.get(subId);
             if (config == null) {

@@ -542,6 +542,7 @@ public class SatelliteControllerTest extends TelephonyTest {
                 .onSatelliteEnabledStateChanged(anyBoolean());
         doNothing().when(mMockSatelliteSessionController).onSatelliteModemStateChanged(anyInt());
         doNothing().when(mMockSatelliteSessionController).setDemoMode(anyBoolean());
+        doNothing().when(mMockSatelliteSessionController).cleanUpResource();
         doNothing().when(mMockControllerMetricsStats).onSatelliteEnabled();
         doNothing().when(mMockControllerMetricsStats).reportServiceEnablementSuccessCount();
         doNothing().when(mMockControllerMetricsStats).reportServiceEnablementFailCount();
@@ -568,6 +569,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         doNothing().when(mMockProvisionMetricsStats).reportProvisionMetrics();
         doNothing().when(mMockControllerMetricsStats).reportDeprovisionCount(anyInt());
         when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(false);
         doReturn(mSST).when(mPhone).getServiceStateTracker();
         doReturn(mSST).when(mPhone2).getServiceStateTracker();
         doReturn(mServiceState).when(mSST).getServiceState();
