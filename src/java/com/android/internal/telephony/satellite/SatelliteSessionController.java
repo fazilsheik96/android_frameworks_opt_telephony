@@ -308,6 +308,35 @@ public class SatelliteSessionController extends StateMachine {
     }
 
     /**
+     * {@link SatelliteController} uses this function to notify {@link SatelliteSessionController}
+     * that the satellite emergency mode has changed.
+     *
+     * @param isEmergencyMode The satellite emergency mode.
+     */
+    public void onEmergencyModeChanged(boolean isEmergencyMode) {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            plogd("onEmergencyModeChanged: carrierRoamingNbIotNtn is disabled");
+            return;
+        }
+
+        plogd("onEmergencyModeChanged " + isEmergencyMode);
+
+        List<ISatelliteModemStateCallback> toBeRemoved = new ArrayList<>();
+        mListeners.values().forEach(listener -> {
+            try {
+                listener.onEmergencyModeChanged(isEmergencyMode);
+            } catch (RemoteException e) {
+                plogd("onEmergencyModeChanged RemoteException: " + e);
+                toBeRemoved.add(listener);
+            }
+        });
+
+        toBeRemoved.forEach(listener -> {
+            mListeners.remove(listener.asBinder());
+        });
+    }
+
+    /**
      * Registers for modem state changed from satellite modem.
      *
      * @param callback The callback to handle the satellite modem state changed event.
@@ -316,6 +345,9 @@ public class SatelliteSessionController extends StateMachine {
             @NonNull ISatelliteModemStateCallback callback) {
         try {
             callback.onSatelliteModemStateChanged(mCurrentState);
+            if (mFeatureFlags.carrierRoamingNbIotNtn()) {
+                callback.onEmergencyModeChanged(mSatelliteController.getRequestIsEmergency());
+            }
             mListeners.put(callback.asBinder(), callback);
         } catch (RemoteException ex) {
             ploge("registerForSatelliteModemStateChanged: Got RemoteException ex=" + ex);

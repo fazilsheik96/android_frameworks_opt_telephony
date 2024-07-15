@@ -58,6 +58,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -986,6 +987,41 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         moveToPowerOffState();
     }
 
+    @Test
+    public void testEmergencyModeChanged() {
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        when(mMockSatelliteController.getRequestIsEmergency()).thenReturn(false);
+
+        // Unregister exist callback
+        mTestSatelliteSessionController.unregisterForSatelliteModemStateChanged(
+                mTestSatelliteModemStateCallback);
+
+        // Register callback
+        mTestSatelliteSessionController.registerForSatelliteModemStateChanged(
+                mTestSatelliteModemStateCallback);
+
+        // Verify initial notification
+        assertSuccessfulModemStateChangedCallback(
+                mTestSatelliteModemStateCallback, SatelliteManager.SATELLITE_MODEM_STATE_OFF);
+        assertSuccessfulEmergencyModeChangedCallback(
+                mTestSatelliteModemStateCallback, false);
+
+        mTestSatelliteSessionController.onEmergencyModeChanged(true);
+
+        assertSuccessfulEmergencyModeChangedCallback(
+                mTestSatelliteModemStateCallback, true);
+
+        mTestSatelliteSessionController.onEmergencyModeChanged(false);
+
+        assertSuccessfulEmergencyModeChangedCallback(
+                mTestSatelliteModemStateCallback, false);
+
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(false);
+        mTestSatelliteSessionController.onEmergencyModeChanged(false);
+
+        assertEmergencyModeChangedCallbackNotCalled(mTestSatelliteModemStateCallback);
+    }
+
     private void setupDatagramTransferringState(boolean isTransferring) {
         when(mMockDatagramController.isSendingInIdleState()).thenReturn(isTransferring);
         when(mMockDatagramController.isPollingInIdleState()).thenReturn(isTransferring);
@@ -1190,7 +1226,9 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
     private static class TestSatelliteModemStateCallback extends ISatelliteModemStateCallback.Stub {
         private final AtomicInteger mModemState = new AtomicInteger(
                 SatelliteManager.SATELLITE_MODEM_STATE_OFF);
-        private final Semaphore mSemaphore = new Semaphore(0);
+        private final AtomicBoolean mIsEmergency = new AtomicBoolean(false);
+        private final Semaphore mSemaphoreForModemStateChanged = new Semaphore(0);
+        private final Semaphore mSemaphoreForEmergencyModeChanged = new Semaphore(0);
         private final Object mLock = new Object();
         private final List<Integer> mModemStates = new ArrayList<>();
 
@@ -1202,21 +1240,47 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
                 mModemStates.add(state);
             }
             try {
-                mSemaphore.release();
+                mSemaphoreForModemStateChanged.release();
             } catch (Exception ex) {
                 logd("onSatelliteModemStateChanged: Got exception, ex=" + ex);
             }
         }
 
-        public boolean waitUntilResult() {
+        @Override
+        public void onEmergencyModeChanged(boolean isEmergency) {
+            logd("onEmergencyModeChanged: state=" + isEmergency);
+            mIsEmergency.set(isEmergency);
             try {
-                if (!mSemaphore.tryAcquire(EVENT_PROCESSING_TIME_MILLIS, TimeUnit.MILLISECONDS)) {
+                mSemaphoreForEmergencyModeChanged.release();
+            } catch (Exception ex) {
+                logd("onEmergencyModeChanged: Got exception, ex=" + ex);
+            }
+        }
+
+        public boolean waitUntilResultForModemStateChanged() {
+            try {
+                if (!mSemaphoreForModemStateChanged.tryAcquire(EVENT_PROCESSING_TIME_MILLIS,
+                        TimeUnit.MILLISECONDS)) {
                     logd("Timeout to receive onSatelliteModemStateChanged");
                     return false;
                 }
                 return true;
             } catch (Exception ex) {
                 logd("onSatelliteModemStateChanged: Got exception=" + ex);
+                return false;
+            }
+        }
+
+        public boolean waitUntilResultForEmergencyModeChanged() {
+            try {
+                if (!mSemaphoreForEmergencyModeChanged.tryAcquire(EVENT_PROCESSING_TIME_MILLIS,
+                        TimeUnit.MILLISECONDS)) {
+                    logd("Timeout to receive onEmergencyModeChanged");
+                    return false;
+                }
+                return true;
+            } catch (Exception ex) {
+                logd("onEmergencyModeChanged: Got exception=" + ex);
                 return false;
             }
         }
@@ -1243,22 +1307,40 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
             }
         }
 
+        public boolean getEmergencyMode() {
+            return mIsEmergency.get();
+        }
+
         public void clearSemaphorePermits() {
-            mSemaphore.drainPermits();
+            mSemaphoreForModemStateChanged.drainPermits();
         }
     }
 
     private static void assertSuccessfulModemStateChangedCallback(
             TestSatelliteModemStateCallback callback,
             @SatelliteManager.SatelliteModemState int expectedModemState) {
-        boolean successful = callback.waitUntilResult();
+        boolean successful = callback.waitUntilResultForModemStateChanged();
         assertTrue(successful);
         assertEquals(expectedModemState, callback.getModemState());
     }
 
     private static void assertModemStateChangedCallbackNotCalled(
             TestSatelliteModemStateCallback callback) {
-        boolean successful = callback.waitUntilResult();
+        boolean successful = callback.waitUntilResultForModemStateChanged();
+        assertFalse(successful);
+    }
+
+    private static void assertSuccessfulEmergencyModeChangedCallback(
+            TestSatelliteModemStateCallback callback,
+            boolean isEmergency) {
+        boolean successful = callback.waitUntilResultForEmergencyModeChanged();
+        assertTrue(successful);
+        assertEquals(isEmergency, callback.getEmergencyMode());
+    }
+
+    private static void assertEmergencyModeChangedCallbackNotCalled(
+            TestSatelliteModemStateCallback callback) {
+        boolean successful = callback.waitUntilResultForEmergencyModeChanged();
         assertFalse(successful);
     }
 }

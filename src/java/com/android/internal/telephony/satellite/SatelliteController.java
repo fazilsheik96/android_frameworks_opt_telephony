@@ -3902,6 +3902,9 @@ public class SatelliteController extends Handler {
                 plogd("Sending success to callback that sent enable satellite request");
                 setDemoModeEnabled(mSatelliteEnabledRequest.enableDemoMode);
                 mIsEmergency = mSatelliteEnabledRequest.isEmergency;
+                if (mSatelliteSessionController != null) {
+                    mSatelliteSessionController.onEmergencyModeChanged(mIsEmergency);
+                }
                 synchronized (mIsSatelliteEnabledLock) {
                     mIsSatelliteEnabled = mSatelliteEnabledRequest.enableSatellite;
                 }
@@ -3931,6 +3934,9 @@ public class SatelliteController extends Handler {
             setDemoModeEnabled(false);
             handlePersistentLoggingOnSessionEnd(mIsEmergency);
             mIsEmergency = false;
+            if (mSatelliteSessionController != null) {
+                mSatelliteSessionController.onEmergencyModeChanged(mIsEmergency);
+            }
             mIsSatelliteEnabled = false;
             setSettingsKeyForSatelliteMode(SATELLITE_MODE_ENABLED_FALSE);
             setSettingsKeyToAllowDeviceRotation(SATELLITE_MODE_ENABLED_FALSE);
