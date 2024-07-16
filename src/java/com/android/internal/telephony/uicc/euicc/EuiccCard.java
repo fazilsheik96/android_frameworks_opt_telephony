@@ -50,7 +50,7 @@ public class EuiccCard extends UiccCard {
         super(c, ci, ics, phoneId, lock, supportedMepMode);
         if (TextUtils.isEmpty(ics.eid)) {
             loge("no eid given in constructor for phone " + phoneId);
-            loadEidAndNotifyRegistrants();
+            loadEidAndNotifyRegistrants(phoneId);
         } else {
             mEid = ics.eid;
             mCardId = ics.eid;
@@ -122,7 +122,7 @@ public class EuiccCard extends UiccCard {
     // For RadioConfig<1.2 we don't know the EID when constructing the EuiccCard, so callers may
     // need to register to be notified when we have the EID
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
-    protected void loadEidAndNotifyRegistrants() {
+    protected void loadEidAndNotifyRegistrants(int phoneId) {
         Handler euiccMainThreadHandler = new Handler();
         AsyncResultCallback<String> cardCb = new AsyncResultCallback<String>() {
             @Override
@@ -148,7 +148,7 @@ public class EuiccCard extends UiccCard {
                 Rlog.e(LOG_TAG, "Failed loading eid", e);
             }
         };
-        ((EuiccPort) mUiccPorts.get(TelephonyManager.DEFAULT_PORT_INDEX)).getEid(cardCb,
+        ((EuiccPort) getUiccPortForPhone(phoneId)).getEid(cardCb,
                 euiccMainThreadHandler);
     }
 
