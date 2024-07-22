@@ -3405,14 +3405,13 @@ public class SatelliteControllerTest extends TelephonyTest {
     }
 
     @Test
-    public void testHandleEventServiceStateChanged() throws Exception {
+    public void testHandleEventServiceStateChanged() {
         when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(true);
         // Do nothing when the satellite is not connected
         doReturn(false).when(mServiceState).isUsingNonTerrestrialNetwork();
         sendServiceStateChangedEvent();
         processAllMessages();
-        assertEquals(false,
-                mSharedPreferences.getBoolean(SATELLITE_SYSTEM_NOTIFICATION_DONE_KEY, false));
+        assertFalse(mSharedPreferences.getBoolean(SATELLITE_SYSTEM_NOTIFICATION_DONE_KEY, false));
         verify(mMockNotificationManager, never()).notifyAsUser(anyString(), anyInt(), any(), any());
 
         // Check sending a system notification when the satellite is connected
@@ -3421,8 +3420,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         processAllMessages();
         verify(mMockNotificationManager, times(1)).notifyAsUser(anyString(), anyInt(), any(),
                 any());
-        assertEquals(true,
-                mSharedPreferences.getBoolean(SATELLITE_SYSTEM_NOTIFICATION_DONE_KEY, false));
+        assertTrue(mSharedPreferences.getBoolean(SATELLITE_SYSTEM_NOTIFICATION_DONE_KEY, false));
 
         // Check don't display again after displayed already a system notification.
         sendServiceStateChangedEvent();
@@ -3914,6 +3912,8 @@ public class SatelliteControllerTest extends TelephonyTest {
         assertTrue(mSatelliteControllerUT.isCarrierRoamingNtnEligible(mPhone));
         verify(mPhone, times(1)).notifyCarrierRoamingNtnEligibleStateChanged(eq(true));
         verify(mPhone2, times(0)).notifyCarrierRoamingNtnEligibleStateChanged(anyBoolean());
+        verify(mMockNotificationManager, times(1)).notifyAsUser(anyString(), anyInt(), any(),
+                any());
         clearInvocations(mPhone);
 
         when(mServiceState.getState()).thenReturn(ServiceState.STATE_IN_SERVICE);
@@ -3945,6 +3945,8 @@ public class SatelliteControllerTest extends TelephonyTest {
         assertTrue(mSatelliteControllerUT.isCarrierRoamingNtnEligible(mPhone));
         verify(mPhone, times(0)).notifyCarrierRoamingNtnEligibleStateChanged(eq(true));
         verify(mPhone2, times(0)).notifyCarrierRoamingNtnEligibleStateChanged(anyBoolean());
+        verify(mMockNotificationManager, times(1)).cancelAsUser(anyString(), anyInt(),
+                any());
     }
 
     @Test
