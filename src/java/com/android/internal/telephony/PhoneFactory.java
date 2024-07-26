@@ -45,6 +45,7 @@ import android.util.LocalLog;
 import com.android.internal.telephony.cdma.CdmaSubscriptionSourceManager;
 import com.android.internal.telephony.data.CellularNetworkValidator;
 import com.android.internal.telephony.data.PhoneSwitcher;
+import com.android.internal.telephony.data.SatelliteNetworkFactory;
 import com.android.internal.telephony.data.TelephonyNetworkFactory;
 import com.android.internal.telephony.euicc.EuiccCardController;
 import com.android.internal.telephony.euicc.EuiccController;
@@ -101,6 +102,7 @@ public class PhoneFactory {
     static private SimultaneousCallingTracker sSimultaneousCallingTracker;
     static private PhoneSwitcher sPhoneSwitcher;
     static private TelephonyNetworkFactory[] sTelephonyNetworkFactories;
+    static private SatelliteNetworkFactory[] sSatelliteNetworkFactories;
     static private NotificationChannelController sNotificationChannelController;
     static private CellularNetworkValidator sCellularNetworkValidator;
 
@@ -180,6 +182,10 @@ public class PhoneFactory {
                 sPhones = new Phone[numPhones];
                 sCommandsInterfaces = new RIL[numPhones];
                 sTelephonyNetworkFactories = new TelephonyNetworkFactory[numPhones];
+
+                if (featureFlags.satelliteInternet()) {
+                    sSatelliteNetworkFactories = new SatelliteNetworkFactory[numPhones];
+                }
 
                 for (int i = 0; i < numPhones; i++) {
                     // reads the system properties and makes commandsinterface
@@ -306,6 +312,16 @@ public class PhoneFactory {
                             .makeTelephonyNetworkFactory(Looper.myLooper(),
                             sPhones[i], sPhoneSwitcher, featureFlags);
                 }
+
+                if (featureFlags.satelliteInternet()) {
+                    for (int i = 0; i < numPhones; i++) {
+                        sSatelliteNetworkFactories[i] = TelephonyComponentFactory.getInstance()
+                                .inject(SatelliteNetworkFactory.class.getName())
+                                .makeSatelliteNetworkFactory(Looper.myLooper(),
+                                sPhones[i], sPhoneSwitcher, featureFlags);
+                    }
+                }
+
                 telephonyComponentFactory.inject(TelephonyComponentFactory.class.getName()).
                         makeExtTelephonyClasses(context, sPhones, sCommandsInterfaces);
             }
@@ -324,7 +340,8 @@ public class PhoneFactory {
             int prevActiveModemCount = sPhones.length;
             if (prevActiveModemCount == activeModemCount) return;
 
-            // TODO: clean up sPhones, sCommandsInterfaces and sTelephonyNetworkFactories objects.
+            // TODO: clean up sPhones, sCommandsInterfaces, sSatelliteNetworkFactories and
+            // sTelephonyNetworkFactories objects.
             // Currently we will not clean up the 2nd Phone object, so that it can be re-used if
             // user switches back.
             if (prevActiveModemCount > activeModemCount) return;
@@ -332,6 +349,9 @@ public class PhoneFactory {
             sPhones = copyOf(sPhones, activeModemCount);
             sCommandsInterfaces = copyOf(sCommandsInterfaces, activeModemCount);
             sTelephonyNetworkFactories = copyOf(sTelephonyNetworkFactories, activeModemCount);
+            if (sFeatureFlags.satelliteInternet()) {
+                sSatelliteNetworkFactories = copyOf(sSatelliteNetworkFactories, activeModemCount);
+            }
 
             int cdmaSubscription = CdmaSubscriptionSourceManager.getDefault(context);
             for (int i = prevActiveModemCount; i < activeModemCount; i++) {
@@ -347,7 +367,14 @@ public class PhoneFactory {
                 }
                 sTelephonyNetworkFactories[i] = TelephonyComponentFactory.getInstance().inject(
                         TelephonyNetworkFactory.class.getName())
-                        .makeTelephonyNetworkFactory(Looper.myLooper(), sPhones[i], sPhoneSwitcher, sFeatureFlags);
+                        .makeTelephonyNetworkFactory(Looper.myLooper(), sPhones[i],
+                        sPhoneSwitcher, sFeatureFlags);
+                if (sFeatureFlags.satelliteInternet()) {
+                    sSatelliteNetworkFactories[i] = TelephonyComponentFactory.getInstance()
+                            .inject(TelephonyNetworkFactory.class.getName())
+                            .makeSatelliteNetworkFactory(Looper.myLooper(), sPhones[i],
+                            sPhoneSwitcher, sFeatureFlags);
+                }
             }
         }
     }
@@ -602,6 +629,9 @@ public class PhoneFactory {
             pw.println("++++++++++++++++++++++++++++++++");
 
             sTelephonyNetworkFactories[i].dump(fd, pw, args);
+            if (sFeatureFlags.satelliteInternet()) {
+                sSatelliteNetworkFactories[i].dump(fd, pw, args);
+            }
 
             pw.flush();
             pw.decreaseIndent();

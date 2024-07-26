@@ -51,6 +51,7 @@ import com.android.internal.telephony.data.LinkBandwidthEstimator;
 import com.android.internal.telephony.data.PhoneSwitcher;
 import com.android.internal.telephony.data.TelephonyNetworkAgent;
 import com.android.internal.telephony.data.TelephonyNetworkAgent.TelephonyNetworkAgentCallback;
+import com.android.internal.telephony.data.SatelliteNetworkFactory;
 import com.android.internal.telephony.data.TelephonyNetworkFactory;
 import com.android.internal.telephony.emergency.EmergencyNumberTracker;
 import com.android.internal.telephony.flags.FeatureFlagsImpl;
@@ -682,6 +683,12 @@ public class TelephonyComponentFactory {
             PhoneSwitcher phoneSwitcher, @NonNull FeatureFlags flags) {
         Rlog.i(TAG, "make TelephonyNetworkFactory");
         return new TelephonyNetworkFactory(looper, phone, phoneSwitcher, flags);
+    }
+
+    public SatelliteNetworkFactory makeSatelliteNetworkFactory(Looper looper, Phone phone,
+            PhoneSwitcher phoneSwitcher, @NonNull FeatureFlags flags) {
+        Rlog.i(TAG, "make SatelliteNetworkFactory");
+        return new SatelliteNetworkFactory(looper, phone, phoneSwitcher, flags);
     }
 
     public SubscriptionManagerService makeSubscriptionManagerService(
