@@ -46,6 +46,7 @@ import static android.telephony.satellite.SatelliteManager.SATELLITE_COMMUNICATI
 import static android.telephony.satellite.SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_MODEM_STATE_OFF;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_MODEM_STATE_UNAVAILABLE;
+import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_EMERGENCY_CALL_IN_PROGRESS;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_ERROR;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_INVALID_ARGUMENTS;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_INVALID_MODEM_STATE;
@@ -889,6 +890,21 @@ public class SatelliteControllerTest extends TelephonyTest {
         processAllMessages();
         verifySatelliteProvisioned(true, SATELLITE_RESULT_SUCCESS);
 
+        // Fail to enable satellite when the emergency call is in progress
+        mIIntegerConsumerResults.clear();
+        mSatelliteControllerUT.setSettingsKeyForSatelliteModeCalled = false;
+        mSatelliteControllerUT.setSettingsKeyToAllowDeviceRotationCalled = false;
+        setUpResponseForRequestSatelliteEnabled(true, false, false, SATELLITE_RESULT_SUCCESS);
+        doReturn(true).when(mTelecomManager).isInEmergencyCall();
+        mSatelliteControllerUT.requestSatelliteEnabled(SUB_ID, true, false, false,
+                mIIntegerConsumer);
+        mSatelliteControllerUT.setSatelliteSessionController(mMockSatelliteSessionController);
+        processAllMessages();
+        assertTrue(waitForIIntegerConsumerResult(1));
+        assertEquals(SATELLITE_RESULT_EMERGENCY_CALL_IN_PROGRESS,
+                (long) mIIntegerConsumerResults.get(0));
+        doReturn(false).when(mTelecomManager).isInEmergencyCall();
+
         // Successfully enable satellite
         mIIntegerConsumerResults.clear();
         mSatelliteControllerUT.setSettingsKeyForSatelliteModeCalled = false;
@@ -1077,13 +1093,13 @@ public class SatelliteControllerTest extends TelephonyTest {
         assertTrue(waitForIIntegerConsumerResult(1));
         assertEquals(SATELLITE_RESULT_INVALID_MODEM_STATE, (long) mIIntegerConsumerResults.get(0));
 
-        verify(mMockSessionMetricsStats, times(17)).setInitializationResult(anyInt());
-        verify(mMockSessionMetricsStats, times(17)).setSatelliteTechnology(anyInt());
+        verify(mMockSessionMetricsStats, times(16)).setInitializationResult(anyInt());
+        verify(mMockSessionMetricsStats, times(16)).setSatelliteTechnology(anyInt());
         verify(mMockSessionMetricsStats, times(3)).setInitializationProcessingTime(anyLong());
         verify(mMockSessionMetricsStats, times(2)).setTerminationResult(anyInt());
         verify(mMockSessionMetricsStats, times(2)).setTerminationProcessingTime(anyLong());
         verify(mMockSessionMetricsStats, times(2)).setSessionDurationSec(anyInt());
-        verify(mMockSessionMetricsStats, times(17)).reportSessionMetrics();
+        verify(mMockSessionMetricsStats, times(16)).reportSessionMetrics();
 
         /**
          * Make areAllRadiosDisabled return false and move mWaitingForRadioDisabled to true, which

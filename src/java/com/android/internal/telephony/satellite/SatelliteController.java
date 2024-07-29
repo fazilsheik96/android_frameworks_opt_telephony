@@ -92,6 +92,7 @@ import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.provider.Telephony;
+import android.telecom.TelecomManager;
 import android.telephony.AccessNetworkConstants;
 import android.telephony.CarrierConfigManager;
 import android.telephony.DropBoxManagerLoggerBackend;
@@ -254,6 +255,7 @@ public class SatelliteController extends Handler {
     @NonNull private CarrierRoamingSatelliteControllerStats mCarrierRoamingSatelliteControllerStats;
     @NonNull private final SubscriptionManagerService mSubscriptionManagerService;
     @NonNull private final TelephonyCountryDetector mCountryDetector;
+    @NonNull private final TelecomManager mTelecomManager;
     private final CommandsInterface mCi;
     private ContentResolver mContentResolver;
     private final DeviceStateMonitor mDSM;
@@ -561,6 +563,7 @@ public class SatelliteController extends Handler {
         mCountryDetector = TelephonyCountryDetector.getInstance(context, mFeatureFlags);
         mCountryDetector.registerForWifiConnectivityStateChanged(this,
                 EVENT_WIFI_CONNECTIVITY_STATE_CHANGED, null);
+        mTelecomManager = mContext.getSystemService(TelecomManager.class);
 
         // Create the PointingUIController singleton,
         // which is used to manage interactions with PointingUI app.
@@ -1707,6 +1710,13 @@ public class SatelliteController extends Handler {
                             SatelliteManager.SATELLITE_RESULT_INVALID_MODEM_STATE, result);
                     return;
                 }
+            }
+
+            if (mTelecomManager.isInEmergencyCall()) {
+                plogd("requestSatelliteEnabled: reject as emergency call is ongoing.");
+                sendErrorAndReportSessionMetrics(
+                        SatelliteManager.SATELLITE_RESULT_EMERGENCY_CALL_IN_PROGRESS, result);
+                return;
             }
         } else {
             /* if disable satellite, always assume demo is also disabled */
