@@ -14,6 +14,11 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center, Inc. are provided under the following license:
+ * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 package com.android.internal.telephony.data;
 
 import android.annotation.NonNull;
@@ -43,10 +48,10 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Telephony network factory is responsible for dispatching network requests from the connectivity
+ * Satellite network factory is responsible for dispatching network requests from the connectivity
  * service to the data network controller.
  */
-public class TelephonyNetworkFactory extends NetworkFactory {
+public class SatelliteNetworkFactory extends NetworkFactory {
     protected String LOG_TAG;
     protected static final boolean DBG = true;
 
@@ -91,9 +96,9 @@ public class TelephonyNetworkFactory extends NetworkFactory {
      * @param phone The phone instance
      * @param featureFlags The feature flags
      */
-    public TelephonyNetworkFactory(@NonNull Looper looper, @NonNull Phone phone, PhoneSwitcher phoneSwitcher,
-            @NonNull FeatureFlags featureFlags) {
-        super(looper, phone.getContext(), "TelephonyNetworkFactory[" + phone.getPhoneId()
+    public SatelliteNetworkFactory(@NonNull Looper looper, @NonNull Phone phone,
+            PhoneSwitcher phoneSwitcher, @NonNull FeatureFlags featureFlags) {
+        super(looper, phone.getContext(), "SatelliteNetworkFactory[" + phone.getPhoneId()
                 + "]", null);
         mPhone = phone;
         mFlags = featureFlags;
@@ -102,10 +107,9 @@ public class TelephonyNetworkFactory extends NetworkFactory {
         mAccessNetworksManager = mPhone.getAccessNetworksManager();
 
         setCapabilityFilter(makeNetworkFilterByPhoneId(mPhone.getPhoneId()));
-        setScoreFilter(TELEPHONY_NETWORK_SCORE);
 
         mPhoneSwitcher = phoneSwitcher;
-        LOG_TAG = "TelephonyNetworkFactory[" + mPhone.getPhoneId() + "]";
+        LOG_TAG = "SatelliteNetworkFactory[" + mPhone.getPhoneId() + "]";
 
         mPhoneSwitcher.registerForActivePhoneSwitch(mInternalHandler, EVENT_ACTIVE_PHONE_SWITCH,
                 null);
@@ -138,7 +142,7 @@ public class TelephonyNetworkFactory extends NetworkFactory {
     @VisibleForTesting
     public NetworkCapabilities makeNetworkFilter(int subscriptionId) {
         final NetworkCapabilities.Builder builder = new NetworkCapabilities.Builder()
-                .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
+                .addTransportType(NetworkCapabilities.TRANSPORT_SATELLITE)
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_MMS)
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_SUPL)
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_DUN)
@@ -328,7 +332,7 @@ public class TelephonyNetworkFactory extends NetworkFactory {
     }
 
     /**
-     * Dump the state of telephony network factory
+     * Dump the state of satellite network factory
      *
      * @param fd File descriptor
      * @param writer Print writer
@@ -336,7 +340,7 @@ public class TelephonyNetworkFactory extends NetworkFactory {
      */
     public void dump(FileDescriptor fd, PrintWriter writer, String[] args) {
         final IndentingPrintWriter pw = new IndentingPrintWriter(writer, "  ");
-        pw.println("TelephonyNetworkFactory-" + mPhone.getPhoneId());
+        pw.println("SatelliteNetworkFactory-" + mPhone.getPhoneId());
         pw.increaseIndent();
         pw.println("Network Requests:");
         pw.increaseIndent();
