@@ -3912,6 +3912,13 @@ public class SatelliteController extends Handler {
                 updateSatelliteEnabledState(
                         mSatelliteEnabledRequest.enableSatellite,
                         "EVENT_SET_SATELLITE_ENABLED_DONE");
+                if (mSatelliteEnabledRequest.enableSatellite
+                        && !mSatelliteEnabledRequest.isEmergency) {
+                    plogd("Starting pointingUI needFullscreenPointingUI=" + true
+                            + "mIsDemoModeEnabled=" + mIsDemoModeEnabled + ", isEmergency="
+                            + mSatelliteEnabledRequest.isEmergency);
+                    mPointingAppController.startPointingUI(true, mIsDemoModeEnabled, false);
+                }
                 mSatelliteEnabledRequest = null;
                 mWaitingForRadioDisabled = false;
             }
