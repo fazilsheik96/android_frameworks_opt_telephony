@@ -97,7 +97,7 @@ public class EuiccCardTest extends TelephonyTest {
                 0 /* phoneId */, new Object(), IccSlotStatus.MultipleEnabledProfilesMode.NONE) {
 
                 @Override
-                protected void loadEidAndNotifyRegistrants() {}
+                protected void loadEidAndNotifyRegistrants(int phoneId) {}
             };
         mHandler = new Handler(Looper.myLooper());
         processAllMessages();
