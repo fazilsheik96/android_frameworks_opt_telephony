@@ -5340,7 +5340,8 @@ public class SatelliteController extends Handler {
         return mDemoPointingNotAlignedDurationMillis;
     }
 
-    private boolean getWwanIsInService(ServiceState serviceState) {
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
+    public boolean getWwanIsInService(@NonNull ServiceState serviceState) {
         List<NetworkRegistrationInfo> nriList = serviceState
                 .getNetworkRegistrationInfoListForTransportType(
                         AccessNetworkConstants.TRANSPORT_TYPE_WWAN);

@@ -106,6 +106,7 @@ import android.os.OutcomeReceiver;
 import android.os.PersistableBundle;
 import android.os.RemoteException;
 import android.os.ResultReceiver;
+import android.telephony.AccessNetworkConstants;
 import android.telephony.CarrierConfigManager;
 import android.telephony.CellSignalStrength;
 import android.telephony.NetworkRegistrationInfo;

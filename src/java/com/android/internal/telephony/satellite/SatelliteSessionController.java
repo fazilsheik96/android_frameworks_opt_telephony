@@ -61,7 +61,6 @@ import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.util.State;
 import com.android.internal.util.StateMachine;
-import com.android.telephony.Rlog;
 
 import java.util.ArrayList;
 import java.util.List;
