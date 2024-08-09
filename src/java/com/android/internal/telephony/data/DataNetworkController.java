@@ -1625,6 +1625,22 @@ public class DataNetworkController extends Handler {
         return evaluation.getDataDisallowedReasons();
     }
 
+    private boolean isHalVersionLessThan_1_6() {
+        return mPhone.getHalVersion()
+                .less(com.android.internal.telephony.RIL.RADIO_HAL_VERSION_1_6);
+    }
+
+    /**
+     * @return {@code true} if this network request is specific to not have APN configurable,
+     * generally representing a prioritize bandwidth or latency slicing network request.
+     */
+    private boolean isNetworkSlicingNonApnConfigurable(TelephonyNetworkRequest networkRequest) {
+        return networkRequest.hasAttribute(
+                TelephonyNetworkRequest.CAPABILITY_ATTRIBUTE_TRAFFIC_DESCRIPTOR_OS_APP_ID)
+                && !networkRequest.hasAttribute(
+                TelephonyNetworkRequest.CAPABILITY_ATTRIBUTE_APN_SETTING);
+    }
+
     /**
      * Evaluate a network request. The goal is to find a suitable {@link DataProfile} that can be
      * used to setup the data network.
@@ -1839,6 +1855,11 @@ public class DataNetworkController extends Handler {
             evaluation.addDataDisallowedReason(DataDisallowedReason.RETRY_SCHEDULED);
         } else if (mDataRetryManager.isDataProfileThrottled(dataProfile, transport)) {
             evaluation.addDataDisallowedReason(DataDisallowedReason.DATA_THROTTLED);
+        }
+
+        if(isHalVersionLessThan_1_6() && isNetworkSlicingNonApnConfigurable(networkRequest)) {
+            evaluation.addDataDisallowedReason(DataDisallowedReason.DATA_THROTTLED);
+            log("Particular slicing network request is throttled under lower 1.6 HAL.");
         }
 
         if (!evaluation.containsDisallowedReasons()) {
