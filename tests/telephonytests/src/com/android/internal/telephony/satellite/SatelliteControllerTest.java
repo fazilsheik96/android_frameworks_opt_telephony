@@ -1573,6 +1573,12 @@ public class SatelliteControllerTest extends TelephonyTest {
                                     + "semaphore, ex=" + ex);
                         }
                     }
+
+                    @Override
+                    public void onSatelliteSubscriptionProvisionStateChanged(
+                            List<SatelliteSubscriberProvisionStatus> status) {
+                        logd("onSatelliteSubscriptionProvisionStateChanged: " + status);
+                    }
                 };
         int errorCode = mSatelliteControllerUT.registerForSatelliteProvisionStateChanged(
                 SUB_ID, callback);
