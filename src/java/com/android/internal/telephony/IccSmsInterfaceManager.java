@@ -408,15 +408,15 @@ public class IccSmsInterfaceManager {
      * A permissions check before passing to {@link IccSmsInterfaceManager#sendDataInternal}.
      * This method checks if the calling package or itself has the permission to send the data sms.
      */
-    public void sendDataWithSelfPermissions(String callingPackage, String callingAttributionTag,
-            String destAddr, String scAddr, int destPort, byte[] data, PendingIntent sentIntent,
-            PendingIntent deliveryIntent, boolean isForVvm) {
+    public void sendDataWithSelfPermissions(String callingPackage, int callingUser,
+            String callingAttributionTag, String destAddr, String scAddr, int destPort, byte[] data,
+            PendingIntent sentIntent, PendingIntent deliveryIntent, boolean isForVvm) {
         if (!mSmsPermissions.checkCallingOrSelfCanSendSms(callingPackage, callingAttributionTag,
                 "Sending SMS message")) {
             returnUnspecifiedFailure(sentIntent);
             return;
         }
-        sendDataInternal(callingPackage, destAddr, scAddr, destPort, data, sentIntent,
+        sendDataInternal(callingPackage, callingUser, destAddr, scAddr, destPort, data, sentIntent,
                 deliveryIntent, isForVvm);
     }
 
@@ -426,9 +426,9 @@ public class IccSmsInterfaceManager {
      */
     @Deprecated
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
-    public void sendData(String callingPackage, String destAddr, String scAddr, int destPort,
-            byte[] data, PendingIntent sentIntent, PendingIntent deliveryIntent) {
-        sendData(callingPackage, null, destAddr, scAddr, destPort, data,
+    public void sendData(String callingPackage, int callingUser, String destAddr, String scAddr,
+            int destPort, byte[] data, PendingIntent sentIntent, PendingIntent deliveryIntent) {
+        sendData(callingPackage, callingUser, null, destAddr, scAddr, destPort, data,
                 sentIntent, deliveryIntent);
     }
 
@@ -436,7 +436,7 @@ public class IccSmsInterfaceManager {
      * A permissions check before passing to {@link IccSmsInterfaceManager#sendDataInternal}.
      * This method checks only if the calling package has the permission to send the data sms.
      */
-    public void sendData(String callingPackage, String callingAttributionTag,
+    public void sendData(String callingPackage, int callingUser, String callingAttributionTag,
             String destAddr, String scAddr, int destPort, byte[] data, PendingIntent sentIntent,
             PendingIntent deliveryIntent) {
         if (!mSmsPermissions.checkCallingCanSendSms(callingPackage, callingAttributionTag,
@@ -444,7 +444,7 @@ public class IccSmsInterfaceManager {
             returnUnspecifiedFailure(sentIntent);
             return;
         }
-        sendDataInternal(callingPackage, destAddr, scAddr, destPort, data, sentIntent,
+        sendDataInternal(callingPackage, callingUser, destAddr, scAddr, destPort, data, sentIntent,
                 deliveryIntent, false /* isForVvm */);
     }
 
@@ -475,17 +475,17 @@ public class IccSmsInterfaceManager {
      *  raw pdu of the status report is in the extended data ("pdu").
      */
 
-    private void sendDataInternal(String callingPackage, String destAddr, String scAddr,
-            int destPort, byte[] data, PendingIntent sentIntent, PendingIntent deliveryIntent,
-            boolean isForVvm) {
+    private void sendDataInternal(String callingPackage, int callinUser, String destAddr,
+            String scAddr, int destPort, byte[] data, PendingIntent sentIntent,
+            PendingIntent deliveryIntent, boolean isForVvm) {
         if (Rlog.isLoggable("SMS", Log.VERBOSE)) {
             log("sendData: destAddr=" + destAddr + " scAddr=" + scAddr + " destPort="
                     + destPort + " data='" + HexDump.toHexString(data)  + "' sentIntent="
                     + sentIntent + " deliveryIntent=" + deliveryIntent + " isForVVM=" + isForVvm);
         }
         destAddr = filterDestAddress(destAddr);
-        mDispatchersController.sendData(callingPackage, destAddr, scAddr, destPort, data,
-                sentIntent, deliveryIntent, isForVvm);
+        mDispatchersController.sendData(callingPackage, callinUser, destAddr, scAddr,
+                destPort, data, sentIntent, deliveryIntent, isForVvm);
     }
 
     /**
@@ -493,12 +493,13 @@ public class IccSmsInterfaceManager {
      * This method checks only if the calling package has the permission to send the sms.
      * Note: SEND_SMS permission should be checked by the caller of this method
      */
-    public void sendText(String callingPackage, String destAddr, String scAddr,
+    public void sendText(String callingPackage, int callingUser, String destAddr, String scAddr,
             String text, PendingIntent sentIntent, PendingIntent deliveryIntent,
             boolean persistMessageForNonDefaultSmsApp, long messageId, boolean skipShortCodeCheck) {
-        sendTextInternal(callingPackage, destAddr, scAddr, text, sentIntent, deliveryIntent,
-                persistMessageForNonDefaultSmsApp, SMS_MESSAGE_PRIORITY_NOT_SPECIFIED,
-                false /* expectMore */, SMS_MESSAGE_PERIOD_NOT_SPECIFIED, false /* isForVvm */,
+        sendTextInternal(callingPackage, callingUser, destAddr, scAddr, text, sentIntent,
+                deliveryIntent, persistMessageForNonDefaultSmsApp,
+                SMS_MESSAGE_PRIORITY_NOT_SPECIFIED, false /* expectMore */,
+                SMS_MESSAGE_PERIOD_NOT_SPECIFIED, false /* isForVvm */,
                 messageId, skipShortCodeCheck);
     }
 
@@ -506,27 +507,29 @@ public class IccSmsInterfaceManager {
      * A permissions check before passing to {@link IccSmsInterfaceManager#sendTextInternal}.
      * This method checks if the calling package or itself has the permission to send the sms.
      */
-    public void sendTextWithSelfPermissions(String callingPackage, String callingAttributeTag,
-            String destAddr, String scAddr, String text, PendingIntent sentIntent,
-            PendingIntent deliveryIntent, boolean persistMessage, boolean isForVvm) {
+    public void sendTextWithSelfPermissions(String callingPackage, int callingUser,
+            String callingAttributeTag, String destAddr, String scAddr, String text,
+            PendingIntent sentIntent, PendingIntent deliveryIntent, boolean persistMessage,
+            boolean isForVvm) {
         if (!mSmsPermissions.checkCallingOrSelfCanSendSms(callingPackage, callingAttributeTag,
                 "Sending SMS message")) {
             returnUnspecifiedFailure(sentIntent);
             return;
         }
-        sendTextInternal(callingPackage, destAddr, scAddr, text, sentIntent, deliveryIntent,
-                persistMessage, SMS_MESSAGE_PRIORITY_NOT_SPECIFIED, false /* expectMore */,
-                SMS_MESSAGE_PERIOD_NOT_SPECIFIED, isForVvm, 0L /* messageId */);
+        sendTextInternal(callingPackage, callingUser, destAddr, scAddr, text, sentIntent,
+                deliveryIntent, persistMessage, SMS_MESSAGE_PRIORITY_NOT_SPECIFIED,
+                false /* expectMore */, SMS_MESSAGE_PERIOD_NOT_SPECIFIED,
+                isForVvm, 0L /* messageId */);
     }
 
 
-    private void sendTextInternal(String callingPackage, String destAddr, String scAddr,
-            String text, PendingIntent sentIntent, PendingIntent deliveryIntent,
+    private void sendTextInternal(String callingPackage, int callingUser, String destAddr,
+            String scAddr, String text, PendingIntent sentIntent, PendingIntent deliveryIntent,
             boolean persistMessageForNonDefaultSmsApp, int priority, boolean expectMore,
             int validityPeriod, boolean isForVvm, long messageId) {
-        sendTextInternal(callingPackage, destAddr, scAddr, text, sentIntent, deliveryIntent,
-                persistMessageForNonDefaultSmsApp, priority, expectMore, validityPeriod, isForVvm,
-                messageId, false);
+        sendTextInternal(callingPackage, callingUser, destAddr, scAddr, text, sentIntent,
+                deliveryIntent, persistMessageForNonDefaultSmsApp, priority, expectMore,
+                validityPeriod, isForVvm, messageId, false);
     }
 
     /**
@@ -578,8 +581,8 @@ public class IccSmsInterfaceManager {
      * @param skipShortCodeCheck Skip check for short code type destination address.
      */
 
-    private void sendTextInternal(String callingPackage, String destAddr, String scAddr,
-            String text, PendingIntent sentIntent, PendingIntent deliveryIntent,
+    private void sendTextInternal(String callingPackage, int callingUser, String destAddr,
+            String scAddr, String text, PendingIntent sentIntent, PendingIntent deliveryIntent,
             boolean persistMessageForNonDefaultSmsApp, int priority, boolean expectMore,
             int validityPeriod, boolean isForVvm, long messageId, boolean skipShortCodeCheck) {
         if (Rlog.isLoggable("SMS", Log.VERBOSE)) {
@@ -592,7 +595,7 @@ public class IccSmsInterfaceManager {
         notifyIfOutgoingEmergencySms(destAddr);
         destAddr = filterDestAddress(destAddr);
         mDispatchersController.sendText(destAddr, scAddr, text, sentIntent, deliveryIntent,
-                null/*messageUri*/, callingPackage, persistMessageForNonDefaultSmsApp,
+                null/*messageUri*/, callingPackage, callingUser, persistMessageForNonDefaultSmsApp,
                 priority, expectMore, validityPeriod, isForVvm, messageId, skipShortCodeCheck);
     }
 
@@ -642,18 +645,19 @@ public class IccSmsInterfaceManager {
      *  Any Other values including negative considered as Invalid Validity Period of the message.
      */
 
-    public void sendTextWithOptions(String callingPackage, String callingAttributionTag,
-            String destAddr, String scAddr, String text, PendingIntent sentIntent,
-            PendingIntent deliveryIntent, boolean persistMessageForNonDefaultSmsApp, int priority,
+    public void sendTextWithOptions(String callingPackage, int callingUser,
+            String callingAttributionTag, String destAddr, String scAddr, String text,
+            PendingIntent sentIntent, PendingIntent deliveryIntent,
+            boolean persistMessageForNonDefaultSmsApp, int priority,
             boolean expectMore, int validityPeriod) {
         if (!mSmsPermissions.checkCallingCanSendText(persistMessageForNonDefaultSmsApp,
                     callingPackage, callingAttributionTag, "Sending SMS message")) {
             returnUnspecifiedFailure(sentIntent);
             return;
         }
-        sendTextInternal(callingPackage, destAddr, scAddr, text, sentIntent, deliveryIntent,
-                persistMessageForNonDefaultSmsApp, priority, expectMore, validityPeriod,
-                false /* isForVvm */, 0L /* messageId */);
+        sendTextInternal(callingPackage, callingUser, destAddr, scAddr, text, sentIntent,
+                deliveryIntent, persistMessageForNonDefaultSmsApp, priority, expectMore,
+                validityPeriod, false /* isForVvm */, 0L /* messageId */);
     }
 
     /**
@@ -719,12 +723,12 @@ public class IccSmsInterfaceManager {
      *                 Used for logging and diagnostics purposes. The id may be 0.
      */
 
-    public void sendMultipartText(String callingPackage, String callingAttributionTag,
-            String destAddr, String scAddr, List<String> parts, List<PendingIntent> sentIntents,
-            List<PendingIntent> deliveryIntents, boolean persistMessageForNonDefaultSmsApp,
-            long messageId) {
-        sendMultipartTextWithOptions(callingPackage, callingAttributionTag, destAddr, scAddr, parts,
-                sentIntents, deliveryIntents, persistMessageForNonDefaultSmsApp,
+    public void sendMultipartText(String callingPackage, int callingUser,
+            String callingAttributionTag, String destAddr, String scAddr, List<String> parts,
+            List<PendingIntent> sentIntents, List<PendingIntent> deliveryIntents,
+            boolean persistMessageForNonDefaultSmsApp, long messageId) {
+        sendMultipartTextWithOptions(callingPackage, callingUser, callingAttributionTag, destAddr,
+                scAddr, parts, sentIntents, deliveryIntents, persistMessageForNonDefaultSmsApp,
                 SMS_MESSAGE_PRIORITY_NOT_SPECIFIED, false /* expectMore */,
                 SMS_MESSAGE_PERIOD_NOT_SPECIFIED,
                 messageId);
@@ -779,10 +783,11 @@ public class IccSmsInterfaceManager {
      *                 Used for logging and diagnostics purposes. The id may be 0.
      */
 
-    public void sendMultipartTextWithOptions(String callingPackage, String callingAttributionTag,
-            String destAddr, String scAddr, List<String> parts, List<PendingIntent> sentIntents,
-            List<PendingIntent> deliveryIntents, boolean persistMessageForNonDefaultSmsApp,
-            int priority, boolean expectMore, int validityPeriod, long messageId) {
+    public void sendMultipartTextWithOptions(String callingPackage, int callingUser,
+            String callingAttributionTag, String destAddr, String scAddr, List<String> parts,
+            List<PendingIntent> sentIntents, List<PendingIntent> deliveryIntents,
+            boolean persistMessageForNonDefaultSmsApp, int priority, boolean expectMore,
+            int validityPeriod, long messageId) {
         if (!mSmsPermissions.checkCallingCanSendText(persistMessageForNonDefaultSmsApp,
                 callingPackage, callingAttributionTag, "Sending SMS message")) {
             returnUnspecifiedFailure(sentIntents);
@@ -822,7 +827,7 @@ public class IccSmsInterfaceManager {
                 }
 
                 mDispatchersController.sendText(destAddr, scAddr, singlePart, singleSentIntent,
-                        singleDeliveryIntent, null /* messageUri */, callingPackage,
+                        singleDeliveryIntent, null /* messageUri */, callingPackage, callingUser,
                         persistMessageForNonDefaultSmsApp, priority, expectMore, validityPeriod,
                         false /* isForVvm */, messageId);
             }
@@ -830,12 +835,12 @@ public class IccSmsInterfaceManager {
         }
 
         mDispatchersController.sendMultipartText(destAddr,
-                                      scAddr,
-                                      (ArrayList<String>) parts,
-                                      (ArrayList<PendingIntent>) sentIntents,
-                                      (ArrayList<PendingIntent>) deliveryIntents,
-                                      null, callingPackage, persistMessageForNonDefaultSmsApp,
-                                          priority, expectMore, validityPeriod, messageId);
+                scAddr,
+                (ArrayList<String>) parts,
+                (ArrayList<PendingIntent>) sentIntents,
+                (ArrayList<PendingIntent>) deliveryIntents,
+                null, callingPackage, callingUser, persistMessageForNonDefaultSmsApp,
+                priority, expectMore, validityPeriod, messageId);
 
     }
 
@@ -1293,12 +1298,13 @@ public class IccSmsInterfaceManager {
      */
     @Deprecated
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
-    public void sendStoredText(String callingPkg, Uri messageUri, String scAddress,
+    public void sendStoredText(String callingPkg, int callingUser, Uri messageUri, String scAddress,
             PendingIntent sentIntent, PendingIntent deliveryIntent) {
-        sendStoredText(callingPkg, null, messageUri, scAddress, sentIntent, deliveryIntent);
+        sendStoredText(callingPkg, callingUser, null, messageUri,
+                scAddress, sentIntent, deliveryIntent);
     }
 
-    public void sendStoredText(String callingPkg, String callingAttributionTag,
+    public void sendStoredText(String callingPkg, int callingUser, String callingAttributionTag,
             Uri messageUri, String scAddress, PendingIntent sentIntent,
             PendingIntent deliveryIntent) {
         if (!mSmsPermissions.checkCallingCanSendSms(callingPkg, callingAttributionTag,
@@ -1325,7 +1331,7 @@ public class IccSmsInterfaceManager {
         notifyIfOutgoingEmergencySms(textAndAddress[1]);
         textAndAddress[1] = filterDestAddress(textAndAddress[1]);
         mDispatchersController.sendText(textAndAddress[1], scAddress, textAndAddress[0],
-                sentIntent, deliveryIntent, messageUri, callingPkg,
+                sentIntent, deliveryIntent, messageUri, callingPkg, callingUser,
                 true /* persistMessageForNonDefaultSmsApp */, SMS_MESSAGE_PRIORITY_NOT_SPECIFIED,
                 false /* expectMore */, SMS_MESSAGE_PERIOD_NOT_SPECIFIED, false /* isForVvm */,
                 0L /* messageId */);
@@ -1337,13 +1343,14 @@ public class IccSmsInterfaceManager {
      */
     @Deprecated
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
-    public void sendStoredMultipartText(String callingPkg, Uri messageUri, String scAddress,
-            List<PendingIntent> sentIntents, List<PendingIntent> deliveryIntents) {
-        sendStoredMultipartText(callingPkg, null, messageUri, scAddress, sentIntents,
-                deliveryIntents);
+    public void sendStoredMultipartText(String callingPkg, int callingUser,
+            Uri messageUri, String scAddress, List<PendingIntent> sentIntents,
+            List<PendingIntent> deliveryIntents) {
+        sendStoredMultipartText(callingPkg, callingUser, null,
+                messageUri, scAddress, sentIntents, deliveryIntents);
     }
 
-    public void sendStoredMultipartText(String callingPkg,
+    public void sendStoredMultipartText(String callingPkg, int callingUser,
             String callingAttributionTag, Uri messageUri, String scAddress,
             List<PendingIntent> sentIntents, List<PendingIntent> deliveryIntents) {
         if (!mSmsPermissions.checkCallingCanSendSms(callingPkg, callingAttributionTag,
@@ -1396,7 +1403,7 @@ public class IccSmsInterfaceManager {
 
                 mDispatchersController.sendText(textAndAddress[1], scAddress, singlePart,
                         singleSentIntent, singleDeliveryIntent, messageUri, callingPkg,
-                        true  /* persistMessageForNonDefaultSmsApp */,
+                        callingUser, true  /* persistMessageForNonDefaultSmsApp */,
                         SMS_MESSAGE_PRIORITY_NOT_SPECIFIED,
                         false /* expectMore */, SMS_MESSAGE_PERIOD_NOT_SPECIFIED,
                         false /* isForVvm */, 0L /* messageId */);
@@ -1411,7 +1418,7 @@ public class IccSmsInterfaceManager {
                 (ArrayList<PendingIntent>) sentIntents,
                 (ArrayList<PendingIntent>) deliveryIntents,
                 messageUri,
-                callingPkg,
+                callingPkg, callingUser,
                 true  /* persistMessageForNonDefaultSmsApp */,
                 SMS_MESSAGE_PRIORITY_NOT_SPECIFIED,
                 false /* expectMore */,
