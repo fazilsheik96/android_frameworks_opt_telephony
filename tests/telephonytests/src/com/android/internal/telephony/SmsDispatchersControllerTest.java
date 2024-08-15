@@ -98,20 +98,21 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
             return getDomainSelectionConnectionHolder(emergency);
         }
 
-        public void testSendData(String callingPackage, String destAddr, String scAddr,
-                int destPort, byte[] data, PendingIntent sentIntent, PendingIntent deliveryIntent,
-                boolean isForVvm) {
-            sendData(callingPackage, destAddr, scAddr,
+        public void testSendData(String callingPackage, int callingUser,
+                String destAddr, String scAddr, int destPort, byte[] data, PendingIntent sentIntent,
+                PendingIntent deliveryIntent, boolean isForVvm) {
+            sendData(callingPackage, callingUser, destAddr, scAddr,
                     destPort, data, sentIntent, deliveryIntent, isForVvm);
         }
 
         public void testSendMultipartText(String destAddr, String scAddr,
                 ArrayList<String> parts, ArrayList<PendingIntent> sentIntents,
                 ArrayList<PendingIntent> deliveryIntents, Uri messageUri, String callingPkg,
-                boolean persistMessage, int priority, boolean expectMore, int validityPeriod,
-                long messageId) {
+                int callingUser, boolean persistMessage, int priority, boolean expectMore,
+                int validityPeriod, long messageId) {
             sendMultipartText(destAddr, scAddr, parts, sentIntents, deliveryIntents, messageUri,
-                    callingPkg, persistMessage, priority, expectMore, validityPeriod, messageId);
+                    callingPkg, callingUser, persistMessage, priority, expectMore,
+                    validityPeriod, messageId);
         }
 
         public void testNotifySmsSentToEmergencyStateTracker(String destAddr, long messageId,
@@ -202,6 +203,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
     private boolean mInjectionCallbackTriggered = false;
     private CompletableFuture<Integer> mDscFuture;
     private DatagramDispatcher mMockDatagramDispatcher;
+    private int mCallingUserId;
 
     @Before
     public void setUp() throws Exception {
@@ -214,6 +216,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
         setupMockPackagePermissionChecks();
         mSmsDispatchersController = new TestSmsDispatchersController(mPhone, mSmsStorageMonitor,
             mSmsUsageMonitor, mTestableLooper.getLooper(), mFeatureFlags);
+        mCallingUserId = mContext.getUserId();
         processAllMessages();
     }
 
@@ -273,7 +276,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
     public void testSendImsGmsTest() throws Exception {
         switchImsSmsFormat(PhoneConstants.PHONE_TYPE_GSM);
         mSmsDispatchersController.sendText("111"/* desAddr*/, "222" /*scAddr*/, TAG,
-                null, null, null, null, false, -1, false, -1, false, 0L);
+                null, null, null, null, mCallingUserId, false, -1, false, -1, false, 0L);
         verify(mSimulatedCommandsVerifier).sendImsGsmSms(eq("038122F2"),
                 eq("0100038111F100001CD3F69C989EC3C3F431BA2C9F0FDF6EBAFCCD6697E5D4F29C0E"), eq(0), eq(0),
                 any(Message.class));
@@ -283,7 +286,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
     public void testSendImsGmsTestWithOutDesAddr() throws Exception {
         switchImsSmsFormat(PhoneConstants.PHONE_TYPE_GSM);
         mSmsDispatchersController.sendText(null, "222" /*scAddr*/, TAG,
-                null, null, null, null, false, -1, false, -1, false, 0L);
+                null, null, null, null, mCallingUserId, false, -1, false, -1, false, 0L);
         verify(mSimulatedCommandsVerifier, times(0)).sendImsGsmSms(anyString(), anyString(),
                 anyInt(), anyInt(), any(Message.class));
     }
@@ -292,7 +295,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
     public void testSendImsCdmaTest() throws Exception {
         switchImsSmsFormat(PhoneConstants.PHONE_TYPE_CDMA);
         mSmsDispatchersController.sendText("111"/* desAddr*/, "222" /*scAddr*/, TAG,
-                null, null, null, null, false, -1, false, -1, false, 0L);
+                null, null, null, null, mCallingUserId, false, -1, false, -1, false, 0L);
         verify(mSimulatedCommandsVerifier).sendImsCdmaSms((byte[])any(), eq(0), eq(0),
                 any(Message.class));
     }
@@ -367,7 +370,8 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
 
         mSmsDispatchersController.sendText("111", null /*scAddr*/, TAG,
                 null, null, null, "com.android.messaging",
-                false, -1, false, -1, false, 0L);
+                mContext.getUserId(), false, -1, false,
+                -1, false, 0L);
         byte[] smscbyte = PhoneNumberUtils.networkPortionToCalledPartyBCDWithLength(
                 "222");
         String smsc = IccUtils.bytesToHexString(smscbyte);
@@ -476,7 +480,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
         setUpEmergencyStateTracker(DisconnectCause.NOT_DISCONNECTED);
 
         mSmsDispatchersController.sendText("911", "2222", "text", mSentIntent, null, null,
-                "test-app", false, 0, false, 10, false, 1L, false);
+                "test-app", mCallingUserId, false, 0, false, 10, false, 1L, false);
         processAllMessages();
 
         SmsDispatchersController.DomainSelectionConnectionHolder holder =
@@ -508,7 +512,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
         setUpEmergencyStateTracker(DisconnectCause.OUT_OF_SERVICE);
 
         mSmsDispatchersController.sendText("911", "2222", "text", mSentIntent, null, null,
-                "test-app", false, 0, false, 10, false, 1L, false);
+                "test-app", mCallingUserId, false, 0, false, 10, false, 1L, false);
         processAllMessages();
 
         // Verify the domain selection requested regardless of the result of EmergencyStateTracker.
@@ -526,7 +530,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
         ArrayList<PendingIntent> sentIntents = new ArrayList<>();
         ArrayList<PendingIntent> deliveryIntents = new ArrayList<>();
         mSmsDispatchersController.testSendMultipartText("911", "2222", parts, sentIntents,
-                deliveryIntents, null, "test-app", false, 0, false, 10, 1L);
+                deliveryIntents, null, "test-app", mCallingUserId, false, 0, false, 10, 1L);
         processAllMessages();
 
         SmsDispatchersController.DomainSelectionConnectionHolder holder =
@@ -718,7 +722,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
         when(mImsSmsDispatcher.isAvailable()).thenReturn(true);
 
         mSmsDispatchersController.sendText("1111", "2222", "text", mSentIntent, null, null,
-                "test-app", false, 0, false, 10, false, 1L, false);
+                "test-app", mCallingUserId, false, 0, false, 10, false, 1L, false);
         processAllMessages();
 
         SmsDispatchersController.DomainSelectionConnectionHolder holder =
@@ -758,7 +762,8 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
         when(mImsSmsDispatcher.isEmergencySmsSupport(anyString())).thenReturn(true);
 
         mSmsDispatchersController.sendText("911", "2222", "text", mSentIntent, null, null,
-                "test-app", false, 0, false, 10, false, 1L, false);
+                "test-app", mCallingUserId, false, 0, false,
+                10, false, 1L, false);
         processAllMessages();
 
         SmsDispatchersController.DomainSelectionConnectionHolder holder =
@@ -794,7 +799,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
         setUpSmsDispatchers();
 
         mSmsDispatchersController.sendText("1111", "2222", "text", mSentIntent, null, null,
-                "test-app", false, 0, false, 10, false, 1L, false);
+                "test-app", mCallingUserId, false, 0, false, 10, false, 1L, false);
         processAllMessages();
 
         SmsDispatchersController.DomainSelectionConnectionHolder holder =
@@ -805,7 +810,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
         assertEquals(1, holder.getPendingRequests().size());
 
         mSmsDispatchersController.sendText("1111", "2222", "text", mSentIntent, null, null,
-                "test-app", false, 0, false, 10, false, 1L, false);
+                "test-app", mCallingUserId, false, 0, false, 10, false, 1L, false);
         processAllMessages();
 
         verify(mSmsDsc).requestDomainSelection(any(), any());
@@ -835,7 +840,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
         when(mImsSmsDispatcher.isAvailable()).thenReturn(true);
 
         mSmsDispatchersController.sendText("1111", "2222", "text", mSentIntent, null, null,
-                "test-app", false, 0, false, 10, false, 1L, false);
+                "test-app", mCallingUserId, false, 0, false, 10, false, 1L, false);
 
         // Expect that the domain selection is not executed and
         // ImsSmsDispatcher handles this text directly.
@@ -851,7 +856,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
         setUpSmsDispatchers();
 
         mSmsDispatchersController.sendText("1111", "2222", "text", mSentIntent, null, null,
-                "test-app", false, 0, false, 10, false, 1L, false);
+                "test-app", mCallingUserId, false, 0, false, 10, false, 1L, false);
         processAllMessages();
 
         SmsDispatchersController.DomainSelectionConnectionHolder holder =
@@ -889,7 +894,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
 
         // Expect that new domain selection connection is created and domain selection is performed.
         mSmsDispatchersController.sendText("1111", "2222", "text", mSentIntent, null, null,
-                "test-app", false, 0, false, 10, false, 1L, false);
+                "test-app", mCallingUserId, false, 0, false, 10, false, 1L, false);
         processAllMessages();
 
         verify(mSmsDsc).finishSelection();
@@ -920,7 +925,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
         setUpEmergencyStateTracker(DisconnectCause.NOT_DISCONNECTED);
 
         mSmsDispatchersController.sendText("911", "2222", "text", mSentIntent, null, null,
-                "test-app", false, 0, false, 10, false, 1L, false);
+                "test-app", mCallingUserId, false, 0, false, 10, false, 1L, false);
         processAllMessages();
 
         SmsDispatchersController.DomainSelectionConnectionHolder holder =
@@ -960,7 +965,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
 
         // Expect that new domain selection connection is created and domain selection is performed.
         mSmsDispatchersController.sendText("911", "2222", "text", mSentIntent, null, null,
-                "test-app", false, 0, false, 10, false, 1L, false);
+                "test-app", mCallingUserId, false, 0, false, 10, false, 1L, false);
         processAllMessages();
 
         verify(mEmergencySmsDsc).finishSelection();
@@ -1007,7 +1012,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
         // Expect that creating a domain selection connection is failed and
         // fallback to the legacy implementation.
         mSmsDispatchersController.sendText("1111", "2222", "text", mSentIntent, null, null,
-                "test-app", false, 0, false, 10, false, 1L, false);
+                "test-app", mCallingUserId, false, 0, false, 10, false, 1L, false);
         processAllMessages();
 
         SmsDispatchersController.DomainSelectionConnectionHolder holder =
@@ -1049,7 +1054,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
         // Expect that creating a domain selection connection is failed and
         // fallback to the legacy implementation.
         mSmsDispatchersController.sendText("911", "2222", "text", mSentIntent, null, null,
-                "test-app", false, 0, false, 10, false, 1L, false);
+                "test-app", mCallingUserId, false, 0, false, 10, false, 1L, false);
         processAllMessages();
 
         SmsDispatchersController.DomainSelectionConnectionHolder holder =
@@ -1084,7 +1089,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
         when(mSatelliteController.shouldSendSmsToDatagramDispatcher(any(Phone.class)))
                 .thenReturn(true);
         mSmsDispatchersController.sendText("1111", "2222", "text", mSentIntent, null, null,
-                "test-app", false, 0, false, 10, false, 1L, false);
+                "test-app", mCallingUserId, false, 0, false, 10, false, 1L, false);
         processAllMessages();
         verify(mMockDatagramDispatcher).sendSms(any());
 
@@ -1093,7 +1098,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
         ArrayList<PendingIntent> sentIntents = new ArrayList<>();
         ArrayList<PendingIntent> deliveryIntents = new ArrayList<>();
         mSmsDispatchersController.testSendMultipartText("1111", "2222", parts, sentIntents,
-                deliveryIntents, null, "test-app", false, 0, false, 10, 1L);
+                deliveryIntents, null, "test-app", mCallingUserId, false, 0, false, 10, 1L);
         processAllMessages();
         verify(mMockDatagramDispatcher).sendSms(any());
     }
@@ -1205,7 +1210,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
 
         byte[] data = new byte[] { 0x01 };
         mSmsDispatchersController.testSendData(
-                "test-app", "1111", "2222", 8080, data, mSentIntent, null, false);
+                "test-app", mCallingUserId, "1111", "2222", 8080, data, mSentIntent, null, false);
         processAllMessages();
 
         SmsDispatchersController.DomainSelectionConnectionHolder holder =
@@ -1241,7 +1246,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
         setUpSmsDispatchers();
 
         mSmsDispatchersController.sendText("1111", "2222", "text", mSentIntent, null, null,
-                "test-app", false, 0, false, 10, false, 1L, false);
+                "test-app", mCallingUserId, false, 0, false, 10, false, 1L, false);
         processAllMessages();
 
         SmsDispatchersController.DomainSelectionConnectionHolder holder =
@@ -1283,7 +1288,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
         ArrayList<PendingIntent> sentIntents = new ArrayList<>();
         ArrayList<PendingIntent> deliveryIntents = new ArrayList<>();
         mSmsDispatchersController.testSendMultipartText("1111", "2222", parts, sentIntents,
-                deliveryIntents, null, "test-app", false, 0, false, 10, 1L);
+                deliveryIntents, null, "test-app", mCallingUserId, false, 0, false, 10, 1L);
         processAllMessages();
 
         SmsDispatchersController.DomainSelectionConnectionHolder holder =
@@ -1385,7 +1390,7 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
     private PendingRequest createPendingRequest() {
         return new PendingRequest(
                 SmsDispatchersController.PendingRequest.TYPE_TEXT, null, "test-app",
-                "1111", "2222", asArrayList(mSentIntent), asArrayList(null),
+                mCallingUserId, "1111", "2222", asArrayList(mSentIntent), asArrayList(null),
                 false, null, 0, asArrayList("text"), null,
                 false, 0, false, 10, 100L, false, false);
     }
