@@ -16,6 +16,8 @@
 
 package com.android.internal.telephony.satellite;
 
+import static android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP;
+import static android.telephony.CarrierConfigManager.KEY_CARRIER_ROAMING_NTN_EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_INT;
 import static android.telephony.ServiceState.STATE_EMERGENCY_ONLY;
 import static android.telephony.ServiceState.STATE_IN_SERVICE;
 import static android.telephony.ServiceState.STATE_OUT_OF_SERVICE;
@@ -29,6 +31,7 @@ import static com.android.internal.telephony.satellite.SatelliteController.INVAL
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.app.ActivityOptions;
 import android.app.PendingIntent;
 import android.content.ComponentName;
 import android.content.Context;
@@ -40,12 +43,11 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.os.OutcomeReceiver;
+import android.os.PersistableBundle;
 import android.os.SystemProperties;
 import android.provider.DeviceConfig;
 import android.telecom.Connection;
-import android.telephony.AccessNetworkConstants;
 import android.telephony.DropBoxManagerLoggerBackend;
-import android.telephony.NetworkRegistrationInfo;
 import android.telephony.PersistentLogger;
 import android.telephony.Rlog;
 import android.telephony.ServiceState;
@@ -68,9 +70,9 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.SmsApplication;
+import com.android.internal.telephony.flags.Flags;
 import com.android.internal.telephony.metrics.SatelliteStats;
 
-import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 
@@ -251,10 +253,11 @@ public class SatelliteSOSMessageRecommender extends Handler {
 
         selectEmergencyCallWaitForConnectionTimeoutDuration();
         if (mEmergencyConnection == null) {
-            handleStateChangedEventForHysteresisTimer();
             registerForInterestedStateChangedEvents();
         }
         mEmergencyConnection = connection;
+        handleStateChangedEventForHysteresisTimer();
+
         synchronized (mLock) {
             mCheckingAccessRestrictionInProgress = false;
             mIsSatelliteAllowedForCurrentLocation = false;
@@ -296,7 +299,8 @@ public class SatelliteSOSMessageRecommender extends Handler {
             updateSatelliteViaCarrierAvailability();
 
             boolean isDialerNotified = false;
-            if (!isCellularAvailable()
+            boolean isCellularAvailable = SatelliteServiceUtils.isCellularAvailable();
+            if (!isCellularAvailable
                     && isSatelliteAllowed()
                     && (isSatelliteViaOemAvailable() || isSatelliteViaCarrierAvailable())
                     && shouldTrackCall(mEmergencyConnection.getState())) {
@@ -308,7 +312,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
 
             }
             plogd("handleTimeoutEvent: isImsRegistered=" + isImsRegistered()
-                    + ", isCellularAvailable=" + isCellularAvailable()
+                    + ", isCellularAvailable=" + isCellularAvailable
                     + ", isSatelliteAllowed=" + isSatelliteAllowed()
                     + ", shouldTrackCall=" + shouldTrackCall(mEmergencyConnection.getState()));
             reportEsosRecommenderDecision(isDialerNotified);
@@ -413,7 +417,6 @@ public class SatelliteSOSMessageRecommender extends Handler {
         for (Phone phone : PhoneFactory.getPhones()) {
             phone.registerForServiceStateChanged(
                     this, EVENT_SERVICE_STATE_CHANGED, null);
-            registerForImsRegistrationStateChanged(phone);
         }
     }
 
@@ -433,7 +436,6 @@ public class SatelliteSOSMessageRecommender extends Handler {
                 SubscriptionManager.DEFAULT_SUBSCRIPTION_ID, mISatelliteProvisionStateCallback);
         for (Phone phone : PhoneFactory.getPhones()) {
             phone.unregisterForServiceStateChanged(this);
-            unregisterForImsRegistrationStateChanged(phone);
         }
     }
 
@@ -447,51 +449,6 @@ public class SatelliteSOSMessageRecommender extends Handler {
         } else {
             ploge("Phone ID=" + phone.getPhoneId() + " was not registered with ImsManager");
         }
-    }
-
-    private boolean isCellularAvailable() {
-        for (Phone phone : PhoneFactory.getPhones()) {
-            ServiceState serviceState = phone.getServiceState();
-            if (serviceState != null) {
-                int state = serviceState.getState();
-                if ((state == STATE_IN_SERVICE || state == STATE_EMERGENCY_ONLY
-                        || serviceState.isEmergencyOnly())
-                        && !isSatellitePlmn(phone.getSubId(), serviceState)) {
-                    logv("isCellularAvailable true");
-                    return true;
-                }
-            }
-        }
-        logv("isCellularAvailable false");
-        return false;
-    }
-
-    private boolean isSatellitePlmn(int subId, @NonNull ServiceState serviceState) {
-        List<String> satellitePlmnList =
-                mSatelliteController.getSatellitePlmnsForCarrier(subId);
-        if (satellitePlmnList.isEmpty()) {
-            logv("isSatellitePlmn: satellitePlmnList is empty");
-            return false;
-        }
-
-        for (NetworkRegistrationInfo nri :
-                serviceState.getNetworkRegistrationInfoListForTransportType(
-                        AccessNetworkConstants.TRANSPORT_TYPE_WWAN)) {
-            String registeredPlmn = nri.getRegisteredPlmn();
-            String mccmnc = nri.getCellIdentity().getMccString()
-                    + nri.getCellIdentity().getMncString();
-            for (String satellitePlmn : satellitePlmnList) {
-                if (TextUtils.equals(satellitePlmn, registeredPlmn)
-                        || TextUtils.equals(satellitePlmn, mccmnc)) {
-                    logv("isSatellitePlmn: return true, satellitePlmn:" + satellitePlmn
-                            + " registeredPlmn:" + registeredPlmn + " mccmnc:" + mccmnc);
-                    return true;
-                }
-            }
-        }
-
-        logv("isSatellitePlmn: return false");
-        return false;
     }
 
     /**
@@ -525,7 +482,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
     }
 
     private synchronized void handleStateChangedEventForHysteresisTimer() {
-        if (!isCellularAvailable()) {
+        if (!SatelliteServiceUtils.isCellularAvailable() && mEmergencyConnection != null) {
             startTimer();
         } else {
             logv("handleStateChangedEventForHysteresisTimer stopTimer");
@@ -701,10 +658,15 @@ public class SatelliteSOSMessageRecommender extends Handler {
             intent = new Intent(Intent.ACTION_SENDTO, uri);
         } else {
             intent = new Intent(action);
+            intent.addFlags(FLAG_ACTIVITY_CLEAR_TOP);
         }
+        Bundle activityOptions = ActivityOptions.makeBasic()
+                .setPendingIntentCreatorBackgroundActivityStartMode(
+                        ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
+                .toBundle();
         intent.setComponent(new ComponentName(packageName, className));
         return PendingIntent.getActivity(mContext, 0, intent,
-                PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE);
+                PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE, activityOptions);
     }
 
     private boolean isEmergencyCallToSatelliteHandoverTypeT911Enforced() {
@@ -743,8 +705,19 @@ public class SatelliteSOSMessageRecommender extends Handler {
         return telephonyManager.isMultiSimEnabled();
     }
 
-    private int getEmergencyCallToSatelliteHandoverType() {
-        if (isSatelliteViaCarrierAvailable()) {
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    public int getEmergencyCallToSatelliteHandoverType() {
+        if (Flags.carrierRoamingNbIotNtn() && isSatelliteViaOemAvailable()
+                && isSatelliteViaCarrierAvailable()) {
+            Phone satellitePhone = mSatelliteController.getSatellitePhone();
+            if (satellitePhone == null) {
+                ploge("getEmergencyCallToSatelliteHandoverType: satellitePhone is null");
+                return EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_T911;
+            }
+            int satelliteSubId = satellitePhone.getSubId();
+            return mSatelliteController.getCarrierRoamingNtnEmergencyCallToSatelliteHandoverType(
+                    satelliteSubId);
+        } else if (isSatelliteViaCarrierAvailable()) {
             return EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_T911;
         } else {
             return EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_SOS;
