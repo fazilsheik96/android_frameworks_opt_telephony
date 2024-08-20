@@ -598,6 +598,7 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
                         // Once it has connected, startListeningForCalls will apply the config.
                         log("onReceive: caching carrier config until ImsService connects for "
                                 + "subId: " + subId);
+                        mCarrierConfigLoadedForSubscription = false;
                     }
                 }
             };
