@@ -1474,7 +1474,8 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 satelliteController.countOfDatagramTypeKeepAliveFail,
                 satelliteController.countOfAllowedSatelliteAccess,
                 satelliteController.countOfDisallowedSatelliteAccess,
-                satelliteController.countOfSatelliteAccessCheckFail);
+                satelliteController.countOfSatelliteAccessCheckFail,
+                satelliteController.isProvisioned);
     }
 
     private static StatsEvent buildStatsEvent(SatelliteSession satelliteSession) {
@@ -1533,7 +1534,9 @@ public class MetricsCollector implements StatsManager.StatsPullAtomCallback {
                 stats.count,
                 stats.isMultiSim,
                 stats.recommendingHandoverType,
-                stats.isSatelliteAllowedInCurrentLocation);
+                stats.isSatelliteAllowedInCurrentLocation,
+                stats.isWifiConnected,
+                stats.carrierId);
     }
 
     private static StatsEvent buildStatsEvent(DataNetworkValidation stats) {
