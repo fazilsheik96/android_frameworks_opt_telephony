@@ -565,6 +565,9 @@ public class SatelliteController extends Handler {
         mContext = context;
         mFeatureFlags = featureFlags;
         Phone phone = SatelliteServiceUtils.getPhone();
+        synchronized (mSatellitePhoneLock) {
+            mSatellitePhone = phone;
+        }
         mCi = phone.mCi;
         mDSM = phone.getDeviceStateMonitor();
         // Create the SatelliteModemInterface singleton, which is used to manage connections
@@ -1388,8 +1391,7 @@ public class SatelliteController extends Handler {
                         plogd("pollPendingSatelliteDatagram result: " + result);
                     }
                 };
-                pollPendingDatagrams(
-                        SubscriptionManager.DEFAULT_SUBSCRIPTION_ID, internalCallback);
+                pollPendingDatagrams(internalCallback);
                 break;
 
             case EVENT_SATELLITE_MODEM_STATE_CHANGED:
@@ -1713,16 +1715,15 @@ public class SatelliteController extends Handler {
      * enabled, this will also disable the cellular modem, and if the satellite modem is disabled,
      * this will also re-enable the cellular modem.
      *
-     * @param subId The subId of the subscription to set satellite enabled for.
      * @param enableSatellite {@code true} to enable the satellite modem and
      *                        {@code false} to disable.
      * @param enableDemoMode {@code true} to enable demo mode and {@code false} to disable.
      * @param isEmergency {@code true} to enable emergency mode, {@code false} otherwise.
      * @param callback The callback to get the error code of the request.
      */
-    public void requestSatelliteEnabled(int subId, boolean enableSatellite, boolean enableDemoMode,
+    public void requestSatelliteEnabled(boolean enableSatellite, boolean enableDemoMode,
             boolean isEmergency, @NonNull IIntegerConsumer callback) {
-        plogd("requestSatelliteEnabled subId: " + subId + " enableSatellite: " + enableSatellite
+        plogd("requestSatelliteEnabled enableSatellite: " + enableSatellite
                 + " enableDemoMode: " + enableDemoMode + " isEmergency: " + isEmergency);
         Consumer<Integer> result = FunctionalUtils.ignoreRemoteException(callback::accept);
         int error = evaluateOemSatelliteRequestAllowed(true);
@@ -1816,11 +1817,10 @@ public class SatelliteController extends Handler {
     /**
      * Request to get whether the satellite modem is enabled.
      *
-     * @param subId The subId of the subscription to check whether satellite is enabled for.
      * @param result The result receiver that returns whether the satellite modem is enabled
      *               if the request is successful or an error code if the request failed.
      */
-    public void requestIsSatelliteEnabled(int subId, @NonNull ResultReceiver result) {
+    public void requestIsSatelliteEnabled(@NonNull ResultReceiver result) {
         int error = evaluateOemSatelliteRequestAllowed(false);
         if (error != SATELLITE_RESULT_SUCCESS) {
             result.send(error, null);
@@ -1875,12 +1875,10 @@ public class SatelliteController extends Handler {
     /**
      * Request to get whether the satellite service demo mode is enabled.
      *
-     * @param subId The subId of the subscription to check whether the satellite demo mode
-     *              is enabled for.
      * @param result The result receiver that returns whether the satellite demo mode is enabled
      *               if the request is successful or an error code if the request failed.
      */
-    public void requestIsDemoModeEnabled(int subId, @NonNull ResultReceiver result) {
+    public void requestIsDemoModeEnabled(@NonNull ResultReceiver result) {
         int error = evaluateOemSatelliteRequestAllowed(true);
         if (error != SATELLITE_RESULT_SUCCESS) {
             result.send(error, null);
@@ -1908,11 +1906,10 @@ public class SatelliteController extends Handler {
     /**
      * Request to get whether the satellite enabled request is for emergency or not.
      *
-     * @param subId The subId of the subscription to check whether request is for emergency.
      * @param result The result receiver that returns whether the request is for emergency
      *               if the request is successful or an error code if the request failed.
      */
-    public void requestIsEmergencyModeEnabled(int subId, @NonNull ResultReceiver result) {
+    public void requestIsEmergencyModeEnabled(@NonNull ResultReceiver result) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
             plogd("requestIsEmergencyModeEnabled: oemEnabledSatelliteFlag is disabled");
             result.send(SatelliteManager.SATELLITE_RESULT_NOT_SUPPORTED, null);
@@ -1930,11 +1927,10 @@ public class SatelliteController extends Handler {
     /**
      * Request to get whether the satellite service is supported on the device.
      *
-     * @param subId The subId of the subscription to check satellite service support for.
      * @param result The result receiver that returns whether the satellite service is supported on
      *               the device if the request is successful or an error code if the request failed.
      */
-    public void requestIsSatelliteSupported(int subId, @NonNull ResultReceiver result) {
+    public void requestIsSatelliteSupported(@NonNull ResultReceiver result) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
             plogd("requestIsSatelliteSupported: oemEnabledSatelliteFlag is disabled");
             result.send(SatelliteManager.SATELLITE_RESULT_NOT_SUPPORTED, null);
@@ -1945,7 +1941,7 @@ public class SatelliteController extends Handler {
                 /* We have already successfully queried the satellite modem. */
                 Bundle bundle = new Bundle();
                 bundle.putBoolean(SatelliteManager.KEY_SATELLITE_SUPPORTED, mIsSatelliteSupported);
-                bundle.putInt(SATELLITE_SUBSCRIPTION_ID, subId);
+                bundle.putInt(SATELLITE_SUBSCRIPTION_ID, getHighestPrioritySubscrption());
                 result.send(SATELLITE_RESULT_SUCCESS, bundle);
                 return;
             }
@@ -1957,11 +1953,10 @@ public class SatelliteController extends Handler {
     /**
      * Request to get the {@link SatelliteCapabilities} of the satellite service.
      *
-     * @param subId The subId of the subscription to get the satellite capabilities for.
      * @param result The result receiver that returns the {@link SatelliteCapabilities}
      *               if the request is successful or an error code if the request failed.
      */
-    public void requestSatelliteCapabilities(int subId, @NonNull ResultReceiver result) {
+    public void requestSatelliteCapabilities(@NonNull ResultReceiver result) {
         int error = evaluateOemSatelliteRequestAllowed(false);
         if (error != SATELLITE_RESULT_SUCCESS) {
             result.send(error, null);
@@ -1986,11 +1981,10 @@ public class SatelliteController extends Handler {
      * This can be called by the pointing UI when the user starts pointing to the satellite.
      * Modem should continue to report the pointing input as the device or satellite moves.
      *
-     * @param subId The subId of the subscription to start satellite transmission updates for.
      * @param errorCallback The callback to get the error code of the request.
      * @param callback The callback to notify of satellite transmission updates.
      */
-    public void startSatelliteTransmissionUpdates(int subId,
+    public void startSatelliteTransmissionUpdates(
             @NonNull IIntegerConsumer errorCallback,
             @NonNull ISatelliteTransmissionUpdateCallback callback) {
         Consumer<Integer> result = FunctionalUtils.ignoreRemoteException(errorCallback::accept);
@@ -2000,7 +1994,7 @@ public class SatelliteController extends Handler {
             return;
         }
 
-        final int validSubId = SatelliteServiceUtils.getValidSatelliteSubId(subId, mContext);
+        final int validSubId = getHighestPrioritySubscrption();
         mPointingAppController.registerForSatelliteTransmissionUpdates(validSubId, callback);
         sendRequestAsync(CMD_START_SATELLITE_TRANSMISSION_UPDATES,
                 new SatelliteTransmissionUpdateArgument(result, callback, validSubId), null);
@@ -2010,12 +2004,11 @@ public class SatelliteController extends Handler {
      * Stop receiving satellite transmission updates.
      * This can be called by the pointing UI when the user stops pointing to the satellite.
      *
-     * @param subId The subId of the subscription to stop satellite transmission updates for.
      * @param errorCallback The callback to get the error code of the request.
      * @param callback The callback that was passed to {@link #startSatelliteTransmissionUpdates(
      *                 int, IIntegerConsumer, ISatelliteTransmissionUpdateCallback)}.
      */
-    public void stopSatelliteTransmissionUpdates(int subId, @NonNull IIntegerConsumer errorCallback,
+    public void stopSatelliteTransmissionUpdates(@NonNull IIntegerConsumer errorCallback,
             @NonNull ISatelliteTransmissionUpdateCallback callback) {
         Consumer<Integer> result = FunctionalUtils.ignoreRemoteException(errorCallback::accept);
         int error = evaluateOemSatelliteRequestAllowed(true);
@@ -2024,9 +2017,8 @@ public class SatelliteController extends Handler {
             return;
         }
 
-        final int validSubId = SatelliteServiceUtils.getValidSatelliteSubId(subId, mContext);
         mPointingAppController.unregisterForSatelliteTransmissionUpdates(
-                validSubId, result, callback);
+                getHighestPrioritySubscrption(), result, callback);
 
         // Even if handler is null - which means there are no listeners, the modem command to stop
         // satellite transmission updates might have failed. The callers might want to retry
@@ -2038,7 +2030,6 @@ public class SatelliteController extends Handler {
      * Register the subscription with a satellite provider.
      * This is needed to register the subscription if the provider allows dynamic registration.
      *
-     * @param subId The subId of the subscription to be provisioned.
      * @param token The token to be used as a unique identifier for provisioning with satellite
      *              gateway.
      * @param provisionData Data from the provisioning app that can be used by provisioning server
@@ -2047,7 +2038,7 @@ public class SatelliteController extends Handler {
      * @return The signal transport used by the caller to cancel the provision request,
      *         or {@code null} if the request failed.
      */
-    @Nullable public ICancellationSignal provisionSatelliteService(int subId,
+    @Nullable public ICancellationSignal provisionSatelliteService(
             @NonNull String token, @NonNull byte[] provisionData,
             @NonNull IIntegerConsumer callback) {
         Consumer<Integer> result = FunctionalUtils.ignoreRemoteException(callback::accept);
@@ -2057,7 +2048,7 @@ public class SatelliteController extends Handler {
             return null;
         }
 
-        final int validSubId = SatelliteServiceUtils.getValidSatelliteSubId(subId, mContext);
+        final int validSubId = getHighestPrioritySubscrption();
         if (mSatelliteProvisionCallbacks.containsKey(validSubId)) {
             result.accept(SatelliteManager.SATELLITE_RESULT_SERVICE_PROVISION_IN_PROGRESS);
             return null;
@@ -2090,11 +2081,10 @@ public class SatelliteController extends Handler {
      * #onSatelliteProvisionStateChanged(boolean)}
      * should report as deprovisioned.
      *
-     * @param subId The subId of the subscription to be deprovisioned.
      * @param token The token of the device/subscription to be deprovisioned.
      * @param callback The callback to get the error code of the request.
      */
-    public void deprovisionSatelliteService(int subId,
+    public void deprovisionSatelliteService(
             @NonNull String token, @NonNull IIntegerConsumer callback) {
         Consumer<Integer> result = FunctionalUtils.ignoreRemoteException(callback::accept);
         int error = evaluateOemSatelliteRequestAllowed(false);
@@ -2108,22 +2098,21 @@ public class SatelliteController extends Handler {
             return;
         }
 
-        final int validSubId = SatelliteServiceUtils.getValidSatelliteSubId(subId, mContext);
         sendRequestAsync(CMD_DEPROVISION_SATELLITE_SERVICE,
-                new ProvisionSatelliteServiceArgument(token, null, result, validSubId),
+                new ProvisionSatelliteServiceArgument(token, null,
+                        result, getHighestPrioritySubscrption()),
                 null);
     }
 
     /**
      * Registers for the satellite provision state changed.
      *
-     * @param subId The subId of the subscription to register for provision state changed.
      * @param callback The callback to handle the satellite provision state changed event.
      *
      * @return The {@link SatelliteManager.SatelliteResult} result of the operation.
      */
     @SatelliteManager.SatelliteResult public int registerForSatelliteProvisionStateChanged(
-            int subId, @NonNull ISatelliteProvisionStateCallback callback) {
+            @NonNull ISatelliteProvisionStateCallback callback) {
         int error = evaluateOemSatelliteRequestAllowed(false);
         if (error != SATELLITE_RESULT_SUCCESS) {
             return error;
@@ -2149,12 +2138,11 @@ public class SatelliteController extends Handler {
      * Unregisters for the satellite provision state changed.
      * If callback was not registered before, the request will be ignored.
      *
-     * @param subId The subId of the subscription to unregister for provision state changed.
      * @param callback The callback that was passed to
      * {@link #registerForSatelliteProvisionStateChanged(int, ISatelliteProvisionStateCallback)}.
      */
     public void unregisterForSatelliteProvisionStateChanged(
-            int subId, @NonNull ISatelliteProvisionStateCallback callback) {
+            @NonNull ISatelliteProvisionStateCallback callback) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
             plogd("unregisterForSatelliteProvisionStateChanged: "
                     + "oemEnabledSatelliteFlag is disabled");
@@ -2166,12 +2154,11 @@ public class SatelliteController extends Handler {
     /**
      * Request to get whether the device is provisioned with a satellite provider.
      *
-     * @param subId The subId of the subscription to get whether the device is provisioned for.
      * @param result The result receiver that returns whether the device is provisioned with a
      *               satellite provider if the request is successful or an error code if the
      *               request failed.
      */
-    public void requestIsSatelliteProvisioned(int subId, @NonNull ResultReceiver result) {
+    public void requestIsSatelliteProvisioned(@NonNull ResultReceiver result) {
         int error = evaluateOemSatelliteRequestAllowed(false);
         if (error != SATELLITE_RESULT_SUCCESS) {
             result.send(error, null);
@@ -2194,12 +2181,11 @@ public class SatelliteController extends Handler {
     /**
      * Registers for modem state changed from satellite modem.
      *
-     * @param subId The subId of the subscription to register for satellite modem state changed.
      * @param callback The callback to handle the satellite modem state changed event.
      *
      * @return The {@link SatelliteManager.SatelliteResult} result of the operation.
      */
-    @SatelliteManager.SatelliteResult public int registerForSatelliteModemStateChanged(int subId,
+    @SatelliteManager.SatelliteResult public int registerForSatelliteModemStateChanged(
             @NonNull ISatelliteModemStateCallback callback) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
             plogd("registerForSatelliteModemStateChanged: oemEnabledSatelliteFlag is disabled");
@@ -2219,11 +2205,10 @@ public class SatelliteController extends Handler {
      * Unregisters for modem state changed from satellite modem.
      * If callback was not registered before, the request will be ignored.
      *
-     * @param subId The subId of the subscription to unregister for satellite modem state changed.
      * @param callback The callback that was passed to
      * {@link #registerForSatelliteModemStateChanged(int, ISatelliteModemStateCallback)}.
      */
-    public void unregisterForModemStateChanged(int subId,
+    public void unregisterForModemStateChanged(
             @NonNull ISatelliteModemStateCallback callback) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
             plogd("unregisterForModemStateChanged: oemEnabledSatelliteFlag is disabled");
@@ -2240,12 +2225,11 @@ public class SatelliteController extends Handler {
     /**
      * Register to receive incoming datagrams over satellite.
      *
-     * @param subId The subId of the subscription to register for incoming satellite datagrams.
      * @param callback The callback to handle incoming datagrams over satellite.
      *
      * @return The {@link SatelliteManager.SatelliteResult} result of the operation.
      */
-    @SatelliteManager.SatelliteResult public int registerForIncomingDatagram(int subId,
+    @SatelliteManager.SatelliteResult public int registerForIncomingDatagram(
             @NonNull ISatelliteDatagramCallback callback) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
             plogd("registerForIncomingDatagram: oemEnabledSatelliteFlag is disabled");
@@ -2255,18 +2239,18 @@ public class SatelliteController extends Handler {
             return SatelliteManager.SATELLITE_RESULT_NOT_SUPPORTED;
         }
         plogd("registerForIncomingDatagram: callback=" + callback);
-        return mDatagramController.registerForSatelliteDatagram(subId, callback);
+        return mDatagramController.registerForSatelliteDatagram(
+                getHighestPrioritySubscrption(), callback);
     }
 
     /**
      * Unregister to stop receiving incoming datagrams over satellite.
      * If callback was not registered before, the request will be ignored.
      *
-     * @param subId The subId of the subscription to unregister for incoming satellite datagrams.
      * @param callback The callback that was passed to
      *                 {@link #registerForIncomingDatagram(int, ISatelliteDatagramCallback)}.
      */
-    public void unregisterForIncomingDatagram(int subId,
+    public void unregisterForIncomingDatagram(
             @NonNull ISatelliteDatagramCallback callback) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
             plogd("unregisterForIncomingDatagram: oemEnabledSatelliteFlag is disabled");
@@ -2276,7 +2260,8 @@ public class SatelliteController extends Handler {
             return;
         }
         plogd("unregisterForIncomingDatagram: callback=" + callback);
-        mDatagramController.unregisterForSatelliteDatagram(subId, callback);
+        mDatagramController.unregisterForSatelliteDatagram(
+                getHighestPrioritySubscrption(), callback);
     }
 
     /**
@@ -2287,10 +2272,9 @@ public class SatelliteController extends Handler {
      * {@link android.telephony.satellite.SatelliteDatagramCallback#onSatelliteDatagramReceived(
      * long, SatelliteDatagram, int, Consumer)}
      *
-     * @param subId The subId of the subscription used for receiving datagrams.
      * @param callback The callback to get {@link SatelliteManager.SatelliteResult} of the request.
      */
-    public void pollPendingDatagrams(int subId, @NonNull IIntegerConsumer callback) {
+    public void pollPendingDatagrams(@NonNull IIntegerConsumer callback) {
         Consumer<Integer> result = FunctionalUtils.ignoreRemoteException(callback::accept);
         int error = evaluateOemSatelliteRequestAllowed(true);
         if (error != SATELLITE_RESULT_SUCCESS) {
@@ -2298,8 +2282,8 @@ public class SatelliteController extends Handler {
             return;
         }
 
-        final int validSubId = SatelliteServiceUtils.getValidSatelliteSubId(subId, mContext);
-        mDatagramController.pollPendingSatelliteDatagrams(validSubId, result);
+        mDatagramController.pollPendingSatelliteDatagrams(
+                getHighestPrioritySubscrption(), result);
     }
 
     /**
@@ -2309,7 +2293,6 @@ public class SatelliteController extends Handler {
      * input to this method. Datagram received here will be passed down to modem without any
      * encoding or encryption.
      *
-     * @param subId The subId of the subscription to send satellite datagrams for.
      * @param datagramType datagram type indicating whether the datagram is of type
      *                     SOS_SMS or LOCATION_SHARING.
      * @param datagram encoded gateway datagram which is encrypted by the caller.
@@ -2318,10 +2301,10 @@ public class SatelliteController extends Handler {
      *                                 full screen mode.
      * @param callback The callback to get {@link SatelliteManager.SatelliteResult} of the request.
      */
-    public void sendDatagram(int subId, @SatelliteManager.DatagramType int datagramType,
+    public void sendDatagram(@SatelliteManager.DatagramType int datagramType,
             SatelliteDatagram datagram, boolean needFullScreenPointingUI,
             @NonNull IIntegerConsumer callback) {
-        plogd("sendSatelliteDatagram: subId: " + subId + " datagramType: " + datagramType
+        plogd("sendSatelliteDatagram: datagramType: " + datagramType
                 + " needFullScreenPointingUI: " + needFullScreenPointingUI);
 
         Consumer<Integer> result = FunctionalUtils.ignoreRemoteException(callback::accept);
@@ -2340,19 +2323,17 @@ public class SatelliteController extends Handler {
                     mIsEmergency);
         }
 
-        final int validSubId = SatelliteServiceUtils.getValidSatelliteSubId(subId, mContext);
-        mDatagramController.sendSatelliteDatagram(validSubId, datagramType, datagram,
-                needFullScreenPointingUI, result);
+        mDatagramController.sendSatelliteDatagram(getHighestPrioritySubscrption(), datagramType,
+                datagram, needFullScreenPointingUI, result);
     }
 
     /**
      * Request to get the time after which the satellite will be visible.
      *
-     * @param subId The subId to get the time after which the satellite will be visible for.
      * @param result The result receiver that returns the time after which the satellite will
      *               be visible if the request is successful or an error code if the request failed.
      */
-    public void requestTimeForNextSatelliteVisibility(int subId, @NonNull ResultReceiver result) {
+    public void requestTimeForNextSatelliteVisibility(@NonNull ResultReceiver result) {
         int error = evaluateOemSatelliteRequestAllowed(true);
         if (error != SATELLITE_RESULT_SUCCESS) {
             result.send(error, null);
@@ -2365,10 +2346,9 @@ public class SatelliteController extends Handler {
     /**
      * Inform whether the device is aligned with satellite for demo mode.
      *
-     * @param subId The subId of the subscription.
      * @param isAligned {@true} means device is aligned with the satellite, otherwise {@false}.
      */
-    public void setDeviceAlignedWithSatellite(@NonNull int subId, @NonNull boolean isAligned) {
+    public void setDeviceAlignedWithSatellite(@NonNull boolean isAligned) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
             plogd("setDeviceAlignedWithSatellite: oemEnabledSatelliteFlag is disabled");
             return;
@@ -2488,11 +2468,10 @@ public class SatelliteController extends Handler {
     /**
      * Request to get the signal strength of the satellite connection.
      *
-     * @param subId The subId of the subscription to request for.
      * @param result Result receiver to get the error code of the request and the current signal
      * strength of the satellite connection.
      */
-    public void requestNtnSignalStrength(int subId, @NonNull ResultReceiver result) {
+    public void requestNtnSignalStrength(@NonNull ResultReceiver result) {
         if (DBG) plogd("requestNtnSignalStrength()");
 
         int error = evaluateOemSatelliteRequestAllowed(true);
@@ -2521,7 +2500,6 @@ public class SatelliteController extends Handler {
      * is not successful, a {@link ServiceSpecificException} that contains
      * {@link SatelliteManager.SatelliteResult} will be thrown.
      *
-     * @param subId The id of the subscription to request for.
      * @param callback The callback to handle the NTN signal strength changed event. If the
      * operation is successful, {@link INtnSignalStrengthCallback#onNtnSignalStrengthChanged(
      * NtnSignalStrength)} will return an instance of {@link NtnSignalStrength} with a value of
@@ -2530,7 +2508,7 @@ public class SatelliteController extends Handler {
      *
      * @throws ServiceSpecificException If the callback registration operation fails.
      */
-    public void registerForNtnSignalStrengthChanged(int subId,
+    public void registerForNtnSignalStrengthChanged(
             @NonNull INtnSignalStrengthCallback callback) throws RemoteException {
         if (DBG) plogd("registerForNtnSignalStrengthChanged()");
 
@@ -2555,13 +2533,12 @@ public class SatelliteController extends Handler {
      * Unregisters for NTN signal strength changed from satellite modem.
      * If callback was not registered before, the request will be ignored.
      *
-     * @param subId The id of the subscription to unregister for listening NTN signal strength
      * changed event.
      * @param callback The callback that was passed to
      * {@link #registerForNtnSignalStrengthChanged(int, INtnSignalStrengthCallback)}
      */
     public void unregisterForNtnSignalStrengthChanged(
-            int subId, @NonNull INtnSignalStrengthCallback callback) {
+            @NonNull INtnSignalStrengthCallback callback) {
         if (DBG) plogd("unregisterForNtnSignalStrengthChanged()");
 
         int error = evaluateOemSatelliteRequestAllowed(true);
@@ -2573,13 +2550,12 @@ public class SatelliteController extends Handler {
     /**
      * Registers for satellite capabilities change event from the satellite service.
      *
-     * @param subId The id of the subscription to request for.
      * @param callback The callback to handle the satellite capabilities changed event.
      *
      * @return The {@link SatelliteManager.SatelliteResult} result of the operation.
      */
     @SatelliteManager.SatelliteResult public int registerForCapabilitiesChanged(
-            int subId, @NonNull ISatelliteCapabilitiesCallback callback) {
+            @NonNull ISatelliteCapabilitiesCallback callback) {
         if (DBG) plogd("registerForCapabilitiesChanged()");
 
         int error = evaluateOemSatelliteRequestAllowed(true);
@@ -2593,13 +2569,12 @@ public class SatelliteController extends Handler {
      * Unregisters for satellite capabilities change event from the satellite service.
      * If callback was not registered before, the request will be ignored.
      *
-     * @param subId The id of the subscription to unregister for listening satellite capabilities
      * changed event.
      * @param callback The callback that was passed to
      * {@link #registerForCapabilitiesChanged(int, ISatelliteCapabilitiesCallback)}
      */
     public void unregisterForCapabilitiesChanged(
-            int subId, @NonNull ISatelliteCapabilitiesCallback callback) {
+            @NonNull ISatelliteCapabilitiesCallback callback) {
         if (DBG) plogd("unregisterForCapabilitiesChanged()");
 
         int error = evaluateOemSatelliteRequestAllowed(true);
@@ -2611,13 +2586,12 @@ public class SatelliteController extends Handler {
     /**
      * Registers for the satellite supported state changed.
      *
-     * @param subId The subId of the subscription to register for supported state changed.
      * @param callback The callback to handle the satellite supported state changed event.
      *
      * @return The {@link SatelliteManager.SatelliteResult} result of the operation.
      */
     @SatelliteManager.SatelliteResult public int registerForSatelliteSupportedStateChanged(
-            int subId, @NonNull ISatelliteSupportedStateCallback callback) {
+            @NonNull ISatelliteSupportedStateCallback callback) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
             plogd("registerForSatelliteSupportedStateChanged: oemEnabledSatelliteFlag is disabled");
             return SatelliteManager.SATELLITE_RESULT_REQUEST_NOT_SUPPORTED;
@@ -2631,12 +2605,11 @@ public class SatelliteController extends Handler {
      * Unregisters for the satellite supported state changed.
      * If callback was not registered before, the request will be ignored.
      *
-     * @param subId The subId of the subscription to unregister for supported state changed.
      * @param callback The callback that was passed to
      * {@link #registerForSatelliteSupportedStateChanged(int, ISatelliteSupportedStateCallback)}.
      */
     public void unregisterForSatelliteSupportedStateChanged(
-            int subId, @NonNull ISatelliteSupportedStateCallback callback) {
+            @NonNull ISatelliteSupportedStateCallback callback) {
         if (!mFeatureFlags.oemEnabledSatelliteFlag()) {
             plogd("unregisterForSatelliteSupportedStateChanged: "
                     + "oemEnabledSatelliteFlag is disabled");
@@ -2923,8 +2896,7 @@ public class SatelliteController extends Handler {
                                     + " resultCode=" + resultCode);
                         }
                     };
-                    requestIsSatelliteSupported(
-                            SubscriptionManager.DEFAULT_SUBSCRIPTION_ID, receiver);
+                    requestIsSatelliteSupported(receiver);
                 }
             }
         } else {
@@ -2954,7 +2926,7 @@ public class SatelliteController extends Handler {
         if (powerOn) {
             stopWaitForCellularModemOffTimer();
         } else {
-            requestSatelliteEnabled(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
+            requestSatelliteEnabled(
                     false /* enableSatellite */, false /* enableDemoMode */,
                     false /* isEmergency */,
                     new IIntegerConsumer.Stub() {
@@ -3464,7 +3436,7 @@ public class SatelliteController extends Handler {
          * We have not successfully checked whether the modem supports satellite service.
          * Thus, we need to retry it now.
          */
-        requestIsSatelliteSupported(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
+        requestIsSatelliteSupported(
                 new ResultReceiver(this) {
                     @Override
                     protected void onReceiveResult(int resultCode, Bundle resultData) {
@@ -3628,10 +3600,7 @@ public class SatelliteController extends Handler {
     /** Get the request attributes that modem needs to enable/disable satellite */
     private SatelliteModemEnableRequestAttributes createModemEnableRequest(
             @NonNull RequestSatelliteEnabledArgument arg) {
-        int subId = mSubscriptionManagerService.getDefaultSubId();
-        synchronized (mSatellitePhoneLock) {
-            if (mSatellitePhone != null) subId = mSatellitePhone.getSubId();
-        }
+        int subId = getHighestPrioritySubscrption();
         SubscriptionInfo subInfo = mSubscriptionManagerService.getSubscriptionInfo(subId);
         String iccid = subInfo != null ? subInfo.getIccId() : "";
         String apn = getConfigForSubId(subId).getString(KEY_SATELLITE_NIDD_APN_NAME_STRING, "");
@@ -3670,13 +3639,13 @@ public class SatelliteController extends Handler {
             registerForNtnSignalStrengthChanged();
             registerForCapabilitiesChanged();
 
-            requestIsSatelliteProvisioned(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
+            requestIsSatelliteProvisioned(
                     new ResultReceiver(this) {
                         @Override
                         protected void onReceiveResult(int resultCode, Bundle resultData) {
                             plogd("requestIsSatelliteProvisioned: resultCode=" + resultCode
                                     + ", resultData=" + resultData);
-                            requestSatelliteEnabled(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
+                            requestSatelliteEnabled(//SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
                                     false, false, false,
                                     new IIntegerConsumer.Stub() {
                                         @Override
@@ -3686,7 +3655,7 @@ public class SatelliteController extends Handler {
                                     });
                         }
                     });
-            requestSatelliteCapabilities(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
+            requestSatelliteCapabilities(
                     new ResultReceiver(this) {
                         @Override
                         protected void onReceiveResult(int resultCode, Bundle resultData) {
@@ -3944,7 +3913,7 @@ public class SatelliteController extends Handler {
                 if (!supported && mIsSatelliteEnabled != null && mIsSatelliteEnabled) {
                     plogd("Invoke requestSatelliteEnabled(), supported=false, "
                             + "mIsSatelliteEnabled=true");
-                    requestSatelliteEnabled(SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
+                    requestSatelliteEnabled(//SubscriptionManager.DEFAULT_SUBSCRIPTION_ID,
                             false /* enableSatellite */, false /* enableDemoMode */,
                             false /* isEmergency */,
                             new IIntegerConsumer.Stub() {
@@ -4948,7 +4917,7 @@ public class SatelliteController extends Handler {
                 return;
             }
 
-            int subId = mSatellitePhone.getSubId();
+            int subId = getHighestPrioritySubscrption();
             long timeout = getCarrierSupportedSatelliteNotificationHysteresisTimeMillis(subId);
             mNtnEligibilityHysteresisTimedOut = false;
             plogd("startNtnEligibilityHysteresisTimer: sendMessageDelayed subId=" + subId
@@ -4982,7 +4951,7 @@ public class SatelliteController extends Handler {
                     || mLastNotifiedNtnEligibility != currentNtnEligibility) {
                 mLastNotifiedNtnEligibility = currentNtnEligibility;
                 mSatellitePhone.notifyCarrierRoamingNtnEligibleStateChanged(currentNtnEligibility);
-                updateSatelliteSystemNotification(mSatellitePhone.getSubId(),
+                updateSatelliteSystemNotification(getHighestPrioritySubscrption(),
                         CarrierConfigManager.CARRIER_ROAMING_NTN_CONNECT_MANUAL,
                         currentNtnEligibility);
             }
@@ -5977,6 +5946,15 @@ public class SatelliteController extends Handler {
     public Phone getSatellitePhone() {
         synchronized (mSatellitePhoneLock) {
             return mSatellitePhone;
+        }
+    }
+
+    /**
+     * Return the highest priority satellite subscirption ID.
+     */
+    public int getHighestPrioritySubscrption() {
+        synchronized (mSatellitePhoneLock) {
+            return mSatellitePhone.getSubId();
         }
     }
 
