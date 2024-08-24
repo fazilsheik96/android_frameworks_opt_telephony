@@ -546,6 +546,11 @@ public class SatelliteController extends Handler {
     @GuardedBy("mIsWifiConnectedLock")
     private boolean mIsWifiConnected = false;
     private boolean mHasSentBroadcast = false;
+    // For satellite CTS test which to configure intent component with the necessary values.
+    private boolean mChangeIntentComponent = false;
+    private String mConfigSatelliteGatewayServicePackage = "";
+    private String mConfigSatelliteCarrierRoamingEsosProvisionedClass = "";
+
     private BroadcastReceiver
             mDefaultSmsSubscriptionChangedBroadcastReceiver = new BroadcastReceiver() {
                 @Override
@@ -6027,7 +6032,7 @@ public class SatelliteController extends Handler {
         for (Map.Entry<Integer, List<SubscriptionInfo>> entry : currentMap.entrySet()) {
             List<SubscriptionInfo> currentList = entry.getValue();
             List<SubscriptionInfo> newList = newMap.get(entry.getKey());
-            if (currentList == null || currentList.size() != newList.size()) {
+            if (newList == null || currentList == null || currentList.size() != newList.size()) {
                 return true;
             }
             for (int i = 0; i < currentList.size(); i++) {
@@ -6042,13 +6047,11 @@ public class SatelliteController extends Handler {
     }
 
     private void sendBroadCastForProvisionedESOSSubs() {
-        String packageName = getStringFromOverlayConfig(
-                R.string.config_satellite_gateway_service_package);
-        String className = getStringFromOverlayConfig(
-                R.string.config_satellite_carrier_roaming_esos_provisioned_class);
+        String packageName = getConfigSatelliteGatewayServicePackage();
+        String className = getConfigSatelliteCarrierRoamingEsosProvisionedClass();
         if (packageName == null || className == null || packageName.isEmpty()
                 || className.isEmpty()) {
-            logd("sendBroadCaseToProvisionedESOSSubs: packageName or className is null or empty.");
+            logd("sendBroadCastForProvisionedESOSSubs: packageName or className is null or empty.");
             return;
         }
         String action = SatelliteManager.ACTION_SATELLITE_SUBSCRIBER_ID_LIST_CHANGED;
@@ -6056,7 +6059,7 @@ public class SatelliteController extends Handler {
         Intent intent = new Intent(action);
         intent.setComponent(new ComponentName(packageName, className));
         mContext.sendBroadcast(intent);
-        logd("sendBroadCaseToProvisionedESOSSubs" + intent);
+        logd("sendBroadCastForProvisionedESOSSubs" + intent);
     }
 
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
@@ -6357,6 +6360,74 @@ public class SatelliteController extends Handler {
                 mNtnEligibilityHysteresisTimedOut = false;
             }
         }
+    }
+
+    /**
+     * This API can be used by only CTS to override the cached value for the device overlay config
+     * value :
+     * config_satellite_gateway_service_package and
+     * config_satellite_carrier_roaming_esos_provisioned_class.
+     * These values are set before sending an intent to broadcast there are any change to list of
+     * subscriber informations.
+     *
+     * @param name the name is one of the following that constitute an intent.
+     *             component package name, or component class name.
+     * @return {@code true} if the setting is successful, {@code false} otherwise.
+     */
+    public boolean setSatelliteSubscriberIdListChangedIntentComponent(String name) {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            logd("setSatelliteSubscriberIdListChangedIntentComponent: carrierRoamingNbIotNtn is "
+                    + "disabled");
+            return false;
+        }
+        if (!isMockModemAllowed()) {
+            logd("setSatelliteSubscriberIdListChangedIntentComponent: mock modem is not allowed");
+            return false;
+        }
+        logd("setSatelliteSubscriberIdListChangedIntentComponent:" + name);
+
+        if (name.contains("/")) {
+            mChangeIntentComponent = true;
+        } else {
+            mChangeIntentComponent = false;
+            return true;
+        }
+        boolean result = true;
+        String[] cmdPart = name.split("/");
+        switch (cmdPart[0]) {
+            case "-p": {
+                mConfigSatelliteGatewayServicePackage = cmdPart[1];
+                break;
+            }
+            case "-c": {
+                mConfigSatelliteCarrierRoamingEsosProvisionedClass = cmdPart[1];
+                break;
+            }
+            default:
+                logd("setSatelliteSubscriberIdListChangedIntentComponent: invalid name " + name);
+                result = false;
+                break;
+        }
+        return result;
+    }
+
+    private String getConfigSatelliteGatewayServicePackage() {
+        if (!mChangeIntentComponent) {
+            return getStringFromOverlayConfig(
+                    R.string.config_satellite_gateway_service_package);
+        }
+        logd("getConfigSatelliteGatewayServicePackage: " + mConfigSatelliteGatewayServicePackage);
+        return mConfigSatelliteGatewayServicePackage;
+    }
+
+    private String getConfigSatelliteCarrierRoamingEsosProvisionedClass() {
+        if (!mChangeIntentComponent) {
+            return getStringFromOverlayConfig(
+                    R.string.config_satellite_carrier_roaming_esos_provisioned_class);
+        }
+        logd("getConfigSatelliteCarrierRoamingEsosProvisionedClass: "
+                + mConfigSatelliteCarrierRoamingEsosProvisionedClass);
+        return mConfigSatelliteCarrierRoamingEsosProvisionedClass;
     }
 
     private void registerDefaultSmsSubscriptionChangedBroadcastReceiver() {
