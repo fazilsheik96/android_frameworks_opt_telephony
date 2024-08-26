@@ -239,7 +239,7 @@ public class SatelliteController extends Handler {
     private static final int EVENT_SATELLITE_CONFIG_DATA_UPDATED = 40;
     private static final int EVENT_SATELLITE_SUPPORTED_STATE_CHANGED = 41;
     private static final int EVENT_NOTIFY_NTN_HYSTERESIS_TIMED_OUT = 42;
-    private static final int EVENT_EVALUATE_ESOS_PROFILES_PRIORITIZATION = 43;
+    private static final int CMD_EVALUATE_ESOS_PROFILES_PRIORITIZATION = 43;
     private static final int CMD_UPDATE_PROVISION_SATELLITE_TOKEN = 44;
     private static final int EVENT_UPDATE_PROVISION_SATELLITE_TOKEN_DONE = 45;
     private static final int EVENT_NOTIFY_NTN_ELIGIBILITY_HYSTERESIS_TIMED_OUT = 46;
@@ -520,6 +520,17 @@ public class SatelliteController extends Handler {
     private final Object mIsWifiConnectedLock = new Object();
     @GuardedBy("mIsWifiConnectedLock")
     private boolean mIsWifiConnected = false;
+    private BroadcastReceiver
+            mDefaultSmsSubscriptionChangedBroadcastReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    if (intent.getAction().equals(
+                            SubscriptionManager.ACTION_DEFAULT_SMS_SUBSCRIPTION_CHANGED)) {
+                        plogd("Default SMS subscription changed");
+                        sendRequestAsync(CMD_EVALUATE_ESOS_PROFILES_PRIORITIZATION, null, null);
+                    }
+                }
+            };
 
     /**
      * @return The singleton instance of SatelliteController.
@@ -653,7 +664,7 @@ public class SatelliteController extends Handler {
                 getDemoPointingNotAlignedDurationMillisFromResources();
         mSatelliteEmergencyModeDurationMillis =
                 getSatelliteEmergencyModeDurationFromOverlayConfig(context);
-        sendMessageDelayed(obtainMessage(EVENT_EVALUATE_ESOS_PROFILES_PRIORITIZATION),
+        sendMessageDelayed(obtainMessage(CMD_EVALUATE_ESOS_PROFILES_PRIORITIZATION),
                 /* delayMillis= */ TimeUnit.MINUTES.toMillis(1));
 
         SubscriptionManager subscriptionManager = mContext.getSystemService(
@@ -663,6 +674,7 @@ public class SatelliteController extends Handler {
             subscriptionManager.addOnSubscriptionsChangedListener(
                     new HandlerExecutor(new Handler(looper)), mSubscriptionsChangedListener);
         }
+        registerDefaultSmsSubscriptionChangedBroadcastReceiver();
     }
 
     class SatelliteSubscriptionsChangedListener
@@ -1576,7 +1588,7 @@ public class SatelliteController extends Handler {
                 break;
             }
 
-            case EVENT_EVALUATE_ESOS_PROFILES_PRIORITIZATION: {
+            case CMD_EVALUATE_ESOS_PROFILES_PRIORITIZATION: {
                 evaluateESOSProfilesPrioritization();
                 break;
             }
@@ -4332,13 +4344,13 @@ public class SatelliteController extends Handler {
         processNewCarrierConfigData(subId);
         resetCarrierRoamingSatelliteModeParams(subId);
         handleStateChangedForCarrierRoamingNtnEligibility();
-        sendMessageDelayed(obtainMessage(EVENT_EVALUATE_ESOS_PROFILES_PRIORITIZATION),
+        sendMessageDelayed(obtainMessage(CMD_EVALUATE_ESOS_PROFILES_PRIORITIZATION),
                 TimeUnit.MINUTES.toMillis(1));
     }
 
     // imsi, msisdn, default sms subId change
     private void handleSubscriptionsChanged() {
-        sendMessageDelayed(obtainMessage(EVENT_EVALUATE_ESOS_PROFILES_PRIORITIZATION),
+        sendMessageDelayed(obtainMessage(CMD_EVALUATE_ESOS_PROFILES_PRIORITIZATION),
                 TimeUnit.MINUTES.toMillis(1));
     }
 
@@ -5618,11 +5630,12 @@ public class SatelliteController extends Handler {
      */
     private void evaluateESOSProfilesPrioritization() {
         if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            plogd("evaluateESOSProfilesPrioritization: Flag CarrierRoamingNbIotNtn is disabled");
             return;
         }
         List<SubscriptionInfo> allSubInfos = mSubscriptionManagerService.getAllSubInfoList(
                 mContext.getOpPackageName(), mContext.getAttributionTag());
-        //key : priority, low value is high, value : List<SubscriptionInfo>
+        // Key : priority - lower value has higher priority; Value : List<SubscriptionInfo>
         Map<Integer, List<SubscriptionInfo>> newSubsInfoListPerPriority = new HashMap<>();
         for (SubscriptionInfo info : allSubInfos) {
             int subId = info.getSubscriptionId();
@@ -5640,15 +5653,18 @@ public class SatelliteController extends Handler {
             if (keyPriority != -1) {
                 newSubsInfoListPerPriority.computeIfAbsent(keyPriority,
                         k -> new ArrayList<>()).add(info);
+            } else {
+                plogw("evaluateESOSProfilesPrioritization: Got -1 keyPriority for subId="
+                        + info.getSubscriptionId());
             }
         }
 
         if (newSubsInfoListPerPriority.size() == 0) {
-            logd("evaluateESOSProfilesPrioritization: no available");
+            logd("evaluateESOSProfilesPrioritization: no satellite subscription available");
             return;
         }
 
-        // if priority is changed, send broadcast for provisioned ESOS subs ids
+        // If priority has changed, send broadcast for provisioned ESOS subs IDs
         synchronized (mSatelliteTokenProvisionedLock) {
             if (isPriorityChanged(mSubsInfoListPerPriority, newSubsInfoListPerPriority)) {
                 mSubsInfoListPerPriority = newSubsInfoListPerPriority;
@@ -6027,5 +6043,16 @@ public class SatelliteController extends Handler {
                 mNtnEligibilityHysteresisTimedOut = false;
             }
         }
+    }
+
+    private void registerDefaultSmsSubscriptionChangedBroadcastReceiver() {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            plogd("registerDefaultSmsSubscriptionChangedBroadcastReceiver: Flag "
+                    + "CarrierRoamingNbIotNtn is disabled");
+            return;
+        }
+        IntentFilter intentFilter = new IntentFilter();
+        intentFilter.addAction(SubscriptionManager.ACTION_DEFAULT_SMS_SUBSCRIPTION_CHANGED);
+        mContext.registerReceiver(mDefaultSmsSubscriptionChangedBroadcastReceiver, intentFilter);
     }
 }
