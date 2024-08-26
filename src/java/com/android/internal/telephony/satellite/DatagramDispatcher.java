@@ -94,6 +94,10 @@ public class DatagramDispatcher extends Handler {
     private final Object mLock = new Object();
     private long mDemoTimeoutDuration = TIMEOUT_DATAGRAM_DELAY_IN_DEMO_MODE;
 
+    /** {@code true} if already sent an emergency datagram during a session */
+    @GuardedBy("mLock")
+    private boolean mIsEmergencyCommunicationEstablished = false;
+
     @GuardedBy("mLock")
     private boolean mSendingInProgress;
 
@@ -309,6 +313,9 @@ public class DatagramDispatcher extends Handler {
                     // Remove current datagram from pending map.
                     if (SatelliteServiceUtils.isSosMessage(argument.datagramType)) {
                         mPendingEmergencyDatagramsMap.remove(argument.datagramId);
+                        if (error == SATELLITE_RESULT_SUCCESS) {
+                            mIsEmergencyCommunicationEstablished = true;
+                        }
                     } else {
                         mPendingNonEmergencyDatagramsMap.remove(argument.datagramId);
                     }
@@ -795,6 +802,13 @@ public class DatagramDispatcher extends Handler {
         mSendSatelliteDatagramRequest = null;
         mIsAligned = false;
         mLastSendRequestDatagramType = DATAGRAM_TYPE_UNKNOWN;
+    }
+
+    /** @return {@code true} if already sent an emergency datagram during a session. */
+    public boolean isEmergencyCommunicationEstablished() {
+        synchronized (mLock) {
+            return mIsEmergencyCommunicationEstablished;
+        }
     }
 
     private void startDatagramWaitForConnectedStateTimer(

@@ -33,6 +33,7 @@ import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ESOS_INACTIVI
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ESOS_SUPPORTED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_P2P_SMS_SUPPORTED_BOOL;
+import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_TURN_OFF_SESSION_FOR_EMERGENCY_CALL_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_NIDD_APN_NAME_STRING;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT;
 import static android.telephony.SubscriptionManager.SATELLITE_ATTACH_ENABLED_FOR_CARRIER;
@@ -3211,6 +3212,19 @@ public class SatelliteController extends Handler {
     }
 
     /**
+     * @return {@code true} if should exit satellite mode unless already sent a datagram in this
+     * esos session.
+     */
+    public boolean shouldTurnOffCarrierSatelliteForEmergencyCall() {
+        synchronized (mSatellitePhoneLock) {
+            if (mSatellitePhone == null) return false;
+            return !mDatagramController.isEmergencyCommunicationEstablished()
+                    && getConfigForSubId(mSatellitePhone.getSubId()).getBoolean(
+                    KEY_SATELLITE_ROAMING_TURN_OFF_SESSION_FOR_EMERGENCY_CALL_BOOL);
+        }
+    }
+
+    /**
      * Return whether the satellite request is for an emergency or not.
      *
      * @return {@code true} if the satellite request is for an emergency and
@@ -4306,6 +4320,7 @@ public class SatelliteController extends Handler {
             config = mCarrierConfigManager.getConfigForSubId(subId,
                     KEY_CARRIER_SUPPORTED_SATELLITE_SERVICES_PER_PROVIDER_BUNDLE,
                     KEY_SATELLITE_ATTACH_SUPPORTED_BOOL,
+                    KEY_SATELLITE_ROAMING_TURN_OFF_SESSION_FOR_EMERGENCY_CALL_BOOL,
                     KEY_SATELLITE_CONNECTION_HYSTERESIS_SEC_INT,
                     KEY_SATELLITE_ENTITLEMENT_SUPPORTED_BOOL,
                     KEY_CARRIER_ROAMING_SATELLITE_DEFAULT_SERVICES_INT_ARRAY,

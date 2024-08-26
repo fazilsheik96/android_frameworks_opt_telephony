@@ -102,8 +102,12 @@ public class RadioOnHelper implements RadioOnStateListener.Callback {
             mListeners.get(i).waitForRadioOn(phone, this, forEmergencyCall, forEmergencyCall
                     && phone == phoneForEmergencyCall, timeoutCallbackInterval);
         }
-        powerOnRadio(forEmergencyCall, phoneForEmergencyCall, isTestEmergencyNumber);
-        if (SatelliteController.getInstance().isSatelliteEnabled()) {
+        powerOnRadio(forEmergencyCall, phoneForEmergencyCall, isTestEmergencyNumber,
+                forNormalRoutingEmergencyCall);
+        if (SatelliteController.getInstance().isSatelliteEnabled()
+                || SatelliteController.getInstance().isSatelliteBeingEnabled()) {
+            // TODO: phoneForEmergencyCall is actually ignored, SatelliteController#mSatelliePhone
+            //  is being used instead.
             powerOffSatellite(phoneForEmergencyCall);
         }
     }
