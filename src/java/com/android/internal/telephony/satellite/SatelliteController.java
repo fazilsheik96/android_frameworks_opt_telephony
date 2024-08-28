@@ -5752,13 +5752,17 @@ public class SatelliteController extends Handler {
                 R.string.config_satellite_gateway_service_package);
         String className = getStringFromOverlayConfig(
                 R.string.config_satellite_carrier_roaming_esos_provisioned_class);
-        String action = getStringFromOverlayConfig(
-                R.string.config_satellite_carrier_roaming_esos_provisioned_intent_action);
+        if (packageName == null || className == null || packageName.isEmpty()
+                || className.isEmpty()) {
+            logd("sendBroadCaseToProvisionedESOSSubs: packageName or className is null or empty.");
+            return;
+        }
+        String action = SatelliteManager.ACTION_SATELLITE_SUBSCRIBER_ID_LIST_CHANGED;
 
         Intent intent = new Intent(action);
         intent.setComponent(new ComponentName(packageName, className));
         mContext.sendBroadcast(intent);
-        logd("sendBroadCaseToProvisionedESOSSubs");
+        logd("sendBroadCaseToProvisionedESOSSubs" + intent);
     }
 
     private String getStringFromOverlayConfig(int resourceId) {

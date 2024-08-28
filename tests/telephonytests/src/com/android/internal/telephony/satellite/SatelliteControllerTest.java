@@ -4372,8 +4372,6 @@ public class SatelliteControllerTest extends TelephonyTest {
                 eq(R.string.config_satellite_gateway_service_package));
         doReturn("className").when(mResources).getString(
                 eq(R.string.config_satellite_carrier_roaming_esos_provisioned_class));
-        doReturn("action").when(mResources).getString(
-                eq(R.string.config_satellite_carrier_roaming_esos_provisioned_intent_action));
     }
 
     private List<SatelliteSubscriberInfo> getExpectedSatelliteSubscriberInfoList() {
