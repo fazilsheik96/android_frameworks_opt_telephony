@@ -826,8 +826,16 @@ public class DataProfileManager extends Handler {
                 .filter(networkRequest::canBeSatisfiedBy)
                 // The longest time hasn't used data profile will be in the front so all the data
                 // profiles can be tried.
+                .filter(dp -> { return dp.getLastSetupTimestamp() != 0; })
                 .sorted(Comparator.comparing(DataProfile::getLastSetupTimestamp))
                 .collect(Collectors.toList());
+        List<DataProfile> neverUsedDataProfiles = mAllDataProfiles.stream()
+                .filter(networkRequest::canBeSatisfiedBy)
+                .filter(dp -> { return dp.getLastSetupTimestamp() == 0; })
+                .collect(Collectors.toList());
+        if (!neverUsedDataProfiles.isEmpty()) {
+            dataProfiles.addAll(neverUsedDataProfiles);
+        }
         for (DataProfile dataProfile : dataProfiles) {
             logv("Satisfied profile: " + dataProfile + ", last setup="
                     + DataUtils.elapsedTimeToString(dataProfile.getLastSetupTimestamp()));
