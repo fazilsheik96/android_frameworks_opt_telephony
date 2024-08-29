@@ -34,6 +34,7 @@ import static android.telephony.satellite.SatelliteManager.SATELLITE_MODEM_STATE
 import static android.telephony.satellite.SatelliteManager.SATELLITE_MODEM_STATE_LISTENING;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_MODEM_STATE_UNKNOWN;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_REQUEST_ABORTED;
+import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_SUCCESS;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -67,6 +68,7 @@ import com.android.internal.telephony.ExponentialBackoff;
 import com.android.internal.telephony.IIntegerConsumer;
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.flags.FeatureFlags;
+import com.android.internal.telephony.satellite.metrics.SessionMetricsStats;
 import com.android.internal.util.State;
 import com.android.internal.util.StateMachine;
 
@@ -172,6 +174,7 @@ public class SatelliteSessionController extends StateMachine {
     @NonNull private final DatagramController mDatagramController;
     @Nullable private PersistentLogger mPersistentLogger = null;
     @Nullable private DeviceStateMonitor mDeviceStateMonitor;
+    @NonNull private SessionMetricsStats mSessionMetricsStats;
 
     @NonNull private FeatureFlags mFeatureFlags;
 
@@ -279,6 +282,7 @@ public class SatelliteSessionController extends StateMachine {
             phone = SatelliteServiceUtils.getPhone();
         }
         mDeviceStateMonitor = phone.getDeviceStateMonitor();
+        mSessionMetricsStats = SessionMetricsStats.getInstance();
 
         addState(mUnavailableState);
         addState(mPowerOffState);
@@ -1551,6 +1555,10 @@ public class SatelliteSessionController extends StateMachine {
                     @Override
                     public void accept(int result) {
                         plogd("requestSatelliteEnabled result=" + result);
+                        if (result == SATELLITE_RESULT_SUCCESS) {
+                            mSessionMetricsStats.addCountOfAutoExitDueToScreenOff();
+                        }
+                        // TODO(b/364738085): Add CountOfAutoExitDueToTnNetwork
                     }
                 });
     }

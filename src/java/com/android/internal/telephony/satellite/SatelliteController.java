@@ -29,16 +29,17 @@ import static android.telephony.CarrierConfigManager.KEY_EMERGENCY_MESSAGING_SUP
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ATTACH_SUPPORTED_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_CONNECTION_HYSTERESIS_SEC_INT;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ENTITLEMENT_SUPPORTED_BOOL;
-import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ESOS_INACTIVITY_TIMEOUT_SEC_INT;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ESOS_SUPPORTED_BOOL;
-import static android.telephony.CarrierConfigManager.KEY_SATELLITE_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT;
-import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_P2P_SMS_SUPPORTED_BOOL;
-import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_TURN_OFF_SESSION_FOR_EMERGENCY_CALL_BOOL;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_NIDD_APN_NAME_STRING;
-import static android.telephony.CarrierConfigManager.KEY_SATELLITE_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT;
+import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_ESOS_INACTIVITY_TIMEOUT_SEC_INT;
+import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT;
+import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_P2P_SMS_SUPPORTED_BOOL;
+import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT;
+import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_TURN_OFF_SESSION_FOR_EMERGENCY_CALL_BOOL;
 import static android.telephony.SubscriptionManager.SATELLITE_ATTACH_ENABLED_FOR_CARRIER;
 import static android.telephony.SubscriptionManager.SATELLITE_ENTITLEMENT_STATUS;
 import static android.telephony.SubscriptionManager.isValidSubscriptionId;
+import static android.telephony.TelephonyManager.UNKNOWN_CARRIER_ID;
 import static android.telephony.satellite.NtnSignalStrength.NTN_SIGNAL_STRENGTH_NONE;
 import static android.telephony.satellite.SatelliteManager.EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_SOS;
 import static android.telephony.satellite.SatelliteManager.EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_T911;
@@ -1199,7 +1200,8 @@ public class SatelliteController extends Handler {
                             .setSatelliteTechnology(getSupportedNtnRadioTechnology())
                             .setInitializationProcessingTime(
                                     System.currentTimeMillis() - mSessionProcessingTimeStamp)
-                            .setIsDemoMode(mIsDemoModeEnabled);
+                            .setIsDemoMode(mIsDemoModeEnabled)
+                            .setCarrierId(getSatelliteCarrierId());
                     mSessionProcessingTimeStamp = 0;
 
                     if (error == SATELLITE_RESULT_SUCCESS) {
@@ -3661,6 +3663,7 @@ public class SatelliteController extends Handler {
             mProvisionMetricsStats
                     .setResultCode(SatelliteManager.SATELLITE_RESULT_INVALID_TELEPHONY_STATE)
                     .setIsProvisionRequest(true)
+                    .setCarrierId(getSatelliteCarrierId())
                     .reportProvisionMetrics();
             mControllerMetricsStats.reportProvisionCount(
                     SatelliteManager.SATELLITE_RESULT_INVALID_TELEPHONY_STATE);
@@ -3679,6 +3682,7 @@ public class SatelliteController extends Handler {
         }
         mProvisionMetricsStats.setResultCode(result)
                 .setIsProvisionRequest(true)
+                .setCarrierId(getSatelliteCarrierId())
                 .reportProvisionMetrics();
         mControllerMetricsStats.reportProvisionCount(result);
     }
@@ -3708,6 +3712,7 @@ public class SatelliteController extends Handler {
         }
         mProvisionMetricsStats.setResultCode(result)
                 .setIsProvisionRequest(false)
+                .setCarrierId(getSatelliteCarrierId())
                 .reportProvisionMetrics();
         mControllerMetricsStats.reportDeprovisionCount(result);
     }
@@ -4989,6 +4994,7 @@ public class SatelliteController extends Handler {
         mSessionMetricsStats.setInitializationResult(error)
                 .setSatelliteTechnology(getSupportedNtnRadioTechnology())
                 .setIsDemoMode(mIsDemoModeEnabled)
+                .setCarrierId(getSatelliteCarrierId())
                 .reportSessionMetrics();
         mSessionStartTimeStamp = 0;
         mSessionProcessingTimeStamp = 0;
@@ -5438,6 +5444,7 @@ public class SatelliteController extends Handler {
                         .setInitializationProcessingTime(
                                 System.currentTimeMillis() - mSessionProcessingTimeStamp)
                         .setIsDemoMode(mIsDemoModeEnabled)
+                        .setCarrierId(getSatelliteCarrierId())
                         .reportSessionMetrics();
             } else {
                 resetSatelliteDisabledRequest();
@@ -5652,6 +5659,8 @@ public class SatelliteController extends Handler {
                 notificationBuilder.build(), UserHandle.ALL);
 
         mCarrierRoamingSatelliteControllerStats.reportCountOfSatelliteNotificationDisplayed();
+        mCarrierRoamingSatelliteControllerStats.reportCarrierId(getSatelliteCarrierId());
+        mSessionMetricsStats.addCountOfSatelliteNotificationDisplayed();
     }
 
     private void resetCarrierRoamingSatelliteModeParams() {
@@ -6190,6 +6199,25 @@ public class SatelliteController extends Handler {
                 mSatellitePhone = SatelliteServiceUtils.getPhone();
             }
             plogd("mSatellitePhone:" + (mSatellitePhone != null) + ", subId=" + subId);
+            int carrierId = mSatellitePhone.getCarrierId();
+            if (carrierId != UNKNOWN_CARRIER_ID) {
+                mControllerMetricsStats.setCarrierId(carrierId);
+            } else {
+                logd("setSatellitePhone: Carrier ID is UNKNOWN_CARRIER_ID");
+            }
+        }
+    }
+
+    /** Return the carrier ID of the binding satellite subscription. */
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
+    public int getSatelliteCarrierId() {
+        synchronized (mSatellitePhoneLock) {
+            if (mSatellitePhone != null) {
+                return mSatellitePhone.getCarrierId();
+            } else {
+                logd("getSatelliteCarrierId: returns UNKNOWN_CARRIER_ID");
+                return UNKNOWN_CARRIER_ID;
+            }
         }
     }
 
