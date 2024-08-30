@@ -478,14 +478,17 @@ public class SatelliteController extends Handler {
     private Map<String, Boolean> mProvisionedSubscriberId = new HashMap<>();
     // key : subscriberId, value : subId
     @GuardedBy("mSatelliteTokenProvisionedLock")
-    private Map<String, Integer> mSubscriberIdPerSub = new HashMap<>();
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    protected Map<String, Integer> mSubscriberIdPerSub = new HashMap<>();
     // key : priority, low value is high, value : List<SubscriptionInfo>
     @GuardedBy("mSatelliteTokenProvisionedLock")
-    private Map<Integer, List<SubscriptionInfo>> mSubsInfoListPerPriority = new HashMap<>();
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    protected Map<Integer, List<SubscriptionInfo>> mSubsInfoListPerPriority = new HashMap<>();
     // The last ICC ID that framework configured to modem.
     @GuardedBy("mSatelliteTokenProvisionedLock")
     private String mLastConfiguredIccId;
-    @NonNull private final Object mSatelliteTokenProvisionedLock = new Object();
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    @NonNull protected final Object mSatelliteTokenProvisionedLock = new Object();
     private long mWaitTimeForSatelliteEnablingResponse;
     private long mDemoPointingAlignedDurationMillis;
     private long mDemoPointingNotAlignedDurationMillis;
@@ -521,6 +524,7 @@ public class SatelliteController extends Handler {
     private final Object mIsWifiConnectedLock = new Object();
     @GuardedBy("mIsWifiConnectedLock")
     private boolean mIsWifiConnected = false;
+    private boolean mHasSentBroadcast = false;
     private BroadcastReceiver
             mDefaultSmsSubscriptionChangedBroadcastReceiver = new BroadcastReceiver() {
                 @Override
@@ -5643,47 +5647,68 @@ public class SatelliteController extends Handler {
      * 3. Among active carrier eSOS profiles user selected(default SMS SIM) eSOS profile will be
      * the highest priority.
      */
-    private void evaluateESOSProfilesPrioritization() {
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
+    protected void evaluateESOSProfilesPrioritization() {
         if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
             plogd("evaluateESOSProfilesPrioritization: Flag CarrierRoamingNbIotNtn is disabled");
             return;
         }
+        boolean isChanged = false;
         List<SubscriptionInfo> allSubInfos = mSubscriptionManagerService.getAllSubInfoList(
                 mContext.getOpPackageName(), mContext.getAttributionTag());
         // Key : priority - lower value has higher priority; Value : List<SubscriptionInfo>
         Map<Integer, List<SubscriptionInfo>> newSubsInfoListPerPriority = new HashMap<>();
-        for (SubscriptionInfo info : allSubInfos) {
-            int subId = info.getSubscriptionId();
-            boolean isActive = info.isActive();
-            boolean isDefaultSmsSubId = mSubscriptionManagerService.getDefaultSmsSubId() == subId;
-            boolean isNtnOnly = info.isOnlyNonTerrestrialNetwork();
-            boolean isESOSSupported = info.isSatelliteESOSSupported();
-            if (!isNtnOnly && !isESOSSupported) {
-                continue;
-            }
+        synchronized (mSatelliteTokenProvisionedLock) {
+            for (SubscriptionInfo info : allSubInfos) {
+                int subId = info.getSubscriptionId();
+                boolean isActive = info.isActive();
+                boolean isDefaultSmsSubId =
+                        mSubscriptionManagerService.getDefaultSmsSubId() == subId;
+                boolean isNtnOnly = info.isOnlyNonTerrestrialNetwork();
+                boolean isESOSSupported = info.isSatelliteESOSSupported();
+                if (!isNtnOnly && !isESOSSupported) {
+                    continue;
+                }
 
-            int keyPriority = (isESOSSupported && isActive && isDefaultSmsSubId) ? 0
-                    : (isESOSSupported && isActive) ? 1
-                            : (isNtnOnly) ? 2 : (isESOSSupported) ? 3 : -1;
-            if (keyPriority != -1) {
-                newSubsInfoListPerPriority.computeIfAbsent(keyPriority,
-                        k -> new ArrayList<>()).add(info);
-            } else {
-                plogw("evaluateESOSProfilesPrioritization: Got -1 keyPriority for subId="
-                        + info.getSubscriptionId());
+                int keyPriority = (isESOSSupported && isActive && isDefaultSmsSubId) ? 0
+                        : (isESOSSupported && isActive) ? 1
+                                : (isNtnOnly) ? 2 : (isESOSSupported) ? 3 : -1;
+                if (keyPriority != -1) {
+                    newSubsInfoListPerPriority.computeIfAbsent(keyPriority,
+                            k -> new ArrayList<>()).add(info);
+                } else {
+                    plogw("evaluateESOSProfilesPrioritization: Got -1 keyPriority for subId="
+                            + info.getSubscriptionId());
+                }
+
+                Pair<String, Integer> subscriberIdPair = getSubscriberIdAndType(info);
+                String newSubscriberId = subscriberIdPair.first;
+                Optional<String> oldSubscriberId = mSubscriberIdPerSub.entrySet().stream()
+                        .filter(entry -> entry.getValue().equals(subId))
+                        .map(Map.Entry::getKey).findFirst();
+
+                if (oldSubscriberId.isPresent()
+                        && !newSubscriberId.equals(oldSubscriberId.get())) {
+                    mSubscriberIdPerSub.remove(oldSubscriberId.get());
+                    mProvisionedSubscriberId.remove(oldSubscriberId.get());
+                    logd("Old phone number is removed: id = " + subId);
+                    isChanged = true;
+                }
             }
         }
 
-        if (newSubsInfoListPerPriority.size() == 0) {
+        if (!mHasSentBroadcast && newSubsInfoListPerPriority.size() == 0) {
             logd("evaluateESOSProfilesPrioritization: no satellite subscription available");
             return;
         }
 
         // If priority has changed, send broadcast for provisioned ESOS subs IDs
         synchronized (mSatelliteTokenProvisionedLock) {
-            if (isPriorityChanged(mSubsInfoListPerPriority, newSubsInfoListPerPriority)) {
+            if (isPriorityChanged(mSubsInfoListPerPriority, newSubsInfoListPerPriority)
+                    || isChanged) {
                 mSubsInfoListPerPriority = newSubsInfoListPerPriority;
                 sendBroadCastForProvisionedESOSSubs();
+                mHasSentBroadcast = true;
             }
         }
     }
@@ -5765,7 +5790,8 @@ public class SatelliteController extends Handler {
         logd("sendBroadCaseToProvisionedESOSSubs" + intent);
     }
 
-    private String getStringFromOverlayConfig(int resourceId) {
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
+    protected String getStringFromOverlayConfig(int resourceId) {
         String name;
         try {
             name = mContext.getResources().getString(resourceId);
