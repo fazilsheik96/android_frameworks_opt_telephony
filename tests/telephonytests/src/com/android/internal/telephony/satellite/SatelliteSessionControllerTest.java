@@ -51,6 +51,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.os.PersistableBundle;
+import android.telephony.ServiceState;
 import android.telephony.satellite.ISatelliteModemStateCallback;
 import android.telephony.satellite.SatelliteManager;
 import android.testing.AndroidTestingRunner;
@@ -106,6 +107,7 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
     @Mock private DatagramReceiver mMockDatagramReceiver;
     @Mock private DatagramDispatcher mMockDatagramDispatcher;
     @Mock private DatagramController mMockDatagramController;
+    @Mock private ServiceState mMockServiceState;
 
     @Captor ArgumentCaptor<Handler> mHandlerCaptor;
     @Captor ArgumentCaptor<Integer> mMsgCaptor;
@@ -218,6 +220,7 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Notify Screen off
         sendScreenStateChanged(mHandlerCaptor.getValue(), mMsgCaptor.getValue(), false);
         processAllMessages();
+        clearInvocations(mMockSatelliteController);
 
         // Verify that the screen off inactivity timer is started.
         assertTrue(mTestSatelliteSessionController.isScreenOffInActivityTimerStarted());
@@ -285,6 +288,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         doNothing().when(mDeviceStateMonitor).registerForScreenStateChanged(
                 eq(mTestSatelliteSessionController.getHandler()), anyInt(), any());
         when(mMockSatelliteController.isSatelliteAttachRequired()).thenReturn(true);
+        when(mMockSatelliteController.turnOffSatelliteSessionForEmergencyCall(
+                anyInt())).thenReturn(false);
 
         when(mMockSatelliteController.getRequestIsEmergency()).thenReturn(false);
         when(mMockSatelliteController.isSatelliteRoamingP2pSmSSupported(
@@ -297,6 +302,7 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
 
         // Since satellite is supported, SatelliteSessionController should move to POWER_OFF state.
         assertNotNull(mTestSatelliteSessionController);
+        mTestSatelliteSessionController.setSatelliteEnabledForNtnOnlySubscription(false);
         assertEquals(STATE_POWER_OFF, mTestSatelliteSessionController.getCurrentStateName());
         setupDatagramTransferringState(true);
 
@@ -330,6 +336,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         doNothing().when(mDeviceStateMonitor).registerForScreenStateChanged(
                 eq(mTestSatelliteSessionController.getHandler()), anyInt(), any());
         when(mMockSatelliteController.isSatelliteAttachRequired()).thenReturn(true);
+        when(mMockSatelliteController.turnOffSatelliteSessionForEmergencyCall(
+                anyInt())).thenReturn(false);
 
         when(mMockSatelliteController.getRequestIsEmergency()).thenReturn(true);
         when(mMockSatelliteController.isSatelliteEsosSupported(anyInt())).thenReturn(true);
@@ -340,6 +348,7 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
 
         // Since satellite is supported, SatelliteSessionController should move to POWER_OFF state.
         assertNotNull(mTestSatelliteSessionController);
+        mTestSatelliteSessionController.setSatelliteEnabledForNtnOnlySubscription(false);
         assertEquals(STATE_POWER_OFF, mTestSatelliteSessionController.getCurrentStateName());
         setupDatagramTransferringState(true);
 
@@ -365,6 +374,76 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // SatelliteSessionController should move to IDLE state.
         assertSuccessfulModemStateChangedCallback(
                 mTestSatelliteModemStateCallback, SatelliteManager.SATELLITE_MODEM_STATE_IDLE);
+    }
+
+    @Test
+    public void testDisableSatelliteWhenCellularModemEnabledInIdleMode() {
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        doNothing().when(mDeviceStateMonitor).registerForScreenStateChanged(
+                eq(mTestSatelliteSessionController.getHandler()), anyInt(), any());
+        when(mMockSatelliteController.isSatelliteAttachRequired()).thenReturn(false);
+        when(mPhone.getServiceState()).thenReturn(mMockServiceState);
+
+        // Since satellite is supported, SatelliteSessionController should move to POWER_OFF state.
+        assertNotNull(mTestSatelliteSessionController);
+        mTestSatelliteSessionController.setSatelliteEnabledForNtnOnlySubscription(false);
+        assertEquals(STATE_POWER_OFF, mTestSatelliteSessionController.getCurrentStateName());
+
+        // Conditions for operation
+        boolean isEmergency = true;
+        // Cellular network is not IN_SERVICE and emergency only.
+        // Satellite request is emergency and emergency communication was established.
+        // Disabling satellite was not allowed
+        when(mMockServiceState.getVoiceRegState()).thenReturn(ServiceState.STATE_OUT_OF_SERVICE);
+        when(mMockServiceState.getDataRegState()).thenReturn(ServiceState.STATE_OUT_OF_SERVICE);
+        when(mMockServiceState.isEmergencyOnly()).thenReturn(false);
+        when(mMockSatelliteController.getRequestIsEmergency()).thenReturn(isEmergency);
+        when(mMockDatagramController.isEmergencyCommunicationEstablished()).thenReturn(true);
+        when(mMockSatelliteController.turnOffSatelliteSessionForEmergencyCall(
+                anyInt())).thenReturn(false);
+
+        moveToIdleState();
+
+        // Cellular network is not in STATE_IN_SERVICE or emergency only.
+        // Should not disable satellite
+        verify(mMockSatelliteController, never()).requestSatelliteEnabled(
+                eq(false), eq(false), eq(isEmergency), any(IIntegerConsumer.Stub.class));
+
+        // Notify cellular service is in STATE_IN_SERVICE.
+        ServiceState serviceState = new ServiceState();
+        serviceState.setVoiceRegState(ServiceState.STATE_IN_SERVICE);
+        serviceState.setDataRegState(ServiceState.STATE_OUT_OF_SERVICE);
+        serviceState.setEmergencyOnly(false);
+        mTestSatelliteSessionController.onCellularServiceStateChanged(serviceState);
+        processAllMessages();
+
+        // Satellite is in emergency mode and emergency communication was established.
+        // Should not disable satellite
+        verify(mMockSatelliteController, never()).requestSatelliteEnabled(
+                eq(false), eq(false), eq(isEmergency), any(IIntegerConsumer.Stub.class));
+
+        // Satellite is in emergency mode but emergency communication was not established.
+        // Disabling satellite was not allowed
+        when(mMockDatagramController.isEmergencyCommunicationEstablished()).thenReturn(false);
+        when(mMockSatelliteController.turnOffSatelliteSessionForEmergencyCall(
+                anyInt())).thenReturn(false);
+        mTestSatelliteSessionController.onCellularServiceStateChanged(serviceState);
+        processAllMessages();
+
+        // Should not disable satellite
+        verify(mMockSatelliteController, never()).requestSatelliteEnabled(
+                eq(false), eq(false), eq(isEmergency), any(IIntegerConsumer.Stub.class));
+
+        // Satellite is in emergency mode but emergency communication was not established.
+        // Disabling satellite was allowed
+        when(mMockSatelliteController.turnOffSatelliteSessionForEmergencyCall(
+                anyInt())).thenReturn(true);
+        mTestSatelliteSessionController.onCellularServiceStateChanged(serviceState);
+        processAllMessages();
+
+        // Should disable satellite
+        verify(mMockSatelliteController).requestSatelliteEnabled(
+                eq(false), eq(false), eq(isEmergency), any(IIntegerConsumer.Stub.class));
     }
 
     @Test
@@ -1408,6 +1487,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
     }
 
     private static class TestSatelliteSessionController extends SatelliteSessionController {
+        boolean mSatelliteEnabledForNtnOnlySubscription = true;
+
         TestSatelliteSessionController(Context context, Looper looper, FeatureFlags featureFlags,
                 boolean isSatelliteSupported,
                 SatelliteModemInterface satelliteModemInterface) {
@@ -1439,7 +1520,11 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         }
 
         protected boolean isSatelliteEnabledForNtnOnlySubscription() {
-            return true;
+            return mSatelliteEnabledForNtnOnlySubscription;
+        }
+
+        void setSatelliteEnabledForNtnOnlySubscription(boolean enabled) {
+            mSatelliteEnabledForNtnOnlySubscription = false;
         }
     }
 

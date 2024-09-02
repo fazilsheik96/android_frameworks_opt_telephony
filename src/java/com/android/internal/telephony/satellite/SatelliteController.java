@@ -4705,6 +4705,17 @@ public class SatelliteController extends Handler {
         return getConfigForSubId(subId).getBoolean(KEY_SATELLITE_ESOS_SUPPORTED_BOOL);
     }
 
+    /**
+     * Return whether the device allows to turn off satellite session for emergency call.
+     *
+     * @param subId Associated subscription ID
+     */
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
+    public boolean turnOffSatelliteSessionForEmergencyCall(int subId) {
+        return getConfigForSubId(subId).getBoolean(
+                KEY_SATELLITE_ROAMING_TURN_OFF_SESSION_FOR_EMERGENCY_CALL_BOOL);
+    }
+
     private int getCarrierRoamingNtnConnectType(int subId) {
         return getConfigForSubId(subId).getInt(KEY_CARRIER_ROAMING_NTN_CONNECT_TYPE_INT);
     }

@@ -53,6 +53,7 @@ import android.os.SystemProperties;
 import android.telephony.DropBoxManagerLoggerBackend;
 import android.telephony.PersistentLogger;
 import android.telephony.Rlog;
+import android.telephony.ServiceState;
 import android.telephony.satellite.ISatelliteModemStateCallback;
 import android.telephony.satellite.SatelliteManager;
 import android.telephony.satellite.stub.ISatelliteGateway;
@@ -67,6 +68,7 @@ import com.android.internal.telephony.DeviceStateMonitor;
 import com.android.internal.telephony.ExponentialBackoff;
 import com.android.internal.telephony.IIntegerConsumer;
 import com.android.internal.telephony.Phone;
+import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.satellite.metrics.SessionMetricsStats;
 import com.android.internal.util.State;
@@ -124,6 +126,8 @@ public class SatelliteSessionController extends StateMachine {
     private static final int EVENT_SCREEN_STATE_CHANGED = 9;
     protected static final int EVENT_SCREEN_OFF_INACTIVITY_TIMER_TIMED_OUT = 10;
     protected static final int EVENT_CARRIER_ROAMING_NB_IOT_INACTIVITY_TIMER_TIMED_OUT = 11;
+    private static final int EVENT_ENABLE_CELLULAR_MODEM_WHILE_SATELLITE_MODE_IS_ON_DONE = 12;
+    private static final int EVENT_SERVICE_STATE_CHANGED = 13;
 
     private static final long REBIND_INITIAL_DELAY = 2 * 1000; // 2 seconds
     private static final long REBIND_MAXIMUM_DELAY = 64 * 1000; // 1 minute
@@ -277,12 +281,26 @@ public class SatelliteSessionController extends StateMachine {
             bindService();
         });
 
-        Phone phone = mSatelliteController.getSatellitePhone();
-        if (phone == null) {
-            phone = SatelliteServiceUtils.getPhone();
+        Phone satellitePhone = mSatelliteController.getSatellitePhone();
+        if (satellitePhone == null) {
+            satellitePhone = SatelliteServiceUtils.getPhone();
         }
-        mDeviceStateMonitor = phone.getDeviceStateMonitor();
+        mDeviceStateMonitor = satellitePhone.getDeviceStateMonitor();
         mSessionMetricsStats = SessionMetricsStats.getInstance();
+
+        if (mFeatureFlags.carrierRoamingNbIotNtn()) {
+            // Register to received Cellular service state
+            for (Phone phone : PhoneFactory.getPhones()) {
+                if (phone == null) continue;
+
+                phone.registerForServiceStateChanged(
+                        getHandler(), EVENT_SERVICE_STATE_CHANGED, null);
+                if (DBG) {
+                    plogd("SatelliteSessionController: registerForServiceStateChanged phoneId "
+                            + phone.getPhoneId());
+                }
+            }
+        }
 
         addState(mUnavailableState);
         addState(mPowerOffState);
@@ -547,7 +565,31 @@ public class SatelliteSessionController extends StateMachine {
         plogd("cleanUpResource");
         mIsDeviceAlignedWithSatellite = false;
         unregisterForScreenStateChanged();
+
+        if (mFeatureFlags.carrierRoamingNbIotNtn()) {
+            // Register to received Cellular service state
+            for (Phone phone : PhoneFactory.getPhones()) {
+                if (phone == null) continue;
+
+                phone.unregisterForServiceStateChanged(getHandler());
+                if (DBG) {
+                    plogd("cleanUpResource: unregisterForServiceStateChanged phoneId "
+                            + phone.getPhoneId());
+                }
+            }
+        }
+
         quitNow();
+    }
+
+    /**
+     * Uses this function to notify that cellular service state has changed
+     *
+     * @param serviceState The state of the cellular service.
+     */
+    @VisibleForTesting
+    public void onCellularServiceStateChanged(ServiceState serviceState) {
+        sendMessage(EVENT_SERVICE_STATE_CHANGED, new AsyncResult(null, serviceState, null));
     }
 
     private boolean isDemoMode() {
@@ -787,8 +829,11 @@ public class SatelliteSessionController extends StateMachine {
             mCurrentState = SatelliteManager.SATELLITE_MODEM_STATE_IDLE;
             mIsSendingTriggeredDuringTransferringState.set(false);
             stopNbIotInactivityTimer();
+
             //Enable Cellular Modem scanning
-            mSatelliteModemInterface.enableCellularModemWhileSatelliteModeIsOn(true, null);
+            Message onCompleted =
+                    obtainMessage(EVENT_ENABLE_CELLULAR_MODEM_WHILE_SATELLITE_MODE_IS_ON_DONE);
+            mSatelliteModemInterface.enableCellularModemWhileSatelliteModeIsOn(true, onCompleted);
             notifyStateChangedEvent(SatelliteManager.SATELLITE_MODEM_STATE_IDLE);
         }
 
@@ -818,6 +863,18 @@ public class SatelliteSessionController extends StateMachine {
                 case EVENT_SATELLITE_MODEM_STATE_CHANGED:
                     handleSatelliteModemStateChanged(msg);
                     break;
+                case EVENT_ENABLE_CELLULAR_MODEM_WHILE_SATELLITE_MODE_IS_ON_DONE:
+                    handleEventEnableCellularModemWhileSatelliteModeIsOnDone();
+                    break;
+                case EVENT_SERVICE_STATE_CHANGED:
+                    AsyncResult ar = (msg.obj != null) ? (AsyncResult) msg.obj : null;
+                    if (ar == null || ar.result == null) {
+                        plogd("IdleState: processing: can't access ServiceState");
+                    } else {
+                        ServiceState newServiceState = (ServiceState) ar.result;
+                        handleEventServiceStateChanged(newServiceState);
+                    }
+                    break;
             }
             // Ignore all unexpected events.
             return HANDLED;
@@ -843,6 +900,58 @@ public class SatelliteSessionController extends StateMachine {
                     ploge("Unexpected transferring state received for non-NB-IOT NTN");
                 }
             }
+        }
+
+        private void handleEventEnableCellularModemWhileSatelliteModeIsOnDone() {
+            if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+                Rlog.d(TAG, "handleEventEnableCellularModemWhileSatelliteModeIsOnDone: "
+                        + "carrierRoamingNbIotNtn is disabled");
+                return;
+            }
+
+            ServiceState serviceState = mSatelliteController.getSatellitePhone().getServiceState();
+            if (serviceState == null) {
+                plogd("handleEventEnableCellularModemWhileSatelliteModeIsOnDone: "
+                        + "can't access ServiceState");
+                return;
+            }
+            handleEventServiceStateChanged(serviceState);
+        }
+
+        private void handleEventServiceStateChanged(ServiceState serviceState) {
+            boolean isInServiceOrEmergency =
+                    serviceState.getVoiceRegState() == ServiceState.STATE_IN_SERVICE
+                    || serviceState.getDataRegState() == ServiceState.STATE_IN_SERVICE
+                    || serviceState.isEmergencyOnly();
+            if (!isInServiceOrEmergency) {
+                plogd("handleEventServiceStateChanged: is not IN_SERVICE or EMERGENCY_ONLY");
+                return;
+            }
+
+            // In emergency
+            boolean isEmergency = mSatelliteController.getRequestIsEmergency();
+            if (isEmergency) {
+                boolean isEmergencyCommunicationEstablished = (mDatagramController == null)
+                        ? false : mDatagramController.isEmergencyCommunicationEstablished();
+                boolean isTurnOffAllowed =
+                        mSatelliteController.turnOffSatelliteSessionForEmergencyCall(getSubId());
+                if (isEmergencyCommunicationEstablished || !isTurnOffAllowed) {
+                    logd("handleEventServiceStateChanged: "
+                            + "can't disable emergency satellite session");
+                    return;
+                }
+            }
+
+            mSatelliteController.requestSatelliteEnabled(
+                    false /*enableSatellite*/,
+                    false /*enableDemoMode*/,
+                    isEmergency /*isEmergency*/,
+                    new IIntegerConsumer.Stub() {
+                        @Override
+                        public void accept(int result) {
+                            plogd("requestSatelliteEnabled result=" + result);
+                        }
+                    });
         }
 
         private void handleEventDisableCellularModemWhileSatelliteModeIsOnDone(
@@ -1227,6 +1336,12 @@ public class SatelliteSessionController extends StateMachine {
                 break;
             case EVENT_CARRIER_ROAMING_NB_IOT_INACTIVITY_TIMER_TIMED_OUT:
                 whatString = "EVENT_CARRIER_ROAMING_NB_IOT_INACTIVITY_TIMER_TIMED_OUT";
+                break;
+            case EVENT_ENABLE_CELLULAR_MODEM_WHILE_SATELLITE_MODE_IS_ON_DONE:
+                whatString = "EVENT_ENABLE_CELLULAR_MODEM_WHILE_SATELLITE_MODE_IS_ON_DONE";
+                break;
+            case EVENT_SERVICE_STATE_CHANGED:
+                whatString = "EVENT_SERVICE_STATE_CHANGED";
                 break;
             default:
                 whatString = "UNKNOWN EVENT " + what;
