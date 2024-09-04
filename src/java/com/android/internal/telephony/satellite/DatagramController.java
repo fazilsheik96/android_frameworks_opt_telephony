@@ -16,7 +16,6 @@
 
 package com.android.internal.telephony.satellite;
 
-import static android.telephony.SubscriptionManager.DEFAULT_SUBSCRIPTION_ID;
 import static android.telephony.satellite.SatelliteManager.DATAGRAM_TYPE_KEEP_ALIVE;
 import static android.telephony.satellite.SatelliteManager.DATAGRAM_TYPE_UNKNOWN;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE;
@@ -344,6 +343,12 @@ public class DatagramController {
         return mReceivePendingCount;
     }
 
+
+    /** @return {@code true} if already sent an emergency datagram during a session. */
+    public boolean isEmergencyCommunicationEstablished() {
+        return mDatagramDispatcher.isEmergencyCommunicationEstablished();
+    }
+
     /**
      * This function is used by {@link SatelliteController} to notify {@link DatagramController}
      * that satellite modem state has changed.
@@ -609,7 +614,9 @@ public class DatagramController {
                         }
                     }
                 };
-                pollPendingSatelliteDatagrams(DEFAULT_SUBSCRIPTION_ID, internalCallback);
+                pollPendingSatelliteDatagrams(
+                        SatelliteController.getInstance().getHighestPrioritySubscrption(),
+                        internalCallback);
             }
         }
     }
