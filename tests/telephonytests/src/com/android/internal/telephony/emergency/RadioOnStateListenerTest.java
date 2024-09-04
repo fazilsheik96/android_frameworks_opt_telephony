@@ -90,10 +90,11 @@ public class RadioOnStateListenerTest extends TelephonyTest {
         waitForHandlerAction(mListener.getHandler(), TIMEOUT_MS);
 
         verify(mMockPhone).unregisterForServiceStateChanged(any(Handler.class));
-        verify(mSatelliteController).unregisterForModemStateChanged(any());
+        verify(mSatelliteController).unregisterForModemStateChanged(anyInt(), any());
         verify(mMockPhone).registerForServiceStateChanged(any(Handler.class),
                 eq(RadioOnStateListener.MSG_SERVICE_STATE_CHANGED), isNull());
-        verify(mSatelliteController, never()).registerForSatelliteModemStateChanged(any());
+        verify(mSatelliteController, never()).registerForSatelliteModemStateChanged(
+                anyInt(), any());
 
         verify(mMockCi).registerForOffOrNotAvailable(any(Handler.class),
                 eq(RadioOnStateListener.MSG_RADIO_OFF_OR_NOT_AVAILABLE), isNull());
@@ -109,8 +110,8 @@ public class RadioOnStateListenerTest extends TelephonyTest {
 
         waitForHandlerAction(mListener.getHandler(), TIMEOUT_MS);
 
-        verify(mSatelliteController).unregisterForModemStateChanged(any());
-        verify(mSatelliteController).registerForSatelliteModemStateChanged(any());
+        verify(mSatelliteController).unregisterForModemStateChanged(anyInt(), any());
+        verify(mSatelliteController).registerForSatelliteModemStateChanged(anyInt(), any());
     }
 
     /**
@@ -204,7 +205,7 @@ public class RadioOnStateListenerTest extends TelephonyTest {
         verify(mCallback).onComplete(eq(mListener), eq(false));
         verify(mMockPhone, times(2)).setRadioPower(eq(true), eq(false), eq(false), eq(false));
         verify(mSatelliteController, never()).requestSatelliteEnabled(
-                eq(false), eq(false), eq(false), any());
+                anyInt(), eq(false), eq(false), eq(false), any());
     }
 
     @Test
@@ -224,7 +225,7 @@ public class RadioOnStateListenerTest extends TelephonyTest {
         verify(mCallback).onComplete(eq(mListener), eq(false));
         verify(mMockPhone, times(2)).setRadioPower(eq(true), eq(true), eq(true), eq(false));
         verify(mSatelliteController, never()).requestSatelliteEnabled(
-                eq(false), eq(false), eq(false), any());
+                anyInt(), eq(false), eq(false), eq(false), any());
     }
 
     @Test
@@ -245,7 +246,7 @@ public class RadioOnStateListenerTest extends TelephonyTest {
         verify(mCallback).onComplete(eq(mListener), eq(false));
         verify(mMockPhone, times(2)).setRadioPower(eq(true), eq(true), eq(true), eq(false));
         verify(mSatelliteController, times(2)).requestSatelliteEnabled(
-                eq(false), eq(false), eq(false), any());
+                anyInt(), eq(false), eq(false), eq(false), any());
     }
 
     @Test

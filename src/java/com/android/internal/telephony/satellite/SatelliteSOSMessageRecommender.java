@@ -17,6 +17,7 @@
 package com.android.internal.telephony.satellite;
 
 import static android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP;
+import static android.telephony.CarrierConfigManager.KEY_CARRIER_ROAMING_NTN_EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_INT;
 import static android.telephony.ServiceState.STATE_EMERGENCY_ONLY;
 import static android.telephony.ServiceState.STATE_IN_SERVICE;
 import static android.telephony.ServiceState.STATE_OUT_OF_SERVICE;
@@ -42,6 +43,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.os.OutcomeReceiver;
+import android.os.PersistableBundle;
 import android.os.SystemProperties;
 import android.provider.DeviceConfig;
 import android.telecom.Connection;
@@ -49,13 +51,13 @@ import android.telephony.DropBoxManagerLoggerBackend;
 import android.telephony.PersistentLogger;
 import android.telephony.Rlog;
 import android.telephony.ServiceState;
+import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.telephony.ims.ImsReasonInfo;
 import android.telephony.ims.ImsRegistrationAttributes;
 import android.telephony.ims.RegistrationManager;
 import android.telephony.satellite.ISatelliteProvisionStateCallback;
 import android.telephony.satellite.SatelliteManager;
-import android.telephony.satellite.SatelliteSubscriberProvisionStatus;
 import android.text.TextUtils;
 import android.util.Pair;
 import android.util.SparseArray;
@@ -71,7 +73,6 @@ import com.android.internal.telephony.SmsApplication;
 import com.android.internal.telephony.flags.Flags;
 import com.android.internal.telephony.metrics.SatelliteStats;
 
-import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 
@@ -158,13 +159,6 @@ public class SatelliteSOSMessageRecommender extends Handler {
             public void onSatelliteProvisionStateChanged(boolean provisioned) {
                 plogd("onSatelliteProvisionStateChanged: provisioned=" + provisioned);
                 sendMessage(obtainMessage(EVENT_SATELLITE_PROVISIONED_STATE_CHANGED, provisioned));
-            }
-
-            @Override
-            public void onSatelliteSubscriptionProvisionStateChanged(
-                    List<SatelliteSubscriberProvisionStatus> satelliteSubscriberProvisionStatus) {
-                plogd("onSatelliteSubscriptionProvisionStateChanged: "
-                        + satelliteSubscriberProvisionStatus);
             }
         };
     }
@@ -419,7 +413,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
 
     private void registerForInterestedStateChangedEvents() {
         mSatelliteController.registerForSatelliteProvisionStateChanged(
-                mISatelliteProvisionStateCallback);
+                SubscriptionManager.DEFAULT_SUBSCRIPTION_ID, mISatelliteProvisionStateCallback);
         for (Phone phone : PhoneFactory.getPhones()) {
             phone.registerForServiceStateChanged(
                     this, EVENT_SERVICE_STATE_CHANGED, null);
@@ -439,7 +433,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
 
     private void unregisterForInterestedStateChangedEvents() {
         mSatelliteController.unregisterForSatelliteProvisionStateChanged(
-                mISatelliteProvisionStateCallback);
+                SubscriptionManager.DEFAULT_SUBSCRIPTION_ID, mISatelliteProvisionStateCallback);
         for (Phone phone : PhoneFactory.getPhones()) {
             phone.unregisterForServiceStateChanged(this);
         }

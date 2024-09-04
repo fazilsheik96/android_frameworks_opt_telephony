@@ -43,7 +43,6 @@ import android.util.Pair;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
-import com.android.internal.telephony.flags.FeatureFlags;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -110,10 +109,6 @@ public class TelephonyCountryDetector extends Handler {
     private Map<String, Long> mOverriddenCachedNetworkCountryCodes = new HashMap<>();
     @GuardedBy("mLock")
     private boolean mIsCountryCodesOverridden = false;
-    private final RegistrantList mCountryCodeChangedRegistrants = new RegistrantList();
-
-    private FeatureFlags mFeatureFlags = null;
-
     @NonNull private final LocationListener mLocationListener = new LocationListener() {
         @Override
         public void onLocationChanged(Location location) {
@@ -191,26 +186,22 @@ public class TelephonyCountryDetector extends Handler {
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
     protected TelephonyCountryDetector(@NonNull Looper looper, @NonNull Context context,
             @NonNull LocationManager locationManager,
-            @NonNull ConnectivityManager connectivityManager,
-            FeatureFlags featureFlags) {
+            @NonNull ConnectivityManager connectivityManager) {
         super(looper);
         mLocationManager = locationManager;
         mGeocoder = new Geocoder(context);
         mConnectivityManager = connectivityManager;
-        mFeatureFlags = featureFlags;
         initialize();
     }
 
     /** @return the singleton instance of the {@link TelephonyCountryDetector} */
-    public static synchronized TelephonyCountryDetector getInstance(@NonNull Context context,
-            FeatureFlags featureFlags) {
+    public static synchronized TelephonyCountryDetector getInstance(@NonNull Context context) {
         if (sInstance == null) {
             HandlerThread handlerThread = new HandlerThread("TelephonyCountryDetector");
             handlerThread.start();
             sInstance = new TelephonyCountryDetector(handlerThread.getLooper(), context,
                     context.getSystemService(LocationManager.class),
-                    context.getSystemService(ConnectivityManager.class),
-                    featureFlags);
+                    context.getSystemService(ConnectivityManager.class));
         }
         return sInstance;
     }
@@ -482,12 +473,6 @@ public class TelephonyCountryDetector extends Handler {
             }
         }
         evaluateRequestingLocationUpdates();
-        if (mFeatureFlags.oemEnabledSatelliteFlag()) {
-            logd("mCountryCodeChangedRegistrants.notifyRegistrants()");
-            mCountryCodeChangedRegistrants.notifyRegistrants();
-        } else {
-            logd("mCountryCodeChangedRegistrants.notifyRegistrants() is not called");
-        }
     }
 
     private void handleEventWifiConnectivityStateChanged() {
@@ -600,26 +585,6 @@ public class TelephonyCountryDetector extends Handler {
     private static boolean isMockModemAllowed() {
         return (DEBUG || SystemProperties.getBoolean(ALLOW_MOCK_MODEM_PROPERTY, false)
                 || SystemProperties.getBoolean(BOOT_ALLOW_MOCK_MODEM_PROPERTY, false));
-    }
-
-    /**
-     * Register a callback for country code changed events
-     *
-     * @param h    Handler to notify
-     * @param what msg.what when the message is delivered
-     * @param obj  AsyncResult.userObj when the message is delivered
-     */
-    public void registerForCountryCodeChanged(Handler h, int what, Object obj) {
-        mCountryCodeChangedRegistrants.add(h, what, obj);
-    }
-
-    /**
-     * Unregister a callback for country code changed events
-     *
-     * @param h Handler to notifyf
-     */
-    public void unregisterForCountryCodeChanged(Handler h) {
-        mCountryCodeChangedRegistrants.remove(h);
     }
 
     private static void logd(@NonNull String log) {

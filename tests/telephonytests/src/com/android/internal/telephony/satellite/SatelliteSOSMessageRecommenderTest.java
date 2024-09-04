@@ -95,7 +95,6 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
     private static final int TEST_EMERGENCY_CALL_TO_SOS_MSG_HYSTERESIS_TIMEOUT_MILLIS = 500;
     private static final int PHONE_ID = 0;
     private static final int PHONE_ID2 = 1;
-    private static final int SUB_ID = SubscriptionManager.DEFAULT_SUBSCRIPTION_ID;
     private static final String CALL_ID = "CALL_ID";
     private static final String WRONG_CALL_ID = "WRONG_CALL_ID";
     private static final String DEFAULT_SATELLITE_MESSAGING_PACKAGE = "android.com.google.default";
@@ -737,21 +736,21 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
 
         @Override
         @SatelliteManager.SatelliteResult public int registerForSatelliteProvisionStateChanged(
-                @NonNull ISatelliteProvisionStateCallback callback) {
+                int subId, @NonNull ISatelliteProvisionStateCallback callback) {
             mRegisterForSatelliteProvisionStateChangedCalls++;
             Set<ISatelliteProvisionStateCallback> perSubscriptionCallbacks =
-                    mProvisionStateChangedCallbacks.getOrDefault(SUB_ID, new HashSet<>());
+                    mProvisionStateChangedCallbacks.getOrDefault(subId, new HashSet<>());
             perSubscriptionCallbacks.add(callback);
-            mProvisionStateChangedCallbacks.put(SUB_ID, perSubscriptionCallbacks);
+            mProvisionStateChangedCallbacks.put(subId, perSubscriptionCallbacks);
             return SatelliteManager.SATELLITE_RESULT_SUCCESS;
         }
 
         @Override
         public void unregisterForSatelliteProvisionStateChanged(
-                @NonNull ISatelliteProvisionStateCallback callback) {
+                int subId, @NonNull ISatelliteProvisionStateCallback callback) {
             mUnregisterForSatelliteProvisionStateChangedCalls++;
             Set<ISatelliteProvisionStateCallback> perSubscriptionCallbacks =
-                    mProvisionStateChangedCallbacks.get(SUB_ID);
+                    mProvisionStateChangedCallbacks.get(subId);
             if (perSubscriptionCallbacks != null) {
                 perSubscriptionCallbacks.remove(callback);
             }
@@ -797,7 +796,7 @@ public class SatelliteSOSMessageRecommenderTest extends TelephonyTest {
         public void sendProvisionStateChangedEvent(int subId, boolean provisioned) {
             mIsSatelliteViaOemProvisioned = provisioned;
             Set<ISatelliteProvisionStateCallback> perSubscriptionCallbacks =
-                    mProvisionStateChangedCallbacks.get(SUB_ID);
+                    mProvisionStateChangedCallbacks.get(subId);
             if (perSubscriptionCallbacks != null) {
                 for (ISatelliteProvisionStateCallback callback : perSubscriptionCallbacks) {
                     try {

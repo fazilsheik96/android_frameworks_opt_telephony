@@ -26,7 +26,6 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyLong;
 import static org.mockito.Matchers.nullable;
@@ -595,7 +594,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         sst.setRadioPowerForReason(false, false, false, false, reason);
         assertTrue(sst.getRadioPowerOffReasons().contains(reason));
         assertTrue(sst.getRadioPowerOffReasons().size() == 1);
-        verify(mSatelliteController).onSetCellularRadioPowerStateRequested(eq(false));
+        verify(mSatelliteController).onCellularRadioPowerOffRequested();
         clearInvocations(mSatelliteController);
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
         assertTrue(mSimulatedCommands.getRadioState() == TelephonyManager.RADIO_POWER_OFF);
@@ -603,7 +602,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
                 TelephonyManager.RADIO_POWER_REASON_USER);
         assertTrue(sst.getRadioPowerOffReasons().contains(reason));
         assertTrue(sst.getRadioPowerOffReasons().size() == 1);
-        verify(mSatelliteController, never()).onSetCellularRadioPowerStateRequested(anyBoolean());
+        verify(mSatelliteController, never()).onCellularRadioPowerOffRequested();
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
         assertTrue(mSimulatedCommands.getRadioState() == TelephonyManager.RADIO_POWER_OFF);
 
@@ -611,7 +610,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         // had been turned off for.
         sst.setRadioPowerForReason(true, false, false, false, reason);
         assertTrue(sst.getRadioPowerOffReasons().isEmpty());
-        verify(mSatelliteController).onSetCellularRadioPowerStateRequested(eq(true));
+        verify(mSatelliteController, never()).onCellularRadioPowerOffRequested();
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
         assertTrue(mSimulatedCommands.getRadioState() == TelephonyManager.RADIO_POWER_ON);
 
@@ -1929,8 +1928,6 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         sst.setRadioPower(false);
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
         assertTrue(mSimulatedCommands.getRadioState() == TelephonyManager.RADIO_POWER_ON);
-        verify(mSatelliteController).onSetCellularRadioPowerStateRequested(eq(false));
-        verify(mSatelliteController).onPowerOffCellularRadioFailed();
         sst.requestShutdown();
         waitForLastHandlerAction(mSSTTestHandler.getThreadHandler());
         assertFalse(mSimulatedCommands.getRadioState()

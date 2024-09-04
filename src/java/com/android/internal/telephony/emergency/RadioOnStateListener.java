@@ -21,6 +21,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.telephony.ServiceState;
+import android.telephony.SubscriptionManager;
 import android.telephony.satellite.ISatelliteModemStateCallback;
 
 import com.android.internal.annotations.VisibleForTesting;
@@ -397,7 +398,7 @@ public class RadioOnStateListener {
                 mPhone.setRadioPower(true, mForEmergencyCall, mSelectedPhoneForEmergencyCall,
                         false);
                 if (mSatelliteController.isSatelliteEnabled()) {
-                    mSatelliteController.requestSatelliteEnabled(
+                    mSatelliteController.requestSatelliteEnabled(mPhone.getSubId(),
                             false /* enableSatellite */, false /* enableDemoMode */,
                             false /* isEmergency*/,
                             new IIntegerConsumer.Stub() {
@@ -501,11 +502,16 @@ public class RadioOnStateListener {
     }
 
     private void registerForSatelliteEnabledChanged() {
-        mSatelliteController.registerForSatelliteModemStateChanged(mSatelliteCallback);
+        mSatelliteController.registerForSatelliteModemStateChanged(
+                mPhone.getSubId(), mSatelliteCallback);
     }
 
     private void unregisterForSatelliteEnabledChanged() {
-        mSatelliteController.unregisterForModemStateChanged(mSatelliteCallback);
+        int subId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
+        if (mPhone != null) {
+            subId = mPhone.getSubId();
+        }
+        mSatelliteController.unregisterForModemStateChanged(subId, mSatelliteCallback);
         mHandler.removeMessages(MSG_SATELLITE_ENABLED_CHANGED);
     }
 

@@ -124,8 +124,6 @@ public class SubscriptionInfoInternalTest {
                                     .FAKE_SATELLITE_ENTITLEMENT_PLMNS1)
                     .setSatelliteESOSSupported(
                             SubscriptionDatabaseManagerTest.FAKE_SATELLITE_ESOS_SUPPORTED_ENABLED)
-                    .setIsSatelliteProvisionedForNonIpDatagram(
-                            SubscriptionDatabaseManagerTest.FAKE_SATELLITE_PROVISIONED)
                     .build();
 
     private final SubscriptionInfoInternal mSubInfoNull =
@@ -258,8 +256,6 @@ public class SubscriptionInfoInternalTest {
                         .FAKE_SATELLITE_ENTITLEMENT_PLMNS1);
         assertThat(mSubInfo.getSatelliteESOSSupported())
                 .isEqualTo(SubscriptionDatabaseManagerTest.FAKE_SATELLITE_ESOS_SUPPORTED_ENABLED);
-        assertThat(mSubInfo.getIsSatelliteProvisionedForNonIpDatagram())
-                .isEqualTo(SubscriptionDatabaseManagerTest.FAKE_SATELLITE_PROVISIONED);
     }
 
     @Test
