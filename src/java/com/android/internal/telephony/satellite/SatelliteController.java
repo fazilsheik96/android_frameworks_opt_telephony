@@ -707,6 +707,7 @@ public class SatelliteController extends Handler {
                     new HandlerExecutor(new Handler(looper)), mSubscriptionsChangedListener);
         }
         registerDefaultSmsSubscriptionChangedBroadcastReceiver();
+        updateSatelliteProvisionedStatePerSubscriberId();
     }
 
     class SatelliteSubscriptionsChangedListener
@@ -3982,6 +3983,17 @@ public class SatelliteController extends Handler {
                 }
                 provisionChanged = true;
                 mProvisionedSubscriberId.put(subscriberInfo.getSubscriberId(), provisioned);
+                int subId = mSubscriberIdPerSub.getOrDefault(subscriberInfo.getSubscriberId(),
+                        SubscriptionManager.INVALID_SUBSCRIPTION_ID);
+                try {
+                    mSubscriptionManagerService.setIsSatelliteProvisionedForNonIpDatagram(subId,
+                            provisioned);
+                    plogd("handleEventSatelliteSubscriptionProvisionStateChanged: set Provision "
+                            + "state to db subId=" + subId);
+                } catch (IllegalArgumentException | SecurityException ex) {
+                    ploge("setIsSatelliteProvisionedForNonIpDatagram: subId=" + subId + ", ex="
+                            + ex);
+                }
             }
         }
         if (!provisionChanged) {
@@ -4574,6 +4586,7 @@ public class SatelliteController extends Handler {
 
         updateCarrierConfig(subId);
         updateSatelliteESOSSupported(subId);
+        updateSatelliteProvisionedStatePerSubscriberId();
         updateEntitlementPlmnListPerCarrier(subId);
         updateSupportedSatelliteServicesForActiveSubscriptions();
         processNewCarrierConfigData(subId);
@@ -4663,6 +4676,34 @@ public class SatelliteController extends Handler {
             mSubscriptionManagerService.setSatelliteESOSSupported(subId,
                     isSatelliteESosSupportedFromCarrierConfig);
             logd("updateSatelliteESOSSupported: " + isSatelliteESosSupportedFromCarrierConfig);
+        }
+    }
+
+    /** If the provision state per subscriberId for the cached is not exist, check the database for
+     * the corresponding value and use it. */
+    private void updateSatelliteProvisionedStatePerSubscriberId() {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            return;
+        }
+
+        List<SubscriptionInfo> allSubInfos = mSubscriptionManagerService.getAllSubInfoList(
+                mContext.getOpPackageName(), mContext.getAttributionTag());
+        for (SubscriptionInfo info : allSubInfos) {
+            int subId = info.getSubscriptionId();
+            Pair<String, Integer> subscriberIdPair = getSubscriberIdAndType(
+                    mSubscriptionManagerService.getSubscriptionInfo(subId));
+            String subscriberId = subscriberIdPair.first;
+            synchronized (mSatelliteTokenProvisionedLock) {
+                if (mProvisionedSubscriberId.get(subscriberId) == null) {
+                    boolean Provisioned = mSubscriptionManagerService
+                            .isSatelliteProvisionedForNonIpDatagram(subId);
+                    if (Provisioned) {
+                        mProvisionedSubscriberId.put(subscriberId, true);
+                        logd("updateSatelliteProvisionStatePerSubscriberId: " + subscriberId
+                                + " set true");
+                    }
+                }
+            }
         }
     }
 
