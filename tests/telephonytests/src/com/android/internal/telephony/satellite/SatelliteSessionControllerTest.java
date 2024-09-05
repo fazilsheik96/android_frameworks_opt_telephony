@@ -27,8 +27,6 @@ import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TR
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_SEND_FAILED;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT;
 
-import static com.android.internal.telephony.satellite.SatelliteSessionController.EVENT_SCREEN_OFF_INACTIVITY_TIMER_TIMED_OUT;
-
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -751,8 +749,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         processAllMessages();
 
         // SatelliteSessionController should move to CONNECTED state
-        assertSuccessfulModemStateChangedCallback(
-                mTestSatelliteModemStateCallback, SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
+        assertSuccessfulModemStateChangedCallback(mTestSatelliteModemStateCallback,
+                SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
         assertEquals(STATE_CONNECTED, mTestSatelliteSessionController.getCurrentStateName());
         assertTrue(mTestSatelliteSessionController.isNbIotInactivityTimerStarted());
         verify(mMockDatagramController).onSatelliteModemStateChanged(
@@ -909,8 +907,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         processAllMessages();
 
         // SatelliteSessionController should move to CONNECTED state
-        assertSuccessfulModemStateChangedCallback(
-                mTestSatelliteModemStateCallback, SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
+        assertSuccessfulModemStateChangedCallback(mTestSatelliteModemStateCallback,
+                SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
         assertEquals(STATE_CONNECTED, mTestSatelliteSessionController.getCurrentStateName());
         verify(mMockDatagramController).onSatelliteModemStateChanged(
                 SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
@@ -935,8 +933,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         processAllMessages();
 
         // SatelliteSessionController should move to CONNECTED state
-        assertSuccessfulModemStateChangedCallback(
-                mTestSatelliteModemStateCallback, SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
+        assertSuccessfulModemStateChangedCallback(mTestSatelliteModemStateCallback,
+                SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
         assertEquals(STATE_CONNECTED, mTestSatelliteSessionController.getCurrentStateName());
         verify(mMockDatagramController).onSatelliteModemStateChanged(
                 SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
@@ -971,8 +969,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         processAllMessages();
 
         // SatelliteSessionController should move to CONNECTED state
-        assertSuccessfulModemStateChangedCallback(
-                mTestSatelliteModemStateCallback, SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
+        assertSuccessfulModemStateChangedCallback(mTestSatelliteModemStateCallback,
+                SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
         assertEquals(STATE_CONNECTED, mTestSatelliteSessionController.getCurrentStateName());
 
         // Wait for timeout
@@ -1404,8 +1402,8 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         processAllMessages();
 
         // SatelliteSessionController should move to CONNECTED state
-        assertSuccessfulModemStateChangedCallback(
-                mTestSatelliteModemStateCallback, SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
+        assertSuccessfulModemStateChangedCallback(mTestSatelliteModemStateCallback,
+                SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
         assertEquals(STATE_CONNECTED, mTestSatelliteSessionController.getCurrentStateName());
         verify(mMockDatagramController).onSatelliteModemStateChanged(
                 SatelliteManager.SATELLITE_MODEM_STATE_CONNECTED);
