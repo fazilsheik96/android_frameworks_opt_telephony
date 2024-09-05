@@ -6440,6 +6440,11 @@ public class SatelliteController extends Handler {
         }
 
         int subId = phone.getSubId();
+        if (!isSatelliteRoamingP2pSmSSupported(subId)) {
+            plogd("isCarrierRoamingNtnEligible: doesn't support P2P SMS");
+            return false;
+        }
+
         if (!isSatelliteSupportedViaCarrier(subId)) {
             plogd("isCarrierRoamingNtnEligible[phoneId=" + phone.getPhoneId()
                     + "]: satellite is not supported via carrier");
