@@ -49,6 +49,7 @@ import android.util.LocalLog;
 
 import com.android.internal.telephony.Phone;
 import com.android.internal.telephony.PhoneFactory;
+import com.android.internal.telephony.data.DataConfigManager.DataConfigManagerCallback;
 import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.flags.FeatureFlagsImpl;
 import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
@@ -363,6 +364,7 @@ public class AutoDataSwitchController extends Handler {
         for (int phoneId = 0; phoneId < numActiveModems; phoneId++) {
             registerAllEventsForPhone(phoneId);
         }
+        registerForCarrierConfigChanged();
     }
 
     /**
@@ -414,6 +416,18 @@ public class AutoDataSwitchController extends Handler {
             }
         }
         if (changed) logl("onSubscriptionChanged: " + Arrays.toString(mPhonesSignalStatus));
+    }
+
+    private void registerForCarrierConfigChanged() {
+        Phone phone = PhoneFactory.getDefaultPhone();
+        DataConfigManager dataConfigManager =
+                phone.getDataNetworkController().getDataConfigManager();
+        dataConfigManager.registerCallback(new DataConfigManagerCallback(this::post) {
+                @Override
+                public void onCarrierConfigChanged() {
+                    readDeviceResourceConfig();
+                }
+            });
     }
 
     /**
