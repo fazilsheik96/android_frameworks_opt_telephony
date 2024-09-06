@@ -24,6 +24,7 @@ import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
 import android.net.NetworkSpecifier;
 import android.os.SystemClock;
+import android.provider.Telephony;
 import android.telephony.Annotation.ConnectivityTransport;
 import android.telephony.Annotation.NetCapability;
 import android.telephony.data.ApnSetting;
@@ -351,6 +352,19 @@ public class TelephonyNetworkRequest {
             // TODO b/232264746
             if (apnTypes.contains(ApnSetting.TYPE_ENTERPRISE)) {
                 apnTypes.remove((Integer) ApnSetting.TYPE_DEFAULT);
+            }
+
+            // Even there is a check for anomaly report on MMSC for built-in APNs, it won't exclude
+            // such invalid MMS profile for MMS network request, which will bring up some redundant
+            // retry on APN switching. Considering platform should make sure those things work fine,
+            // we don't need to touch them, however, as to user edit, to minimize the impact of the
+            // user-edited APN that MMS type is added by mistake, exclude such APNs that don't have
+            // MMSC address configured.
+            if (apnTypes.contains(ApnSetting.TYPE_MMS)
+                    && dataProfile.getApnSetting().getEditedStatus()
+                    == Telephony.Carriers.USER_EDITED
+                    && dataProfile.getApnSetting().getMmsc() == null) {
+                return false;
             }
 
             return apnTypes.stream().allMatch(dataProfile.getApnSetting()::canHandleType);
