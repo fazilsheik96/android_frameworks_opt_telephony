@@ -1587,7 +1587,7 @@ public class SatelliteControllerTest extends TelephonyTest {
     public void testIsSatelliteEnabled() {
         logd("testIsSatelliteEnabled: starting");
         setUpResponseForRequestIsSatelliteEnabled(true, SATELLITE_RESULT_SUCCESS);
-        assertFalse(mSatelliteControllerUT.isSatelliteEnabled());
+        assertFalse(mSatelliteControllerUT.isSatelliteEnabledOrBeingEnabled());
         mIsSatelliteEnabledSemaphore.drainPermits();
         mSatelliteControllerUT.requestIsSatelliteEnabled(mIsSatelliteEnabledReceiver);
         processAllMessages();
@@ -1603,7 +1603,8 @@ public class SatelliteControllerTest extends TelephonyTest {
         mSatelliteControllerUT.requestIsSatelliteEnabled(mIsSatelliteEnabledReceiver);
         processAllMessages();
         assertEquals(SATELLITE_RESULT_SUCCESS, mQueriedIsSatelliteEnabledResultCode);
-        assertEquals(mSatelliteControllerUT.isSatelliteEnabled(), mQueriedIsSatelliteEnabled);
+        assertEquals(mSatelliteControllerUT.isSatelliteEnabledOrBeingEnabled(),
+                mQueriedIsSatelliteEnabled);
     }
 
     @Test

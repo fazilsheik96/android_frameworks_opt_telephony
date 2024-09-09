@@ -225,7 +225,7 @@ public class RadioOnStateListener {
         // Register for RADIO_OFF to handle cases where emergency call is dialed before
         // we receive UNSOL_RESPONSE_RADIO_STATE_CHANGED with RADIO_OFF.
         registerForRadioOff();
-        if (mSatelliteController.isSatelliteEnabled()) {
+        if (mSatelliteController.isSatelliteEnabledOrBeingEnabled()) {
             // Register for satellite modem state changed to notify when satellite is disabled.
             registerForSatelliteEnabledChanged();
         }
@@ -396,7 +396,7 @@ public class RadioOnStateListener {
                 Rlog.d(TAG, "Trying (again) to turn the radio on and satellite modem off.");
                 mPhone.setRadioPower(true, mForEmergencyCall, mSelectedPhoneForEmergencyCall,
                         false);
-                if (mSatelliteController.isSatelliteEnabled()) {
+                if (mSatelliteController.isSatelliteEnabledOrBeingEnabled()) {
                     mSatelliteController.requestSatelliteEnabled(
                             false /* enableSatellite */, false /* enableDemoMode */,
                             false /* isEmergency*/,
