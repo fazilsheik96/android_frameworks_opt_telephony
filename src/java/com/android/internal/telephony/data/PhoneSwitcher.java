@@ -280,8 +280,7 @@ public class PhoneSwitcher extends Handler {
     // ECBM, which is detected by EVENT_EMERGENCY_TOGGLE.
     public static final int EVENT_PRECISE_CALL_STATE_CHANGED     = 109;
     private static final int EVENT_NETWORK_VALIDATION_DONE        = 110;
-    // TODO: To be removed : only for fixing LKG compilation
-    protected static final int EVENT_EVALUATE_AUTO_SWITCH         = 111;
+
     protected static final int EVENT_MODEM_COMMAND_DONE             = 112;
     protected static final int EVENT_MODEM_COMMAND_RETRY            = 113;
 
@@ -297,8 +296,7 @@ public class PhoneSwitcher extends Handler {
     private static final int EVENT_NETWORK_AVAILABLE              = 118;
     private static final int EVENT_PROCESS_SIM_STATE_CHANGE       = 119;
     public static final int EVENT_IMS_RADIO_TECH_CHANGED          = 120;
-//zrm    public static final int EVENT_MEETS_AUTO_DATA_SWITCH_STATE    = 121;
-    protected final static int EVENT_VOICE_CALL_ENDED             = 121;
+    protected static final int EVENT_VOICE_CALL_ENDED             = 121;
     protected static final int EVENT_UNSOL_MAX_DATA_ALLOWED_CHANGED = 122;
     protected static final int EVENT_OEM_HOOK_SERVICE_READY       = 123;
     protected static final int EVENT_SUB_INFO_READY               = 124;
