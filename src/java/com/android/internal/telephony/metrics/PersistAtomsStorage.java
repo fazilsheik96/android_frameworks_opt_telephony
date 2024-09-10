@@ -770,8 +770,14 @@ public class PersistAtomsStorage {
         atom.countOfAllowedSatelliteAccess += stats.countOfAllowedSatelliteAccess;
         atom.countOfDisallowedSatelliteAccess += stats.countOfDisallowedSatelliteAccess;
         atom.countOfSatelliteAccessCheckFail += stats.countOfSatelliteAccessCheckFail;
+
         atom.isProvisioned = stats.isProvisioned;
         atom.carrierId = stats.carrierId;
+
+        atom.countOfSatelliteAllowedStateChangedEvents
+                += stats.countOfSatelliteAllowedStateChangedEvents;
+        atom.countOfSuccessfulLocationQueries += stats.countOfSuccessfulLocationQueries;
+        atom.countOfFailedLocationQueries += stats.countOfFailedLocationQueries;
 
         mAtoms.satelliteController = atomArray;
         saveAtomsToFile(SAVE_TO_FILE_DELAY_FOR_UPDATE_MILLIS);

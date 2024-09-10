@@ -19,6 +19,8 @@ package com.android.internal.telephony.metrics;
 import static android.telephony.satellite.NtnSignalStrength.NTN_SIGNAL_STRENGTH_NONE;
 import static android.telephony.TelephonyManager.UNKNOWN_CARRIER_ID;
 
+import static com.android.internal.telephony.satellite.SatelliteConstants.TRIGGERING_EVENT_UNKNOWN;
+
 import android.telephony.satellite.NtnSignalStrength;
 import android.telephony.satellite.SatelliteManager;
 
@@ -95,6 +97,9 @@ public class SatelliteStats {
         private final int mCountOfSatelliteAccessCheckFail;
         private static boolean sIsProvisioned;
         private static int sCarrierId = UNKNOWN_CARRIER_ID;
+        private final int mCountOfSatelliteAllowedStateChangedEvents;
+        private final int mCountOfSuccessfulLocationQueries;
+        private final int mCountOfFailedLocationQueries;
 
         private SatelliteControllerParams(Builder builder) {
             this.mCountOfSatelliteServiceEnablementsSuccess =
@@ -150,6 +155,13 @@ public class SatelliteStats {
             if (builder.mCarrierId.isPresent()) {
                 this.sCarrierId = builder.mCarrierId.get();
             }
+
+            this.mCountOfSatelliteAllowedStateChangedEvents =
+                    builder.mCountOfSatelliteAllowedStateChangedEvents;
+            this.mCountOfSuccessfulLocationQueries =
+                    builder.mCountOfSuccessfulLocationQueries;
+            this.mCountOfFailedLocationQueries =
+                    builder.mCountOfFailedLocationQueries;
         }
 
         public int getCountOfSatelliteServiceEnablementsSuccess() {
@@ -272,6 +284,18 @@ public class SatelliteStats {
             return sCarrierId;
         }
 
+        public int getCountOfSatelliteAllowedStateChangedEvents() {
+            return mCountOfSatelliteAllowedStateChangedEvents;
+        }
+
+        public int getCountOfSuccessfulLocationQueries() {
+            return mCountOfSuccessfulLocationQueries;
+        }
+
+        public int getCountOfFailedLocationQueries() {
+            return mCountOfFailedLocationQueries;
+        }
+
         /**
          * A builder class to create {@link SatelliteControllerParams} data structure class
          */
@@ -306,6 +330,9 @@ public class SatelliteStats {
             private int mCountOfSatelliteAccessCheckFail = 0;
             private Optional<Boolean> mIsProvisioned = Optional.empty();
             private Optional<Integer> mCarrierId = Optional.empty();
+            private int mCountOfSatelliteAllowedStateChangedEvents = 0;
+            private int mCountOfSuccessfulLocationQueries = 0;
+            private int mCountOfFailedLocationQueries = 0;
 
             /**
              * Sets countOfSatelliteServiceEnablementsSuccess value of {@link SatelliteController}
@@ -603,6 +630,37 @@ public class SatelliteStats {
             }
 
             /**
+             * Sets countOfSatelliteAllowedStateChangedEvents value of {@link SatelliteController}
+             * atom
+             * then returns Builder class
+             */
+            public Builder setCountOfSatelliteAllowedStateChangedEvents(
+                    int countOfSatelliteAllowedStateChangedEvents) {
+                this.mCountOfSatelliteAllowedStateChangedEvents =
+                        countOfSatelliteAllowedStateChangedEvents;
+                return this;
+            }
+
+            /**
+             * Sets countOfSuccessfulLocationQueries value of {@link SatelliteController} atom
+             * then returns Builder class
+             */
+            public Builder setCountOfSuccessfulLocationQueries(
+                    int countOfSuccessfulLocationQueries) {
+                this.mCountOfSuccessfulLocationQueries = countOfSuccessfulLocationQueries;
+                return this;
+            }
+
+            /**
+             * Sets countOfFailedLocationQueries value of {@link SatelliteController} atom
+             * then returns Builder class
+             */
+            public Builder setCountOfFailedLocationQueries(int countOfFailedLocationQueries) {
+                this.mCountOfFailedLocationQueries = countOfFailedLocationQueries;
+                return this;
+            }
+
+            /**
              * Returns ControllerParams, which contains whole component of
              * {@link SatelliteController} atom
              */
@@ -653,6 +711,10 @@ public class SatelliteStats {
                     + ", countOfSatelliteAccessCheckFail=" + mCountOfSatelliteAccessCheckFail
                     + ", isProvisioned=" + sIsProvisioned
                     + ", carrierId=" + sCarrierId
+                    + ", countOfSatelliteAllowedStateChangedEvents="
+                    + mCountOfSatelliteAllowedStateChangedEvents
+                    + ", countOfSuccessfulLocationQueries=" + mCountOfSuccessfulLocationQueries
+                    + ", countOfFailedLocationQueries=" + mCountOfFailedLocationQueries
                     + ")";
         }
     }
@@ -2220,6 +2282,7 @@ public class SatelliteStats {
         private final String[] mCountryCodes;
         private final @SatelliteConstants.ConfigDataSource int mConfigDataSource;
         private final int mCarrierId;
+        private final int mTriggeringEvent;
 
         private SatelliteAccessControllerParams(Builder builder) {
             this.mAccessControlType = builder.mAccessControlType;
@@ -2232,6 +2295,7 @@ public class SatelliteStats {
             this.mCountryCodes = builder.mCountryCodes;
             this.mConfigDataSource = builder.mConfigDataSource;
             this.mCarrierId = builder.mCarrierId;
+            this.mTriggeringEvent = builder.mTriggeringEvent;
         }
 
         public @SatelliteConstants.AccessControlType int getAccessControlType() {
@@ -2274,6 +2338,10 @@ public class SatelliteStats {
             return mCarrierId;
         }
 
+        @SatelliteConstants.TriggeringEvent public int getTriggeringEvent() {
+            return mTriggeringEvent;
+        }
+
         /**
          * A builder class to create {@link SatelliteAccessControllerParams} data structure class
          */
@@ -2288,6 +2356,8 @@ public class SatelliteStats {
             private String[] mCountryCodes;
             private @SatelliteConstants.ConfigDataSource int mConfigDataSource;
             private int mCarrierId = UNKNOWN_CARRIER_ID;
+            private @SatelliteConstants.TriggeringEvent int mTriggeringEvent =
+                    TRIGGERING_EVENT_UNKNOWN;
 
             /**
              * Sets AccessControlType value of {@link #SatelliteAccessController}
@@ -2355,6 +2425,13 @@ public class SatelliteStats {
                 return this;
             }
 
+            /** Sets the triggering evenr for current satellite access controller metric. */
+            public Builder setTriggeringEvent(
+                    @SatelliteConstants.TriggeringEvent int triggeringEvent) {
+                this.mTriggeringEvent = triggeringEvent;
+                return this;
+            }
+
             /**
              * Returns AccessControllerParams, which contains whole component of
              * {@link #SatelliteAccessController} atom
@@ -2378,6 +2455,7 @@ public class SatelliteStats {
                     + ", CountryCodes=" + Arrays.toString(mCountryCodes)
                     + ", ConfigDataSource=" + mConfigDataSource
                     + ", CarrierId=" + mCarrierId
+                    + ", TriggeringEvent=" + mTriggeringEvent
                     + ")";
         }
     }
@@ -2423,6 +2501,11 @@ public class SatelliteStats {
         proto.countOfSatelliteAccessCheckFail = param.getCountOfSatelliteAccessCheckFail();
         proto.isProvisioned = param.isProvisioned();
         proto.carrierId = param.getCarrierId();
+        proto.countOfSatelliteAllowedStateChangedEvents =
+                param.getCountOfSatelliteAllowedStateChangedEvents();
+        proto.countOfSuccessfulLocationQueries = param.getCountOfSuccessfulLocationQueries();
+        proto.countOfFailedLocationQueries = param.getCountOfFailedLocationQueries();
+
         mAtomsStorage.addSatelliteControllerStats(proto);
     }
 
@@ -2578,6 +2661,7 @@ public class SatelliteStats {
         proto.countryCodes = param.getCountryCodes();
         proto.configDataSource = param.getConfigDataSource();
         proto.carrierId = param.getCarrierId();
+        proto.triggeringEvent = param.getTriggeringEvent();
         mAtomsStorage.addSatelliteAccessControllerStats(proto);
     }
 }
