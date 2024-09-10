@@ -872,6 +872,7 @@ public class PersistAtomsStorage {
         atom.satelliteSessionGapAvgSec = stats.satelliteSessionGapAvgSec;
         atom.satelliteSessionGapMaxSec = stats.satelliteSessionGapMaxSec;
         atom.carrierId = stats.carrierId;
+        atom.isDeviceEntitled = stats.isDeviceEntitled;
 
         mAtoms.carrierRoamingSatelliteControllerStats = atomArray;
         saveAtomsToFile(SAVE_TO_FILE_DELAY_FOR_UPDATE_MILLIS);

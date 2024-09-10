@@ -817,6 +817,7 @@ message CarrierRoamingSatelliteControllerStats {
     optional int32 satellite_session_gap_avg_sec = 6;
     optional int32 satellite_session_gap_max_sec = 7;
     optional int32 carrier_id = 8;
+    optional bool is_device_entitled = 9;
 }
 
 message SatelliteEntitlement {

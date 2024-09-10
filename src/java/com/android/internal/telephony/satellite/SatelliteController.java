@@ -206,6 +206,10 @@ public class SatelliteController extends Handler {
     public static final long DEFAULT_CARRIER_EMERGENCY_CALL_WAIT_FOR_CONNECTION_TIMEOUT_MILLIS =
             TimeUnit.SECONDS.toMillis(30);
 
+    /** Sets report entitled metrics cool down to 23 hours to help enforcing privacy requirement.*/
+    private static final long WAIT_FOR_REPORT_ENTITLED_MERTICS_TIMEOUT_MILLIS =
+            TimeUnit.HOURS.toMillis(23);
+
     /** Message codes used in handleMessage() */
     //TODO: Move the Commands and events related to position updates to PointingAppController
     private static final int CMD_START_SATELLITE_TRANSMISSION_UPDATES = 1;
@@ -256,6 +260,7 @@ public class SatelliteController extends Handler {
     private static final int EVENT_UPDATE_SATELLITE_ENABLE_ATTRIBUTES_DONE = 51;
     protected static final int
             EVENT_WAIT_FOR_UPDATE_SATELLITE_ENABLE_ATTRIBUTES_RESPONSE_TIMED_OUT = 52;
+    private static final int EVENT_WAIT_FOR_REPORT_ENTITLED_TO_MERTICS_HYSTERESIS_TIMED_OUT = 53;
 
     @NonNull private static SatelliteController sInstance;
     @NonNull private final Context mContext;
@@ -1765,6 +1770,21 @@ public class SatelliteController extends Handler {
                 synchronized (mIsRadioOnLock) {
                     mRadioOffRequested = false;
                 }
+                break;
+            }
+
+            case EVENT_WAIT_FOR_REPORT_ENTITLED_TO_MERTICS_HYSTERESIS_TIMED_OUT: {
+                // TODO: b/366329504 report carrier roaming metrics for multiple subscription IDs.
+                synchronized (mSupportedSatelliteServicesLock) {
+                    int defaultSubId = mSubscriptionManagerService.getDefaultSubId();
+                    boolean isEntitled = mSatelliteEntitlementStatusPerCarrier.get(defaultSubId,
+                            false);
+                    mCarrierRoamingSatelliteControllerStats.reportIsDeviceEntitled(isEntitled);
+                }
+                sendMessageDelayed(obtainMessage(
+                                EVENT_WAIT_FOR_REPORT_ENTITLED_TO_MERTICS_HYSTERESIS_TIMED_OUT),
+                        WAIT_FOR_REPORT_ENTITLED_MERTICS_TIMEOUT_MILLIS);
+                break;
             }
 
             default:
@@ -3611,6 +3631,13 @@ public class SatelliteController extends Handler {
             if (mSatelliteEntitlementStatusPerCarrier.get(subId, false) != entitlementEnabled) {
                 logd("update the carrier satellite enabled to " + entitlementEnabled);
                 mSatelliteEntitlementStatusPerCarrier.put(subId, entitlementEnabled);
+                mCarrierRoamingSatelliteControllerStats.reportIsDeviceEntitled(entitlementEnabled);
+                if (hasMessages(EVENT_WAIT_FOR_REPORT_ENTITLED_TO_MERTICS_HYSTERESIS_TIMED_OUT)) {
+                    removeMessages(EVENT_WAIT_FOR_REPORT_ENTITLED_TO_MERTICS_HYSTERESIS_TIMED_OUT);
+                    sendMessageDelayed(obtainMessage(
+                                    EVENT_WAIT_FOR_REPORT_ENTITLED_TO_MERTICS_HYSTERESIS_TIMED_OUT),
+                            WAIT_FOR_REPORT_ENTITLED_MERTICS_TIMEOUT_MILLIS);
+                }
                 try {
                     mSubscriptionManagerService.setSubscriptionProperty(subId,
                             SATELLITE_ENTITLEMENT_STATUS, entitlementEnabled ? "1" : "0");
@@ -4904,6 +4931,13 @@ public class SatelliteController extends Handler {
                 }
                 boolean result = entitlementStatus.equals("1");
                 mSatelliteEntitlementStatusPerCarrier.put(subId, result);
+                mCarrierRoamingSatelliteControllerStats.reportIsDeviceEntitled(result);
+                if (hasMessages(EVENT_WAIT_FOR_REPORT_ENTITLED_TO_MERTICS_HYSTERESIS_TIMED_OUT)) {
+                    removeMessages(EVENT_WAIT_FOR_REPORT_ENTITLED_TO_MERTICS_HYSTERESIS_TIMED_OUT);
+                    sendMessageDelayed(obtainMessage(
+                                    EVENT_WAIT_FOR_REPORT_ENTITLED_TO_MERTICS_HYSTERESIS_TIMED_OUT),
+                            WAIT_FOR_REPORT_ENTITLED_MERTICS_TIMEOUT_MILLIS);
+                }
             }
 
             if (!mSatelliteEntitlementStatusPerCarrier.get(subId, false)) {

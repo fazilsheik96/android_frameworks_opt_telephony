@@ -1808,6 +1808,7 @@ public class SatelliteStats {
         private final int mSatelliteSessionGapAvgSec;
         private final int mSatelliteSessionGapMaxSec;
         private static int sCarrierId;
+        private static boolean sIsDeviceEntitled;
 
         private CarrierRoamingSatelliteControllerStatsParams(Builder builder) {
             this.mConfigDataSource = builder.mConfigDataSource;
@@ -1824,6 +1825,11 @@ public class SatelliteStats {
             // Carrier ID value should be updated only when it is meaningful.
             if (builder.mCarrierId.isPresent()) {
                 this.sCarrierId = builder.mCarrierId.get();
+            }
+
+            // isDeviceEntitled value should be updated only when it is meaningful.
+            if (builder.mIsDeviceEntitled.isPresent()) {
+                this.sIsDeviceEntitled = builder.mIsDeviceEntitled.get();
             }
         }
 
@@ -1860,6 +1866,10 @@ public class SatelliteStats {
             return sCarrierId;
         }
 
+        public boolean isDeviceEntitled() {
+            return sIsDeviceEntitled;
+        }
+
         /**
          * A builder class to create {@link CarrierRoamingSatelliteControllerStatsParams}
          * data structure class
@@ -1873,6 +1883,7 @@ public class SatelliteStats {
             private int mSatelliteSessionGapAvgSec = 0;
             private int mSatelliteSessionGapMaxSec = 0;
             private Optional<Integer> mCarrierId = Optional.empty();
+            private Optional<Boolean> mIsDeviceEntitled = Optional.empty();
 
             /**
              * Sets configDataSource value of {@link CarrierRoamingSatelliteControllerStats} atom
@@ -1946,6 +1957,12 @@ public class SatelliteStats {
                 return this;
             }
 
+            /** Sets whether the device is currently entitled or not. */
+            public Builder setIsDeviceEntitled(boolean isDeviceEntitled) {
+                this.mIsDeviceEntitled = Optional.of(isDeviceEntitled);
+                return this;
+            }
+
             /**
              * Returns CarrierRoamingSatelliteControllerStatsParams, which contains whole component
              * of {@link CarrierRoamingSatelliteControllerStats} atom
@@ -1969,7 +1986,8 @@ public class SatelliteStats {
                     + ", satelliteSessionGapMinSec=" + mSatelliteSessionGapMinSec
                     + ", satelliteSessionGapAvgSec=" + mSatelliteSessionGapAvgSec
                     + ", satelliteSessionGapMaxSec=" + mSatelliteSessionGapMaxSec
-                    + ", CarrierId=" + sCarrierId
+                    + ", carrierId=" + sCarrierId
+                    + ", isDeviceEntitled=" + sIsDeviceEntitled
                     + ")";
         }
     }
@@ -2521,6 +2539,7 @@ public class SatelliteStats {
         proto.satelliteSessionGapAvgSec = param.mSatelliteSessionGapAvgSec;
         proto.satelliteSessionGapMaxSec = param.mSatelliteSessionGapMaxSec;
         proto.carrierId = param.getCarrierId();
+        proto.isDeviceEntitled = param.isDeviceEntitled();
         mAtomsStorage.addCarrierRoamingSatelliteControllerStats(proto);
     }
 
