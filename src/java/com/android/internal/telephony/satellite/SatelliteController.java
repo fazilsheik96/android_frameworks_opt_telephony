@@ -2610,7 +2610,7 @@ public class SatelliteController extends Handler {
     }
 
     /**
-     * Inform whether the device is aligned with satellite for demo mode.
+     * Inform whether the device is aligned with the satellite in both real and demo mode.
      *
      * @param isAligned {@true} means device is aligned with the satellite, otherwise {@false}.
      */
