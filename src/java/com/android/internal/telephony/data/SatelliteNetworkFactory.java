@@ -202,7 +202,7 @@ public class SatelliteNetworkFactory extends NetworkFactory {
 
     protected int getTransportTypeFromNetworkRequest(TelephonyNetworkRequest networkRequest) {
         int transport = AccessNetworkConstants.TRANSPORT_TYPE_WWAN;
-        int capability = networkRequest.getApnTypeNetworkCapability();
+        int capability = networkRequest.getHighestPriorityApnTypeNetworkCapability();
         if (capability >= 0) {
             transport = mAccessNetworksManager
                     .getPreferredTransportByNetworkCapability(capability);
