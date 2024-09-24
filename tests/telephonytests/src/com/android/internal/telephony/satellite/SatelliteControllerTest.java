@@ -32,6 +32,7 @@ import static android.telephony.satellite.NtnSignalStrength.NTN_SIGNAL_STRENGTH_
 import static android.telephony.satellite.NtnSignalStrength.NTN_SIGNAL_STRENGTH_NONE;
 import static android.telephony.satellite.NtnSignalStrength.NTN_SIGNAL_STRENGTH_POOR;
 import static android.telephony.satellite.SatelliteManager.KEY_DEMO_MODE_ENABLED;
+import static android.telephony.satellite.SatelliteManager.KEY_DEPROVISION_SATELLITE_TOKENS;
 import static android.telephony.satellite.SatelliteManager.KEY_EMERGENCY_MODE_ENABLED;
 import static android.telephony.satellite.SatelliteManager.KEY_NTN_SIGNAL_STRENGTH;
 import static android.telephony.satellite.SatelliteManager.KEY_PROVISION_SATELLITE_TOKENS;
@@ -4339,7 +4340,6 @@ public class SatelliteControllerTest extends TelephonyTest {
         assertTrue(mProvisionState);
     }
 
-
     @Test
     public void testRegisterForSatelliteSubscriptionProvisionStateChanged() throws Exception {
         when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
@@ -4398,8 +4398,6 @@ public class SatelliteControllerTest extends TelephonyTest {
         inputList.add(list.get(1));
         verifyProvisionSatellite(inputList);
 
-        verify(mMockSatelliteModemInterface, times(2)).updateSatelliteSubscription(anyString(),
-                any());
         assertTrue(waitForForEvents(
                 semaphore, 1, "testRegisterForSatelliteSubscriptionProvisionStateChanged"));
         assertTrue(resultArray[1].getProvisionStatus());
@@ -4409,10 +4407,92 @@ public class SatelliteControllerTest extends TelephonyTest {
         // requested, and verify that onSatelliteSubscriptionProvisionStateChanged is not called.
         verifyProvisionSatellite(inputList);
 
-        verify(mMockSatelliteModemInterface, times(2)).updateSatelliteSubscription(anyString(),
-                any());
         assertFalse(waitForForEvents(
                 semaphore, 1, "testRegisterForSatelliteSubscriptionProvisionStateChanged"));
+
+        // Request deprovision for subscriberID 2, verify that subscriberID 2 is set to
+        // deprovision and that subscriberID 1 is set to provision.
+        verifyDeprovisionSatellite(inputList);
+        assertTrue(waitForForEvents(
+                semaphore, 1, "testRegisterForSatelliteSubscriptionProvisionStateChanged"));
+        assertFalse(resultArray[1].getProvisionStatus());
+        assertEquals(mSubscriberId2, resultArray[1].getSatelliteSubscriberInfo().getSubscriberId());
+        assertTrue(resultArray[0].getProvisionStatus());
+        assertEquals(mSubscriberId, resultArray[0].getSatelliteSubscriberInfo().getSubscriberId());
+
+        // Request deprovision for subscriberID 1, verify that subscriberID 1 is set to deprovision.
+        inputList = new ArrayList<>();
+        inputList.add(list.get(0));
+        verifyDeprovisionSatellite(inputList);
+        assertTrue(waitForForEvents(
+                semaphore, 1, "testRegisterForSatelliteSubscriptionProvisionStateChanged"));
+        assertFalse(resultArray[1].getProvisionStatus());
+        assertEquals(mSubscriberId2, resultArray[1].getSatelliteSubscriberInfo().getSubscriberId());
+        assertFalse(resultArray[0].getProvisionStatus());
+        assertEquals(mSubscriberId, resultArray[0].getSatelliteSubscriberInfo().getSubscriberId());
+
+        // Request provision for subscriberID 2, verify that subscriberID 2 is set to provision.
+        inputList = new ArrayList<>();
+        inputList.add(list.get(1));
+        verifyProvisionSatellite(inputList);
+
+        assertTrue(waitForForEvents(
+                semaphore, 1, "testRegisterForSatelliteSubscriptionProvisionStateChanged"));
+        assertTrue(resultArray[1].getProvisionStatus());
+        assertEquals(mSubscriberId2, resultArray[1].getSatelliteSubscriberInfo().getSubscriberId());
+        assertFalse(resultArray[0].getProvisionStatus());
+        assertEquals(mSubscriberId, resultArray[0].getSatelliteSubscriberInfo().getSubscriberId());
+    }
+
+    private boolean mDeprovisionDone = false;
+    private int mDeprovisionSateResultCode = -1;
+    private Semaphore mDeprovisionSateSemaphore = new Semaphore(0);
+    private ResultReceiver mDeprovisionSatelliteReceiver = new ResultReceiver(null) {
+        @Override
+        protected void onReceiveResult(int resultCode, Bundle resultData) {
+            mDeprovisionSateResultCode = resultCode;
+            logd("DeprovisionSatelliteReceiver: resultCode=" + resultCode);
+            if (resultCode == SATELLITE_RESULT_SUCCESS) {
+                if (resultData.containsKey(KEY_DEPROVISION_SATELLITE_TOKENS)) {
+                    mDeprovisionDone = resultData.getBoolean(KEY_DEPROVISION_SATELLITE_TOKENS);
+                    logd("DeprovisionSatelliteReceiver: deprovision=" + mDeprovisionDone);
+                } else {
+                    loge("KEY_DEPROVISION_SATELLITE_TOKENS does not exist.");
+                    mDeprovisionDone = false;
+                }
+            } else {
+                mDeprovisionDone = false;
+            }
+            try {
+                mDeprovisionSateSemaphore.release();
+            } catch (Exception ex) {
+                loge("DeprovisionSatelliteReceiver: Got exception in releasing semaphore " + ex);
+            }
+        }
+    };
+
+    @Test
+    public void testDeprovisionSatellite() throws Exception {
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
+        verifyRequestSatelliteSubscriberProvisionStatus();
+        List<SatelliteSubscriberInfo> inputList = getExpectedSatelliteSubscriberInfoList();
+        verifyProvisionSatellite(inputList);
+        verifyDeprovisionSatellite(inputList);
+    }
+
+    private void verifyDeprovisionSatellite(List<SatelliteSubscriberInfo> inputList) {
+        doAnswer(invocation -> {
+            Message message = (Message) invocation.getArguments()[1];
+            AsyncResult.forMessage(message, null, new SatelliteException(SATELLITE_RESULT_SUCCESS));
+            message.sendToTarget();
+            return null;
+        }).when(mMockSatelliteModemInterface).updateSatelliteSubscription(anyString(), any());
+
+        mSatelliteControllerUT.deprovisionSatellite(inputList, mDeprovisionSatelliteReceiver);
+        processAllMessages();
+        assertEquals(SATELLITE_RESULT_SUCCESS, mDeprovisionSateResultCode);
+        assertTrue(mDeprovisionDone);
     }
 
     private void setSatelliteSubscriberTesting() throws Exception {

@@ -164,6 +164,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -198,7 +199,8 @@ public class SatelliteController extends Handler {
     public static final int TIMEOUT_TYPE_DEMO_POINTING_ALIGNED_DURATION_MILLIS = 2;
     /** This is used by CTS to override demo pointing not aligned duration. */
     public static final int TIMEOUT_TYPE_DEMO_POINTING_NOT_ALIGNED_DURATION_MILLIS = 3;
-
+    /** This is used by CTS to override evaluate esos profiles prioritization duration. */
+    public static final int TIMEOUT_TYPE_EVALUATE_ESOS_PROFILES_PRIORITIZATION_DURATION_MILLIS = 4;
     /** Key used to read/write OEM-enabled satellite provision status in shared preferences. */
     private static final String OEM_ENABLED_SATELLITE_PROVISION_STATUS_KEY =
             "oem_enabled_satellite_provision_status_key";
@@ -519,7 +521,10 @@ public class SatelliteController extends Handler {
     // key : priority, low value is high, value : List<SubscriptionInfo>
     @GuardedBy("mSatelliteTokenProvisionedLock")
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
-    protected Map<Integer, List<SubscriptionInfo>> mSubsInfoListPerPriority = new HashMap<>();
+    protected TreeMap<Integer, List<SubscriptionInfo>> mSubsInfoListPerPriority = new TreeMap<>();
+    // The ID of the satellite subscription that has highest priority and is provisioned.
+    @GuardedBy("mSatelliteTokenProvisionedLock")
+    private int mSelectedSatelliteSubId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
     // The last ICC ID that framework configured to modem.
     @GuardedBy("mSatelliteTokenProvisionedLock")
     private String mLastConfiguredIccId;
@@ -528,6 +533,7 @@ public class SatelliteController extends Handler {
     private long mWaitTimeForSatelliteEnablingResponse;
     private long mDemoPointingAlignedDurationMillis;
     private long mDemoPointingNotAlignedDurationMillis;
+    private long mEvaluateEsosProfilesPrioritizationDurationMillis;
     private final Object mLock = new Object();
     @GuardedBy("mLock")
     private long mLastEmergencyCallTime;
@@ -716,8 +722,10 @@ public class SatelliteController extends Handler {
                 getDemoPointingNotAlignedDurationMillisFromResources();
         mSatelliteEmergencyModeDurationMillis =
                 getSatelliteEmergencyModeDurationFromOverlayConfig(context);
+        mEvaluateEsosProfilesPrioritizationDurationMillis =
+                getEvaluateEsosProfilesPrioritizationDurationMillis();
         sendMessageDelayed(obtainMessage(CMD_EVALUATE_ESOS_PROFILES_PRIORITIZATION),
-                /* delayMillis= */ TimeUnit.MINUTES.toMillis(1));
+                mEvaluateEsosProfilesPrioritizationDurationMillis);
 
         SubscriptionManager subscriptionManager = mContext.getSystemService(
                 SubscriptionManager.class);
@@ -1834,11 +1842,13 @@ public class SatelliteController extends Handler {
         public ResultReceiver mResult;
         public long mRequestId;
         public String mIccId;
+        public boolean mProvisioned;
 
         RequestProvisionSatelliteArgument(List<SatelliteSubscriberInfo> satelliteSubscriberInfoList,
-                ResultReceiver result) {
+                ResultReceiver result, boolean provisioned) {
             this.mSatelliteSubscriberInfoList = satelliteSubscriberInfoList;
             this.mResult = result;
+            this.mProvisioned = provisioned;
             this.mRequestId = sNextSatelliteEnableRequestId.getAndUpdate(
                     n -> ((n + 1) % Long.MAX_VALUE));
         }
@@ -3042,6 +3052,14 @@ public class SatelliteController extends Handler {
             } else {
                 mDemoPointingNotAlignedDurationMillis = timeoutMillis;
             }
+        } else if (timeoutType
+                == TIMEOUT_TYPE_EVALUATE_ESOS_PROFILES_PRIORITIZATION_DURATION_MILLIS) {
+            if (reset) {
+                mEvaluateEsosProfilesPrioritizationDurationMillis =
+                        getEvaluateEsosProfilesPrioritizationDurationMillis();
+            } else {
+                mEvaluateEsosProfilesPrioritizationDurationMillis = timeoutMillis;
+            }
         } else {
             plogw("Invalid timeoutType=" + timeoutType);
             return false;
@@ -4049,6 +4067,7 @@ public class SatelliteController extends Handler {
                     });
         }
         registerForSatelliteSupportedStateChanged();
+        selectBindingSatelliteSubscription();
     }
 
     private void updateSatelliteEnabledState(boolean enabled, String caller) {
@@ -4158,10 +4177,10 @@ public class SatelliteController extends Handler {
         });
     }
 
-    private void handleEventSatelliteSubscriptionProvisionStateChanged(
-            List<SatelliteSubscriberInfo> newList, boolean provisioned) {
-        logd("handleEventSatelliteSubscriptionProvisionStateChanged: newList=" + newList
-                + " , provisioned=" + provisioned);
+    private boolean updateSatelliteSubscriptionProvisionState(List<SatelliteSubscriberInfo> newList,
+            boolean provisioned) {
+        logd("updateSatelliteSubscriptionProvisionState: List=" + newList + " , provisioned="
+                + provisioned);
         boolean provisionChanged = false;
         synchronized (mSatelliteTokenProvisionedLock) {
             for (SatelliteSubscriberInfo subscriberInfo : newList) {
@@ -4176,19 +4195,18 @@ public class SatelliteController extends Handler {
                 try {
                     mSubscriptionManagerService.setIsSatelliteProvisionedForNonIpDatagram(subId,
                             provisioned);
-                    plogd("handleEventSatelliteSubscriptionProvisionStateChanged: set Provision "
-                            + "state to db subId=" + subId);
+                    plogd("updateSatelliteSubscriptionProvisionState: set Provision state to db "
+                            + "subId=" + subId);
                 } catch (IllegalArgumentException | SecurityException ex) {
                     ploge("setIsSatelliteProvisionedForNonIpDatagram: subId=" + subId + ", ex="
                             + ex);
                 }
             }
         }
-        if (!provisionChanged) {
-            logd("handleEventSatelliteSubscriptionProvisionStateChanged: provision state nothing "
-                    + "changed.");
-            return;
-        }
+        return provisionChanged;
+    }
+
+    private void handleEventSatelliteSubscriptionProvisionStateChanged() {
         List<SatelliteSubscriberProvisionStatus> informList =
                 getPrioritizedSatelliteSubscriberProvisionStatusList();
         plogd("handleEventSatelliteSubscriptionProvisionStateChanged: " + informList);
@@ -4199,6 +4217,7 @@ public class SatelliteController extends Handler {
                     && mProvisionedSubscriberId.containsValue(Boolean.TRUE);
             mControllerMetricsStats.setIsProvisioned(isProvisioned);
         }
+        selectBindingSatelliteSubscription();
         handleStateChangedForCarrierRoamingNtnEligibility();
     }
 
@@ -4561,6 +4580,7 @@ public class SatelliteController extends Handler {
             updateSatelliteEnabledState(
                     false, "moveSatelliteToOffStateAndCleanUpResources");
         }
+        selectBindingSatelliteSubscription();
     }
 
     private void setDemoModeEnabled(boolean enabled) {
@@ -6180,6 +6200,10 @@ public class SatelliteController extends Handler {
         return TimeUnit.SECONDS.toMillis(duration);
     }
 
+    private long getEvaluateEsosProfilesPrioritizationDurationMillis() {
+        return TimeUnit.MINUTES.toMillis(1);
+    }
+
     /**
      * Calculate priority
      * 1. Active eSOS profiles are higher priority than inactive eSOS profiles.
@@ -6252,6 +6276,7 @@ public class SatelliteController extends Handler {
                 mSubsInfoListPerPriority = newSubsInfoListPerPriority;
                 sendBroadCastForProvisionedESOSSubs();
                 mHasSentBroadcast = true;
+                selectBindingSatelliteSubscription();
             }
         }
     }
@@ -6486,19 +6511,45 @@ public class SatelliteController extends Handler {
             @NonNull ResultReceiver result) {
         if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
             result.send(SATELLITE_RESULT_REQUEST_NOT_SUPPORTED, null);
+            logd("provisionSatellite: carrierRoamingNbIotNtn not support");
             return;
         }
-        if (list.size() == 0) {
+        if (list.isEmpty()) {
             result.send(SATELLITE_RESULT_INVALID_ARGUMENTS, null);
+            logd("provisionSatellite: SatelliteSubscriberInfo list is empty");
             return;
         }
 
         logd("provisionSatellite:" + list);
         RequestProvisionSatelliteArgument request = new RequestProvisionSatelliteArgument(list,
-                result);
+                result, true);
         sendRequestAsync(CMD_UPDATE_PROVISION_SATELLITE_TOKEN, request, null);
     }
 
+    /**
+     * Deliver the list of deprovisioned satellite subscriber ids.
+     *
+     * @param list List of deprovisioned satellite subscriber ids.
+     * @param result The result receiver that returns whether deliver success or fail.
+     */
+    public void deprovisionSatellite(@NonNull List<SatelliteSubscriberInfo> list,
+            @NonNull ResultReceiver result) {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            result.send(SATELLITE_RESULT_REQUEST_NOT_SUPPORTED, null);
+            logd("deprovisionSatellite: carrierRoamingNbIotNtn not support");
+            return;
+        }
+        if (list.isEmpty()) {
+            result.send(SATELLITE_RESULT_INVALID_ARGUMENTS, null);
+            logd("deprovisionSatellite: SatelliteSubscriberInfo list is empty");
+            return;
+        }
+
+        logd("deprovisionSatellite:" + list);
+        RequestProvisionSatelliteArgument request = new RequestProvisionSatelliteArgument(list,
+                result, false);
+        sendRequestAsync(CMD_UPDATE_PROVISION_SATELLITE_TOKEN, request, null);
+    }
 
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
     protected void setSatellitePhone(int subId) {
