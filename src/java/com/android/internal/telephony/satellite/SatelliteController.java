@@ -2933,6 +2933,21 @@ public class SatelliteController extends Handler {
     }
 
     /**
+     * This API can be used by only CTS to control ingoring cellular service state event.
+     *
+     * @param enabled Whether to enable boolean config.
+     * @return {@code true} if the value is set successfully, {@code false} otherwise.
+     */
+    public boolean setSatelliteIgnoreCellularServiceState(boolean enabled) {
+        plogd("setSatelliteIgnoreCellularServiceState - " + enabled);
+        if (mSatelliteSessionController == null) {
+            ploge("setSatelliteIgnoreCellularServiceState is not initialized yet");
+            return false;
+        }
+        return mSatelliteSessionController.setSatelliteIgnoreCellularServiceState(enabled);
+    }
+
+    /**
      * This API can be used by only CTS to override timeout durations used by DatagramController
      * module.
      *

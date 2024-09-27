@@ -164,6 +164,7 @@ public class SatelliteSessionController extends StateMachine {
     private long mSatelliteStayAtListeningFromSendingMillis;
     private long mSatelliteStayAtListeningFromReceivingMillis;
     private long mSatelliteNbIotInactivityTimeoutMillis;
+    private boolean mIgnoreCellularServiceState = false;
     private final ConcurrentHashMap<IBinder, ISatelliteModemStateCallback> mListeners;
     @SatelliteManager.SatelliteModemState private int mCurrentState;
     final boolean mIsSatelliteSupported;
@@ -209,8 +210,10 @@ public class SatelliteSessionController extends StateMachine {
             boolean isSatelliteSupported) {
         if (sInstance == null || isSatelliteSupported != sInstance.mIsSatelliteSupported) {
             ConcurrentHashMap<IBinder, ISatelliteModemStateCallback> existingListeners = null;
+            boolean existIgnoreCellularServiceState = false;
             if (sInstance != null) {
                 existingListeners = sInstance.mListeners;
+                existIgnoreCellularServiceState = sInstance.mIgnoreCellularServiceState;
                 sInstance.cleanUpResource();
             }
 
@@ -223,6 +226,10 @@ public class SatelliteSessionController extends StateMachine {
             if (existingListeners != null) {
                 Log.d(TAG, "make() existingListeners: " + existingListeners.size());
                 sInstance.mListeners.putAll(existingListeners);
+            }
+            if (existIgnoreCellularServiceState) {
+                Log.d(TAG, "make() existIgnoreCellularServiceState is true");
+                sInstance.mIgnoreCellularServiceState = true;
             }
         }
         return sInstance;
@@ -464,6 +471,23 @@ public class SatelliteSessionController extends StateMachine {
             mSatelliteNbIotInactivityTimeoutMillis = timeoutMillis;
         }
 
+        return true;
+    }
+
+    /**
+     * This API can be used by only CTS to control ingoring cellular service state event.
+     *
+     * @param enabled Whether to enable boolean config.
+     * @return {@code true} if the value is set successfully, {@code false} otherwise.
+     */
+    public boolean setSatelliteIgnoreCellularServiceState(boolean enabled) {
+        plogd("setSatelliteIgnoreCellularServiceState : "
+                + "old = " + mIgnoreCellularServiceState + " new : " + enabled);
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            return false;
+        }
+
+        mIgnoreCellularServiceState = enabled;
         return true;
     }
 
@@ -864,15 +888,24 @@ public class SatelliteSessionController extends StateMachine {
                     handleSatelliteModemStateChanged(msg);
                     break;
                 case EVENT_ENABLE_CELLULAR_MODEM_WHILE_SATELLITE_MODE_IS_ON_DONE:
-                    handleEventEnableCellularModemWhileSatelliteModeIsOnDone();
+                    if (!mIgnoreCellularServiceState) {
+                        handleEventEnableCellularModemWhileSatelliteModeIsOnDone();
+                    } else {
+                        plogd("IdleState: processing: ignore "
+                                + "EVENT_ENABLE_CELLULAR_MODEM_WHILE_SATELLITE_MODE_IS_ON_DONE");
+                    }
                     break;
                 case EVENT_SERVICE_STATE_CHANGED:
-                    AsyncResult ar = (msg.obj != null) ? (AsyncResult) msg.obj : null;
-                    if (ar == null || ar.result == null) {
-                        plogd("IdleState: processing: can't access ServiceState");
+                    if (!mIgnoreCellularServiceState) {
+                        AsyncResult ar = (msg.obj != null) ? (AsyncResult) msg.obj : null;
+                        if (ar == null || ar.result == null) {
+                            plogd("IdleState: processing: can't access ServiceState");
+                        } else {
+                            ServiceState newServiceState = (ServiceState) ar.result;
+                            handleEventServiceStateChanged(newServiceState);
+                        }
                     } else {
-                        ServiceState newServiceState = (ServiceState) ar.result;
-                        handleEventServiceStateChanged(newServiceState);
+                        plogd("IdleState: processing: ignore EVENT_SERVICE_STATE_CHANGED");
                     }
                     break;
             }
