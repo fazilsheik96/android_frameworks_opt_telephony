@@ -4974,43 +4974,56 @@ public class PersistAtomsStorageTest extends TelephonyTest {
     }
 
     @Test
-    public void addCarrierRoamingSatelliteControllerStats_withExistingEntries() throws Exception {
+    public void addCarrierRoamingSatelliteControllerStats_withExistingCarrierId() throws Exception {
         createEmptyTestFile();
         mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
         mPersistAtomsStorage.addCarrierRoamingSatelliteControllerStats(
-                mCarrierRoamingSatelliteControllerStats1);
+                copyOf(mCarrierRoamingSatelliteControllerStats1));
         mPersistAtomsStorage.addCarrierRoamingSatelliteControllerStats(
-                mCarrierRoamingSatelliteControllerStats2);
+                copyOf(mCarrierRoamingSatelliteControllerStats1));
         mPersistAtomsStorage.incTimeMillis(100L);
 
         CarrierRoamingSatelliteControllerStats expected =
                 new CarrierRoamingSatelliteControllerStats();
-        expected.configDataSource = mCarrierRoamingSatelliteControllerStats2.configDataSource;
+        expected.configDataSource = mCarrierRoamingSatelliteControllerStats1.configDataSource;
         expected.countOfEntitlementStatusQueryRequest =
-                mCarrierRoamingSatelliteControllerStats1.countOfEntitlementStatusQueryRequest
-                        + mCarrierRoamingSatelliteControllerStats2
-                        .countOfEntitlementStatusQueryRequest;
+                mCarrierRoamingSatelliteControllerStats1.countOfEntitlementStatusQueryRequest * 2;
         expected.countOfSatelliteConfigUpdateRequest =
-                mCarrierRoamingSatelliteControllerStats1.countOfSatelliteConfigUpdateRequest
-                        + mCarrierRoamingSatelliteControllerStats2
-                        .countOfSatelliteConfigUpdateRequest;
+                mCarrierRoamingSatelliteControllerStats1.countOfSatelliteConfigUpdateRequest * 2;
         expected.countOfSatelliteNotificationDisplayed =
-                mCarrierRoamingSatelliteControllerStats1.countOfSatelliteNotificationDisplayed
-                + mCarrierRoamingSatelliteControllerStats2
-                        .countOfSatelliteNotificationDisplayed;
+                mCarrierRoamingSatelliteControllerStats1.countOfSatelliteNotificationDisplayed * 2;
         expected.satelliteSessionGapMinSec =
-                mCarrierRoamingSatelliteControllerStats2.satelliteSessionGapMinSec;
+                mCarrierRoamingSatelliteControllerStats1.satelliteSessionGapMinSec;
         expected.satelliteSessionGapAvgSec =
-                mCarrierRoamingSatelliteControllerStats2.satelliteSessionGapAvgSec;
+                mCarrierRoamingSatelliteControllerStats1.satelliteSessionGapAvgSec;
         expected.satelliteSessionGapMaxSec =
-                mCarrierRoamingSatelliteControllerStats2.satelliteSessionGapMaxSec;
-        expected.carrierId = mCarrierRoamingSatelliteControllerStats2.carrierId;
-        expected.isDeviceEntitled = mCarrierRoamingSatelliteControllerStats2.isDeviceEntitled;
-
+                mCarrierRoamingSatelliteControllerStats1.satelliteSessionGapMaxSec;
+        expected.carrierId = mCarrierRoamingSatelliteControllerStats1.carrierId;
+        expected.isDeviceEntitled = mCarrierRoamingSatelliteControllerStats1.isDeviceEntitled;
         verifyCurrentStateSavedToFileOnce();
         CarrierRoamingSatelliteControllerStats[] output =
                 mPersistAtomsStorage.getCarrierRoamingSatelliteControllerStats(0L);
-        assertHasStats(output, expected);
+        assertHasStats(output, expected, 1);
+    }
+
+    @Test
+    public void addCarrierRoamingSatelliteControllerStats_addNewCarrierId() throws Exception {
+        createEmptyTestFile();
+        mPersistAtomsStorage = new TestablePersistAtomsStorage(mContext);
+        mPersistAtomsStorage.addCarrierRoamingSatelliteControllerStats(
+                copyOf(mCarrierRoamingSatelliteControllerStats1));
+        mPersistAtomsStorage.addCarrierRoamingSatelliteControllerStats(
+                copyOf(mCarrierRoamingSatelliteControllerStats2));
+        mPersistAtomsStorage.incTimeMillis(100L);
+
+        CarrierRoamingSatelliteControllerStats expected1 = mCarrierRoamingSatelliteControllerStats1;
+        CarrierRoamingSatelliteControllerStats expected2 = mCarrierRoamingSatelliteControllerStats2;
+
+        CarrierRoamingSatelliteControllerStats[] output =
+                mPersistAtomsStorage.getCarrierRoamingSatelliteControllerStats(0L);
+
+        assertHasStats(output, expected1, 1);
+        assertHasStats(output, expected2, 1);
     }
 
     @Test
@@ -6251,20 +6264,29 @@ public class PersistAtomsStorageTest extends TelephonyTest {
     }
 
     private static void assertHasStats(CarrierRoamingSatelliteControllerStats[] tested,
-            @Nullable CarrierRoamingSatelliteControllerStats expectedStats) {
+            @Nullable CarrierRoamingSatelliteControllerStats expectedStats, int expectedCount) {
         assertNotNull(tested);
-        assertEquals(tested[0].configDataSource, expectedStats.configDataSource);
-        assertEquals(tested[0].countOfEntitlementStatusQueryRequest,
-                expectedStats.countOfEntitlementStatusQueryRequest);
-        assertEquals(tested[0].countOfSatelliteConfigUpdateRequest,
-                expectedStats.countOfSatelliteConfigUpdateRequest);
-        assertEquals(tested[0].countOfSatelliteNotificationDisplayed,
-                expectedStats.countOfSatelliteNotificationDisplayed);
-        assertEquals(tested[0].satelliteSessionGapMinSec, expectedStats.satelliteSessionGapMinSec);
-        assertEquals(tested[0].satelliteSessionGapAvgSec, expectedStats.satelliteSessionGapAvgSec);
-        assertEquals(tested[0].satelliteSessionGapMaxSec, expectedStats.satelliteSessionGapMaxSec);
-        assertEquals(tested[0].carrierId, expectedStats.carrierId);
-        assertEquals(tested[0].isDeviceEntitled, expectedStats.isDeviceEntitled);
+        int count = 0;
+        for (CarrierRoamingSatelliteControllerStats stats : tested) {
+            if (expectedStats.carrierId == stats.carrierId) {
+                assertEquals(expectedStats.configDataSource, stats.configDataSource);
+                assertEquals(expectedStats.countOfEntitlementStatusQueryRequest,
+                        stats.countOfEntitlementStatusQueryRequest);
+                assertEquals(expectedStats.countOfSatelliteConfigUpdateRequest,
+                        stats.countOfSatelliteConfigUpdateRequest);
+                assertEquals(expectedStats.countOfSatelliteNotificationDisplayed,
+                        stats.countOfSatelliteNotificationDisplayed);
+                assertEquals(expectedStats.satelliteSessionGapMinSec,
+                        stats.satelliteSessionGapMinSec);
+                assertEquals(expectedStats.satelliteSessionGapAvgSec,
+                        stats.satelliteSessionGapAvgSec);
+                assertEquals(expectedStats.satelliteSessionGapMaxSec,
+                        stats.satelliteSessionGapMaxSec);
+                assertEquals(expectedStats.isDeviceEntitled, stats.isDeviceEntitled);
+                count++;
+            }
+        }
+        assertEquals(expectedCount, count);
     }
 
     private static void assertHasStatsAndCount(
