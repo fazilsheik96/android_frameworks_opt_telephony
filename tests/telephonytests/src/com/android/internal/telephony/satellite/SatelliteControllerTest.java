@@ -4036,6 +4036,33 @@ public class SatelliteControllerTest extends TelephonyTest {
         processAllMessages();
 
         assertTrue(mSatelliteControllerUT.isCarrierRoamingNtnEligible(mPhone));
+
+        when(mServiceState.getState()).thenReturn(ServiceState.STATE_IN_SERVICE);
+        when(mServiceState2.getState()).thenReturn(ServiceState.STATE_IN_SERVICE);
+        processAllMessages();
+        assertFalse(mSatelliteControllerUT.isCarrierRoamingNtnEligible(mPhone));
+
+        when(mServiceState.getState()).thenReturn(ServiceState.STATE_IN_SERVICE);
+        when(mServiceState2.getState()).thenReturn(ServiceState.STATE_IN_SERVICE);
+        mSatelliteControllerUT.overrideCarrierRoamingNtnEligibilityChanged(true, false);
+        processAllMessages();
+        assertTrue(mSatelliteControllerUT.isCarrierRoamingNtnEligible(mPhone));
+    }
+
+    @Test
+    public void testOverrideCarrierRoamingNtNEligibilityChange() {
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        mSatelliteControllerUT.overrideCarrierRoamingNtnEligibilityChanged(true, false);
+        verify(mPhone, times(1)).notifyCarrierRoamingNtnEligibleStateChanged(eq(true));
+        clearInvocations(mPhone);
+
+        mSatelliteControllerUT.overrideCarrierRoamingNtnEligibilityChanged(false, false);
+        verify(mPhone, times(1)).notifyCarrierRoamingNtnEligibleStateChanged(eq(false));
+        clearInvocations(mPhone);
+
+        mSatelliteControllerUT.overrideCarrierRoamingNtnEligibilityChanged(false, true);
+        verify(mPhone, times(0)).notifyCarrierRoamingNtnEligibleStateChanged(eq(true));
+        clearInvocations(mPhone);
     }
 
     @Test

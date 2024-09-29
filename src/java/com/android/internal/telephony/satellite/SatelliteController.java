@@ -566,6 +566,12 @@ public class SatelliteController extends Handler {
     private String mConfigSatelliteGatewayServicePackage = "";
     private String mConfigSatelliteCarrierRoamingEsosProvisionedClass = "";
 
+    private boolean mIsNotificationShowing = false;
+    private static final String OPEN_MESSAGE_BUTTON = "open_message_button";
+    private static final String HOW_IT_WORKS_BUTTON = "how_it_works_button";
+    private static final String ACTION_NOTIFICATION_CLICK = "action_notification_click";
+    private static final String ACTION_NOTIFICATION_DISMISS = "action_notification_dismiss";
+    private AtomicBoolean mOverrideNtnEligibility;
     private BroadcastReceiver
             mDefaultSmsSubscriptionChangedBroadcastReceiver = new BroadcastReceiver() {
                 @Override
@@ -5342,6 +5348,11 @@ public class SatelliteController extends Handler {
             return;
         }
 
+        if (mOverrideNtnEligibility != null) {
+            mSatellitePhone.notifyCarrierRoamingNtnEligibleStateChanged(currentNtnEligibility);
+            return;
+        }
+
         synchronized (mSatellitePhoneLock) {
             if (mSatellitePhone == null) {
                 ploge("notifyNtnEligibility: mSatellitePhone is null");
@@ -6429,6 +6440,11 @@ public class SatelliteController extends Handler {
             return false;
         }
 
+        if (mOverrideNtnEligibility != null) {
+            // TODO need to send the value from `mOverrideNtnEligibility` or simply true ?
+            return true;
+        }
+
         if (SatelliteServiceUtils.isCellularAvailable()) {
             plogd("isCarrierRoamingNtnEligible[phoneId=" + phone.getPhoneId()
                     + "]: cellular is available");
@@ -6643,5 +6659,44 @@ public class SatelliteController extends Handler {
 
     FeatureFlags getFeatureFlags() {
         return mFeatureFlags;
+    }
+
+    private boolean isSatelliteDisabled() {
+        synchronized (mIsSatelliteEnabledLock) {
+            return ((mIsSatelliteEnabled != null) && !mIsSatelliteEnabled);
+        }
+    }
+
+    private boolean shouldStopWaitForEnableResponseTimer(
+            @NonNull RequestSatelliteEnabledArgument argument) {
+        if (argument.enableSatellite) return true;
+        synchronized (mSatelliteEnabledRequestLock) {
+            return !mWaitingForSatelliteModemOff;
+        }
+    }
+
+    /**
+     * Method to override the Carrier roaming Non-terrestrial network eligibility check
+     *
+     * @param state         flag to enable or disable the Ntn eligibility check.
+     * @param resetRequired reset overriding the check with adb command.
+     */
+    public boolean overrideCarrierRoamingNtnEligibilityChanged(boolean state,
+            boolean resetRequired) {
+        Log.d(TAG, "overrideCarrierRoamingNtnEligibilityChanged state = " + state
+                + "  resetRequired = " + resetRequired);
+        if (resetRequired) {
+            mOverrideNtnEligibility = null;
+        } else {
+            if (mOverrideNtnEligibility == null) {
+                mOverrideNtnEligibility = new AtomicBoolean(state);
+            } else {
+                mOverrideNtnEligibility.set(state);
+            }
+            if (this.mSatellitePhone != null) {
+                updateLastNotifiedNtnEligibilityAndNotify(state);
+            }
+        }
+        return true;
     }
 }
