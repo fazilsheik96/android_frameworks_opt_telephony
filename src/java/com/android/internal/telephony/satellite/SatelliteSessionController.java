@@ -19,6 +19,8 @@ package com.android.internal.telephony.satellite;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_ESOS_INACTIVITY_TIMEOUT_SEC_INT;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT;
 import static android.telephony.CarrierConfigManager.KEY_SATELLITE_ROAMING_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT;
+import static android.telephony.satellite.SatelliteManager.DATAGRAM_TYPE_SMS;
+import static android.telephony.satellite.SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_FAILED;
 import static android.telephony.satellite.SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_NONE;
@@ -125,10 +127,10 @@ public class SatelliteSessionController extends StateMachine {
     private static final int EVENT_SATELLITE_ENABLEMENT_FAILED = 8;
     private static final int EVENT_SCREEN_STATE_CHANGED = 9;
     protected static final int EVENT_SCREEN_OFF_INACTIVITY_TIMER_TIMED_OUT = 10;
-    protected static final int EVENT_CARRIER_ROAMING_NB_IOT_INACTIVITY_TIMER_TIMED_OUT = 11;
+    protected static final int EVENT_ESOS_INACTIVITY_TIMER_TIMED_OUT = 11;
     private static final int EVENT_ENABLE_CELLULAR_MODEM_WHILE_SATELLITE_MODE_IS_ON_DONE = 12;
     private static final int EVENT_SERVICE_STATE_CHANGED = 13;
-
+    protected static final int EVENT_P2P_SMS_INACTIVITY_TIMER_TIMED_OUT = 14;
     private static final long REBIND_INITIAL_DELAY = 2 * 1000; // 2 seconds
     private static final long REBIND_MAXIMUM_DELAY = 64 * 1000; // 1 minute
     private static final int REBIND_MULTIPLIER = 2;
@@ -554,10 +556,12 @@ public class SatelliteSessionController extends StateMachine {
         mIsDeviceAlignedWithSatellite = isAligned;
 
         if (mIsDeviceAlignedWithSatellite) {
-            stopCarrierRoamingNbIotInactivityTimer();
+            stopEsosInactivityTimer();
+            stopP2pSmsInactivityTimer();
         } else {
             if (mCurrentState == SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED) {
-                evaluateStartingCarrierRoamingNbIotInactivityTimer();
+                evaluateStartingEsosInactivityTimer();
+                evaluateStartingP2pSmsInactivityTimer();
             }
         }
     }
@@ -1192,14 +1196,16 @@ public class SatelliteSessionController extends StateMachine {
             mCurrentState = SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED;
             notifyStateChangedEvent(SatelliteManager.SATELLITE_MODEM_STATE_NOT_CONNECTED);
             startNbIotInactivityTimer();
-            evaluateStartingCarrierRoamingNbIotInactivityTimer();
+            evaluateStartingEsosInactivityTimer();
+            evaluateStartingP2pSmsInactivityTimer();
         }
 
         @Override
         public void exit() {
             if (DBG) plogd("Exiting NotConnectedState");
 
-            stopCarrierRoamingNbIotInactivityTimer();
+            stopEsosInactivityTimer();
+            stopP2pSmsInactivityTimer();
         }
 
         @Override
@@ -1213,8 +1219,22 @@ public class SatelliteSessionController extends StateMachine {
                 case EVENT_SATELLITE_MODEM_STATE_CHANGED:
                     handleEventSatelliteModemStateChanged(msg.arg1);
                     break;
-                case EVENT_CARRIER_ROAMING_NB_IOT_INACTIVITY_TIMER_TIMED_OUT:
-                    // fall through
+                case EVENT_ESOS_INACTIVITY_TIMER_TIMED_OUT:
+                    if (isP2pSmsInActivityTimerStarted()) {
+                        plogd("NotConnectedState: processing: P2P_SMS inactivity timer running "
+                                + "can not move to IDLE");
+                    } else {
+                        transitionTo(mIdleState);
+                    }
+                    break;
+                case EVENT_P2P_SMS_INACTIVITY_TIMER_TIMED_OUT:
+                    if (isEsosInActivityTimerStarted()) {
+                        plogd("NotConnectedState: processing: ESOS inactivity timer running "
+                                + "can not move to IDLE");
+                    } else {
+                        transitionTo(mIdleState);
+                    }
+                    break;
                 case EVENT_NB_IOT_INACTIVITY_TIMER_TIMED_OUT:
                     transitionTo(mIdleState);
                     break;
@@ -1251,17 +1271,30 @@ public class SatelliteSessionController extends StateMachine {
                     || datagramTransferState.receiveState
                     == SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT) {
                 stopNbIotInactivityTimer();
-                stopCarrierRoamingNbIotInactivityTimer();
+
+                if (mSatelliteController.getRequestIsEmergency()) {
+                    stopEsosInactivityTimer();
+                }
+                stopP2pSmsInactivityTimer();
             } else if (datagramTransferState.sendState == SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE
                     && datagramTransferState.receiveState
                     == SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE) {
                 startNbIotInactivityTimer();
-                evaluateStartingCarrierRoamingNbIotInactivityTimer();
+                evaluateStartingEsosInactivityTimer();
+                evaluateStartingP2pSmsInactivityTimer();
             } else if (isSending(datagramTransferState.sendState)
                     || isReceiving(datagramTransferState.receiveState)) {
-                restartNbIotInactivityTimer();
-                stopCarrierRoamingNbIotInactivityTimer();
-                evaluateStartingCarrierRoamingNbIotInactivityTimer();
+                stopNbIotInactivityTimer();
+
+                DatagramController datagramController = DatagramController.getInstance();
+                int datagramType = datagramController.getDatagramType();
+                if (datagramType == DATAGRAM_TYPE_SOS_MESSAGE) {
+                    stopEsosInactivityTimer();
+                } else if (datagramType == DATAGRAM_TYPE_SMS) {
+                    stopP2pSmsInactivityTimer();
+                } else {
+                    plogd("datagram type is not SOS_Message and SMS " + datagramType);
+                }
             }
         }
     }
@@ -1368,8 +1401,11 @@ public class SatelliteSessionController extends StateMachine {
             case EVENT_SCREEN_OFF_INACTIVITY_TIMER_TIMED_OUT:
                 whatString = "EVENT_SCREEN_OFF_INACTIVITY_TIMER_TIMED_OUT";
                 break;
-            case EVENT_CARRIER_ROAMING_NB_IOT_INACTIVITY_TIMER_TIMED_OUT:
-                whatString = "EVENT_CARRIER_ROAMING_NB_IOT_INACTIVITY_TIMER_TIMED_OUT";
+            case EVENT_ESOS_INACTIVITY_TIMER_TIMED_OUT:
+                whatString = "EVENT_ESOS_INACTIVITY_TIMER_TIMED_OUT";
+                break;
+            case EVENT_P2P_SMS_INACTIVITY_TIMER_TIMED_OUT:
+                whatString = "EVENT_P2P_SMS_INACTIVITY_TIMER_TIMED_OUT";
                 break;
             case EVENT_ENABLE_CELLULAR_MODEM_WHILE_SATELLITE_MODE_IS_ON_DONE:
                 whatString = "EVENT_ENABLE_CELLULAR_MODEM_WHILE_SATELLITE_MODE_IS_ON_DONE";
@@ -1629,13 +1665,6 @@ public class SatelliteSessionController extends StateMachine {
                 DEFAULT_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC);
     }
 
-    private int getP2pSmsInactivityTimeoutDurationSec() {
-        PersistableBundle config = mSatelliteController.getPersistableBundle(getSubId());
-
-        return config.getInt(KEY_SATELLITE_ROAMING_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT,
-                DEFAULT_P2P_SMS_INACTIVITY_TIMEOUT_SEC);
-    }
-
     private int getEsosInactivityTimeoutDurationSec() {
         PersistableBundle config = mSatelliteController.getPersistableBundle(getSubId());
 
@@ -1643,59 +1672,116 @@ public class SatelliteSessionController extends StateMachine {
                 DEFAULT_ESOS_INACTIVITY_TIMEOUT_SEC);
     }
 
-    private void evaluateStartingCarrierRoamingNbIotInactivityTimer() {
+    private void evaluateStartingEsosInactivityTimer() {
         if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
-            plogd("evaluateStartingCarrierRoamingNbIotInactivityTimer: "
+            plogd("evaluateStartingEsosInactivityTimer: "
                     + "carrierRoamingNbIotNtn is disabled");
             return;
         }
 
+        if (isEsosInActivityTimerStarted()) {
+            plogd("isEsosInActivityTimerStarted: "
+                    + "ESOS inactivity timer already started");
+            return;
+        }
+
         int subId = getSubId();
-        if (!mSatelliteController.isSatelliteRoamingP2pSmSSupported(subId)
-                && !mSatelliteController.isSatelliteEsosSupported(subId)) {
-            plogd("evaluateStartingCarrierRoamingNbIotInactivityTimer: "
-                    + "device does not support P2P SMS and ESOS are disabled");
+        if (!mSatelliteController.isSatelliteEsosSupported(subId)) {
+            plogd("evaluateStartingEsosInactivityTimer: ESOS is not supported");
+            return;
+        }
+
+        if (!mSatelliteController.getRequestIsEmergency()) {
+            plogd("evaluateStartingEsosInactivityTimer: request is not emergency");
             return;
         }
 
         if (mIsDeviceAlignedWithSatellite) {
-            plogd("evaluateStartingCarrierRoamingNbIotInactivityTimer: "
-                    + "can't start inactivity timer due to device aligned satellite");
+            plogd("evaluateStartingEsosInactivityTimer: "
+                    + "can't start ESOS inactivity timer due to device aligned satellite");
             return;
         }
 
-        if (hasMessages(EVENT_CARRIER_ROAMING_NB_IOT_INACTIVITY_TIMER_TIMED_OUT)) {
-            plogd("evaluateStartingCarrierRoamingNbIotInactivityTimer: already started");
-            return;
-        }
-
-        int timeOutMillis;
-        if (mSatelliteController.getRequestIsEmergency()) {
-            timeOutMillis = getEsosInactivityTimeoutDurationSec() * 1000;
-        } else if (mSatelliteController.isInCarrierRoamingNbIotNtn()) {
-            timeOutMillis = getP2pSmsInactivityTimeoutDurationSec() * 1000;
-        } else {
-            plogd("evaluateStartingCarrierRoamingNbIotInactivityTimer: "
-                    + "can't start inactivity timer device is in not P2P SMS and ESOS mode");
-            return;
-        }
-
+        int timeOutMillis = getEsosInactivityTimeoutDurationSec() * 1000;
         DatagramController datagramController = DatagramController.getInstance();
         if (datagramController.isSendingInIdleState()
                 && datagramController.isPollingInIdleState()) {
-            sendMessageDelayed(EVENT_CARRIER_ROAMING_NB_IOT_INACTIVITY_TIMER_TIMED_OUT,
-                    timeOutMillis);
-            plogd("evaluateStartingCarrierRoamingNbIotInactivityTimer: start inactivity timer "
+            sendMessageDelayed(EVENT_ESOS_INACTIVITY_TIMER_TIMED_OUT, timeOutMillis);
+            plogd("evaluateStartingEsosInactivityTimer: start ESOS inactivity timer "
                     + timeOutMillis);
         } else {
-            plogd("evaluateStartingCarrierRoamingNbIotInactivityTimer: "
-                    + "can't start inactivity timer");
+            plogd("evaluateStartingEsosInactivityTimer: "
+                    + "can't start ESOS inactivity timer");
         }
     }
 
-    private void stopCarrierRoamingNbIotInactivityTimer() {
-        removeMessages(EVENT_CARRIER_ROAMING_NB_IOT_INACTIVITY_TIMER_TIMED_OUT);
-        plogd("stopCarrierRoamingNbIotInactivityTimer:");
+    private void stopEsosInactivityTimer() {
+        if (isEsosInActivityTimerStarted()) {
+            removeMessages(EVENT_ESOS_INACTIVITY_TIMER_TIMED_OUT);
+            plogd("stopEsosInactivityTimer: ESOS inactivity timer stopped");
+        }
+    }
+
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    public boolean isEsosInActivityTimerStarted() {
+        return hasMessages(EVENT_ESOS_INACTIVITY_TIMER_TIMED_OUT);
+    }
+
+    private int getP2pSmsInactivityTimeoutDurationSec() {
+        PersistableBundle config = mSatelliteController.getPersistableBundle(getSubId());
+
+        return config.getInt(KEY_SATELLITE_ROAMING_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT,
+                DEFAULT_P2P_SMS_INACTIVITY_TIMEOUT_SEC);
+    }
+
+    private void evaluateStartingP2pSmsInactivityTimer() {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            plogd("evaluateStartingP2pSmsInactivityTimer: "
+                    + "carrierRoamingNbIotNtn is disabled");
+            return;
+        }
+
+        if (isP2pSmsInActivityTimerStarted()) {
+            plogd("isEsosInActivityTimerStarted: "
+                    + "P2P_SMS inactivity timer already started");
+            return;
+        }
+
+        int subId = getSubId();
+        if (!mSatelliteController.isSatelliteRoamingP2pSmSSupported(subId)) {
+            plogd("evaluateStartingEsosInactivityTimer: P2P_SMS is not supported");
+            return;
+        }
+
+        if (mIsDeviceAlignedWithSatellite) {
+            plogd("evaluateStartingEsosInactivityTimer: "
+                    + "can't start P2P_SMS inactivity timer due to device aligned satellite");
+            return;
+        }
+
+        int timeOutMillis = getP2pSmsInactivityTimeoutDurationSec() * 1000;
+        DatagramController datagramController = DatagramController.getInstance();
+        if (datagramController.isSendingInIdleState()
+                && datagramController.isPollingInIdleState()) {
+            sendMessageDelayed(EVENT_P2P_SMS_INACTIVITY_TIMER_TIMED_OUT, timeOutMillis);
+            plogd("evaluateStartingEsosInactivityTimer: start P2P_SMS inactivity timer "
+                    + timeOutMillis);
+        } else {
+            plogd("evaluateStartingEsosInactivityTimer: "
+                    + "can't start P2P_SMS inactivity timer");
+        }
+    }
+
+    private void stopP2pSmsInactivityTimer() {
+        if (isP2pSmsInActivityTimerStarted()) {
+            removeMessages(EVENT_P2P_SMS_INACTIVITY_TIMER_TIMED_OUT);
+            plogd("stopP2pSmsInactivityTimer: P2P_SMS inactivity timer stopped");
+        }
+    }
+
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    public boolean isP2pSmsInActivityTimerStarted() {
+        return hasMessages(EVENT_P2P_SMS_INACTIVITY_TIMER_TIMED_OUT);
     }
 
     private void handleEventScreenOffInactivityTimerTimedOut() {

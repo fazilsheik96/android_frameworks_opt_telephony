@@ -490,6 +490,16 @@ public class DatagramController {
         }
     }
 
+    /** Return the datagram type indicating that the message to be sent or received.
+     * {@link SatelliteManager.DatagramType}
+     */
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
+    public int getDatagramType() {
+        synchronized (mLock) {
+            return mDatagramType;
+        }
+    }
+
     /**
      * This API can be used by only CTS to timeout durations used by DatagramController module.
      *
