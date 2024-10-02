@@ -584,7 +584,7 @@ public class LocaleTracker extends Handler {
             }
 
             if (mFeatureFlags.oemEnabledSatelliteFlag()) {
-                TelephonyCountryDetector.getInstance(mPhone.getContext())
+                TelephonyCountryDetector.getInstance(mPhone.getContext(), mFeatureFlags)
                         .onNetworkCountryCodeChanged(mPhone, countryIso);
             }
             Intent intent = new Intent(TelephonyManager.ACTION_NETWORK_COUNTRY_CHANGED);
