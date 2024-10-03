@@ -198,7 +198,7 @@ public class PhoneSwitcher extends Handler {
     protected final CellularNetworkValidator mValidator;
     private int mPendingSwitchSubId = INVALID_SUBSCRIPTION_ID;
     /** The reason for the last time changing preferred data sub **/
-    private int mLastSwitchPreferredDataReason = -1;
+    protected int mLastSwitchPreferredDataReason = -1;
     private boolean mPendingSwitchNeedValidation;
     @VisibleForTesting
     public final CellularNetworkValidator.ValidationCallback mValidationCallback =
@@ -324,7 +324,7 @@ public class PhoneSwitcher extends Handler {
     private static final int DEFAULT_VALIDATION_EXPIRATION_TIME = 2000;
 
     /** Controller that tracks {@link TelephonyManager#MOBILE_DATA_POLICY_AUTO_DATA_SWITCH} */
-    @NonNull private final AutoDataSwitchController mAutoDataSwitchController;
+    @NonNull protected final AutoDataSwitchController mAutoDataSwitchController;
     /** Callback to deal with requests made by the auto data switch controller. */
     @NonNull private final AutoDataSwitchController.AutoDataSwitchControllerCallback
             mAutoDataSwitchCallback;
@@ -2078,19 +2078,6 @@ public class PhoneSwitcher extends Handler {
         // Notify all registrants
         mActivePhoneRegistrants.notifyRegistrants();
         notifyPreferredDataSubIdChanged();
-    }
-
-    // TODO: To be removed : only for fixing LKG compilation
-    protected void displayAutoDataSwitchNotification() {
-        mAutoDataSwitchController.displayAutoDataSwitchNotification(mPreferredDataPhoneId,
-                mLastSwitchPreferredDataReason == DataSwitch.Reason.DATA_SWITCH_REASON_AUTO);
-    }
-
-    protected boolean isAutoDataSwitchEnabledOnPhone(Phone secondaryDataPhone) {
-        if (secondaryDataPhone != null && secondaryDataPhone.isDataAllowed()) {
-            return true;
-        }
-        return false;
     }
 
     private boolean isPhoneIdValidForRetry(int phoneId) {
