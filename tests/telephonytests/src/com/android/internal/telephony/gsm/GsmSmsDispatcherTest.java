@@ -149,6 +149,7 @@ public class GsmSmsDispatcherTest extends TelephonyTest {
         waitUntilReady();
         mGsmSmsDispatcher = new GsmSMSDispatcher(mPhone, mSmsDispatchersController,
                 mGsmInboundSmsHandler);
+        mCallingUserId = Binder.getCallingUserHandle().getIdentifier();
         processAllMessages();
     }
 
@@ -310,7 +311,7 @@ public class GsmSmsDispatcherTest extends TelephonyTest {
         // send SMS and check sentIntent
         mReceivedTestIntent = false;
         mGsmSmsDispatcher.sendMultipartText("+123" /*destAddr*/, "222" /*scAddr*/, parts,
-                sentIntents, null, null, null, false, -1, false, -1, 0L);
+                sentIntents, null, null, null, mCallingUserId, false, -1, false, -1, 0L, 0L);
 
         waitForMs(500);
         synchronized (mLock) {
@@ -452,7 +453,8 @@ public class GsmSmsDispatcherTest extends TelephonyTest {
         sentIntents.add(sentIntent2);
 
         mGsmSmsDispatcher.sendMultipartText("6501002000" /*destAddr*/, "222" /*scAddr*/, parts,
-                withSentIntents ? sentIntents : null, null, null, null, false, -1, false, -1, 0L);
+                withSentIntents ? sentIntents : null, null, null, null, mCallingUserId,
+                false, -1, false, -1, 0L, 0L);
     }
 
     @Test
@@ -545,7 +547,7 @@ public class GsmSmsDispatcherTest extends TelephonyTest {
             messageRef += parts.size();
         }
         mGsmSmsDispatcher.sendMultipartText("6501002000" /*destAddr*/, "222" /*scAddr*/, parts,
-                null, null, null, null, false, -1, false, -1, 0L);
+                null, null, null, null, mCallingUserId, false, -1, false, -1, 0L, 0L);
         waitForMs(150);
         ArgumentCaptor<String> pduCaptor = ArgumentCaptor.forClass(String.class);
 
