@@ -167,6 +167,7 @@ public class SatelliteSessionController extends StateMachine {
     private boolean mIgnoreCellularServiceState = false;
     private final ConcurrentHashMap<IBinder, ISatelliteModemStateCallback> mListeners;
     @SatelliteManager.SatelliteModemState private int mCurrentState;
+    @SatelliteManager.SatelliteModemState private int mPreviousState;
     final boolean mIsSatelliteSupported;
     private boolean mIsDemoMode = false;
     // Interested in screen off, so use default value true
