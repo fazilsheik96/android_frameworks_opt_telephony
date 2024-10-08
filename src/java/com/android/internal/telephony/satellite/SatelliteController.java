@@ -3510,7 +3510,7 @@ public class SatelliteController extends Handler {
             return false;
         }
 
-        if (!isSatelliteEnabledOrBeingEnabled()) {
+        if (!isSatelliteEnabled()) {
             plogd("iisInCarrierRoamingNbIotNtn: satellite is disabled");
             return false;
         }
@@ -3520,7 +3520,34 @@ public class SatelliteController extends Handler {
             plogd("isInCarrierRoamingNbIotNtn: not carrier roaming ntn eligible.");
             return false;
         }
+        plogd("isInCarrierRoamingNbIotNtn: carrier roaming ntn eligible.");
+        return true;
+    }
 
+    /**
+     * @return {@code true} if phone is in carrier roaming nb iot ntn mode,
+     * else {@return false}
+     */
+    public boolean isInCarrierRoamingNbIotNtn(@NonNull Phone phone) {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            plogd("isInCarrierRoamingNbIotNtn: carrier roaming nb iot ntn "
+                    + "feature flag is disabled");
+            return false;
+        }
+
+        if (!isSatelliteEnabled()) {
+            plogd("iisInCarrierRoamingNbIotNtn: satellite is disabled");
+            return false;
+        }
+
+        if (!isCarrierRoamingNtnEligible(phone)) {
+            plogd("isInCarrierRoamingNbIotNtn: phone associated with subId "
+                      + phone.getSubId()
+                      + " is not carrier roaming ntn eligible.");
+            return false;
+        }
+        plogd("isInCarrierRoamingNbIotNtn: carrier roaming ntn eligible for phone"
+                  + " associated with subId " + phone.getSubId());
         return true;
     }
 
