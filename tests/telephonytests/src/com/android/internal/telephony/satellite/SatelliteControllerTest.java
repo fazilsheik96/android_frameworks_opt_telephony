@@ -1615,6 +1615,11 @@ public class SatelliteControllerTest extends TelephonyTest {
             public void onRegistrationFailure(int causeCode) {
                 logd("onRegistrationFailure: causeCode=" + causeCode);
             }
+
+            @Override
+            public void onTerrestrialNetworkAvailableChanged(boolean isAvailable) {
+                logd("onTerrestrialNetworkAvailableChanged: isAvailable=" + isAvailable);
+            }
         };
         int errorCode = mSatelliteControllerUT.registerForSatelliteModemStateChanged(callback);
         assertEquals(SATELLITE_RESULT_INVALID_TELEPHONY_STATE, errorCode);
@@ -1645,6 +1650,11 @@ public class SatelliteControllerTest extends TelephonyTest {
             @Override
             public void onRegistrationFailure(int causeCode) {
                 logd("onRegistrationFailure: causeCode=" + causeCode);
+            }
+
+            @Override
+            public void onTerrestrialNetworkAvailableChanged(boolean isAvailable) {
+                logd("onTerrestrialNetworkAvailableChanged: isAvailable=" + isAvailable);
             }
         };
         mSatelliteControllerUT.unregisterForModemStateChanged(callback);
@@ -4228,6 +4238,11 @@ public class SatelliteControllerTest extends TelephonyTest {
                 resultErrorCode[0] = causeCode;
                 semaphore.release();
             }
+
+            @Override
+            public void onTerrestrialNetworkAvailableChanged(boolean isAvailable) {
+                logd("onTerrestrialNetworkAvailableChanged: isAvailable=" + isAvailable);
+            }
         };
         resetSatelliteControllerUTToSupportedAndProvisionedState();
         mSatelliteControllerUT.setSatelliteSessionController(mMockSatelliteSessionController);
@@ -4244,6 +4259,86 @@ public class SatelliteControllerTest extends TelephonyTest {
         assertTrue(waitForForEvents(
                 semaphore, 1, "testRegistrationFailureCallback"));
         assertEquals(expectedErrorCode, resultErrorCode[0]);
+    }
+
+    @RequiresFlagsDisabled(FLAG_DEVICE_STATE_PROPERTY_MIGRATION)
+    @Test
+    public void testDetermineIsFoldable_overlayConfigurationValues() {
+        // isFoldable should return false with the base configuration.
+        assertFalse(mSatelliteControllerUT.isFoldable(mContext,
+                mSatelliteControllerUT.getSupportedDeviceStates()));
+
+        mContextFixture.putIntArrayResource(R.array.config_foldedDeviceStates, new int[2]);
+        assertTrue(mSatelliteControllerUT.isFoldable(mContext,
+                mSatelliteControllerUT.getSupportedDeviceStates()));
+    }
+
+    @RequiresFlagsEnabled(FLAG_DEVICE_STATE_PROPERTY_MIGRATION)
+    @Test
+    public void testDetermineIsFoldable_deviceStateManager() {
+        // isFoldable should return false with the base configuration.
+        assertFalse(mSatelliteControllerUT.isFoldable(mContext,
+                mSatelliteControllerUT.getSupportedDeviceStates()));
+
+        DeviceState foldedDeviceState = new DeviceState(new DeviceState.Configuration.Builder(
+                0 /* identifier */, "FOLDED")
+                .setSystemProperties(Set.of(PROPERTY_FOLDABLE_DISPLAY_CONFIGURATION_OUTER_PRIMARY))
+                .setPhysicalProperties(
+                        Set.of(PROPERTY_FOLDABLE_HARDWARE_CONFIGURATION_FOLD_IN_CLOSED))
+                .build());
+        DeviceState unfoldedDeviceState = new DeviceState(new DeviceState.Configuration.Builder(
+                1 /* identifier */, "UNFOLDED")
+                .setSystemProperties(Set.of(PROPERTY_FOLDABLE_DISPLAY_CONFIGURATION_INNER_PRIMARY))
+                .setPhysicalProperties(
+                        Set.of(PROPERTY_FOLDABLE_HARDWARE_CONFIGURATION_FOLD_IN_OPEN))
+                .build());
+        List<DeviceState> foldableDeviceStateList = List.of(foldedDeviceState, unfoldedDeviceState);
+        assertTrue(mSatelliteControllerUT.isFoldable(mContext, foldableDeviceStateList));
+    }
+
+    @Test
+    public void testTerrestrialNetworkAvailableChangedCallback() {
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        Semaphore semaphore = new Semaphore(0);
+        final int[] receivedScanResult = new int[1];
+        ISatelliteModemStateCallback callback = new ISatelliteModemStateCallback.Stub() {
+            @Override
+            public void onSatelliteModemStateChanged(int state) {
+                logd("onSatelliteModemStateChanged: state=" + state);
+            }
+
+            @Override
+            public void onEmergencyModeChanged(boolean isEmergency) {
+                logd("onEmergencyModeChanged: emergency=" + isEmergency);
+            }
+
+            @Override
+            public void onRegistrationFailure(int causeCode) {
+                logd("onRegistrationFailure: causeCode=" + causeCode);
+            }
+
+            @Override
+            public void onTerrestrialNetworkAvailableChanged(boolean isAvailable) {
+                logd("onTerrestrialNetworkAvailableChanged: isAvailable=" + isAvailable);
+                receivedScanResult[0] = isAvailable ? 1 : 0;
+                semaphore.release();
+            }
+        };
+        resetSatelliteControllerUTToSupportedAndProvisionedState();
+        mSatelliteControllerUT.setSatelliteSessionController(mMockSatelliteSessionController);
+
+        int RegisterErrorCode = mSatelliteControllerUT.registerForSatelliteModemStateChanged(
+                callback);
+        assertEquals(SATELLITE_RESULT_SUCCESS, RegisterErrorCode);
+        verify(mMockSatelliteSessionController).registerForSatelliteModemStateChanged(callback);
+
+        int expectedErrorCode = 1;
+        mIIntegerConsumerResults.clear();
+        sendTerrestrialNetworkAvailableChangedEvent(true, null);
+        processAllMessages();
+        assertTrue(waitForForEvents(
+                semaphore, 1, "testRegistrationFailureCallback"));
+        assertEquals(expectedErrorCode, receivedScanResult[0]);
     }
 
     private boolean mProvisionState = false;
@@ -5299,6 +5394,14 @@ public class SatelliteControllerTest extends TelephonyTest {
         Message msg = mSatelliteControllerUT.obtainMessage(
                 54 /* EVENT_SATELLITE_REGISTRATION_FAILURE */);
         msg.obj = new AsyncResult(null, errorCode, exception);
+        msg.sendToTarget();
+    }
+
+    private void sendTerrestrialNetworkAvailableChangedEvent(boolean isAvailable,
+            Throwable exception) {
+        Message msg = mSatelliteControllerUT.obtainMessage(
+                55 /* EVENT_TERRESTRIAL_NETWORK_AVAILABLE_CHANGED */);
+        msg.obj = new AsyncResult(null, isAvailable, exception);
         msg.sendToTarget();
     }
 

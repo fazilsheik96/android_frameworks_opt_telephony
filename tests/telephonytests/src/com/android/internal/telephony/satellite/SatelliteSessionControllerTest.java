@@ -56,6 +56,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.os.PersistableBundle;
+import android.os.RemoteException;
 import android.telephony.ServiceState;
 import android.telephony.satellite.ISatelliteModemStateCallback;
 import android.telephony.satellite.SatelliteManager;
@@ -2076,6 +2077,11 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         @Override
         public void onRegistrationFailure(int causeCode) {
             logd("onRegistrationFailure: causeCode=" + causeCode);
+        }
+
+        @Override
+        public void onTerrestrialNetworkAvailableChanged(boolean isAvailable) {
+            logd("onTerrestrialNetworkAvailableChanged: isAvailable=" + isAvailable);
         }
 
         public boolean waitUntilResultForModemStateChanged() {
