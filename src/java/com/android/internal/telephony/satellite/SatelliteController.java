@@ -70,6 +70,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
 import android.database.ContentObserver;
@@ -3330,7 +3331,7 @@ public class SatelliteController extends Handler {
      * the satellite network {@code plmn}.
      */
     @NonNull
-    public List<Integer> getSupportedSatelliteServices(int subId, String plmn) {
+    public List<Integer> getSupportedSatelliteServicesForPlmn(int subId, String plmn) {
         if (!mFeatureFlags.carrierEnabledSatelliteFlag()) {
             logd("getSupportedSatelliteServices: carrierEnabledSatelliteFlag is disabled");
             return new ArrayList<>();
@@ -4643,6 +4644,7 @@ public class SatelliteController extends Handler {
             if (activeSubIds != null) {
                 for (int subId : activeSubIds) {
                     updateSupportedSatelliteServices(subId);
+                    handleCarrierRoamingNtnAvailableServicesChanged(subId);
                 }
             } else {
                 loge("updateSupportedSatelliteServicesForActiveSubscriptions: "
@@ -6666,7 +6668,7 @@ public class SatelliteController extends Handler {
             @NetworkRegistrationInfo.ServiceType int serviceType) {
         List<String> satellitePlmnList = getSatellitePlmnsForCarrier(subId);
         for (String satellitePlmn : satellitePlmnList) {
-            if (getSupportedSatelliteServices(subId, satellitePlmn).contains(serviceType)) {
+            if (getSupportedSatelliteServicesForPlmn(subId, satellitePlmn).contains(serviceType)) {
                 return true;
             }
         }
@@ -6818,7 +6820,8 @@ public class SatelliteController extends Handler {
         return result;
     }
 
-    private String getConfigSatelliteGatewayServicePackage() {
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    protected String getConfigSatelliteGatewayServicePackage() {
         if (!mChangeIntentComponent) {
             return getStringFromOverlayConfig(
                     R.string.config_satellite_gateway_service_package);
@@ -6884,10 +6887,130 @@ public class SatelliteController extends Handler {
             } else {
                 mOverrideNtnEligibility.set(state);
             }
-            if (this.mSatellitePhone != null) {
-                updateLastNotifiedNtnEligibilityAndNotify(state);
+            synchronized (mSatellitePhoneLock) {
+                if (this.mSatellitePhone != null) {
+                    updateLastNotifiedNtnEligibilityAndNotify(state);
+                }
             }
         }
         return true;
+    }
+
+    /**
+     * This method check for the key KEY_SATELLITE_MAX_DATAGRAM_SIZE in carrier config. If
+     * available it fetches the value and override the same in SatelliteCapabilities. Otherwise it
+     * uses the value in the existed mSatelliteCapabilities.
+     */
+    private void overrideSatelliteCapabilitiesIfApplicable() {
+        synchronized (this.mSatellitePhoneLock) {
+            if (this.mSatellitePhone == null) {
+                return;
+            }
+        }
+        int subId = getSelectedSatelliteSubId();
+        PersistableBundle config = getPersistableBundle(subId);
+        if (config.containsKey(KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE)) {
+            int datagramSize = config.getInt(KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE);
+            SubscriptionInfo subInfo = mSubscriptionManagerService.getSubscriptionInfo(subId);
+            if (!(subInfo == null || subInfo.isOnlyNonTerrestrialNetwork())) {
+                this.mSatelliteCapabilities.setMaxBytesPerOutgoingDatagram(datagramSize);
+            }
+        }
+    }
+
+    private void handleCarrierRoamingNtnAvailableServicesChanged(int subId) {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            plogd("handleCarrierRoamingNtnAvailableServicesChanged: "
+                    + "carrierRoamingNbIotNtn flag is disabled");
+            return;
+        }
+        updateLastNotifiedNtnAvailableServicesAndNotify(subId);
+    }
+
+    private void updateLastNotifiedNtnAvailableServicesAndNotify(int subId) {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            plogd("notifyNtnAvailableServices: carrierRoamingNbIotNtn flag is disabled");
+            return;
+        }
+        synchronized (mSatellitePhoneLock) {
+            if (mSatellitePhone == null) {
+                plogd("updateLastNotifiedNtnAvailableServicesAndNotify: phone is null");
+                return;
+            }
+            if (isSatelliteSupportedViaCarrier(subId)) {
+                int[] services = getSupportedSatelliteServicesForCarrier(subId);
+                if (isP2PSmsDisallowedOnCarrierRoamingNtn(mSatellitePhone)) {
+                    services = Arrays.stream(services).filter(
+                            value -> value != NetworkRegistrationInfo.SERVICE_TYPE_SMS).toArray();
+                }
+                mSatellitePhone.notifyCarrierRoamingNtnAvailableServicesChanged(services);
+            } else {
+                mSatellitePhone.notifyCarrierRoamingNtnAvailableServicesChanged(new int[0]);
+            }
+        }
+    }
+
+    /**
+     * Whether the P2P SMS over carrier roaming satellite is disallowed or not.
+     *
+     * @param phone phone object
+     * return {@code true} when the phone does not support P2P SMS over carrier roaming satellite
+     *        {@code false} otherwise
+     */
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    public boolean isP2PSmsDisallowedOnCarrierRoamingNtn(@NonNull Phone phone) {
+        int subId = phone.getSubId();
+        int carrierRoamingNtnConnectType = getCarrierRoamingNtnConnectType(subId);
+        if (carrierRoamingNtnConnectType == CARRIER_ROAMING_NTN_CONNECT_MANUAL) {
+            // Manual Connected
+            plogd("isP2PSmsDisallowedOnCarrierRoamingNtn: manual connect");
+            String msgPackageName = Telephony.Sms.getDefaultSmsPackage(mContext);
+            String sgPackageName = getConfigSatelliteGatewayServicePackage();
+            if (!isApplicationSupportsP2P(msgPackageName)
+                    || !isApplicationSupportsP2P(sgPackageName)) {
+                plogd("isP2PSmsSupportedOnCarrierRoamingNtn APKs do not supports P2P");
+                return true;
+            }
+        }
+        plogd("isP2PSmsDisallowedOnCarrierRoamingNtn [phoneId="
+                + phone.getPhoneId() + "]: P2P is supported");
+        return false;
+    }
+
+    @NonNull
+    private int[] getSupportedSatelliteServicesForCarrier(int subId) {
+        PersistableBundle config = getPersistableBundle(subId);
+        int[] availableServices = config.getIntArray(
+                KEY_CARRIER_ROAMING_SATELLITE_DEFAULT_SERVICES_INT_ARRAY);
+        if (availableServices == null) {
+            logd("getSupportedSatelliteServicesForCarrier: defaultCapabilities is null");
+            return new int[0];
+        }
+        logd("getSupportedSatelliteServicesForCarrier: subId=" + subId
+                + ", return default values " + Arrays.toString(availableServices));
+        return availableServices;
+    }
+
+/**
+ * Whether application supports the P2P SMS to connect to carrier roaming non-terrestrial network.
+ *
+ * @param packageName application's default package name
+ * return {@code true} when the application supports P2P SMS over the roaming satellite
+ */
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
+    public boolean isApplicationSupportsP2P(String packageName) {
+        PackageManager pm = mContext.getPackageManager();
+        ApplicationInfo applicationInfo = new ApplicationInfo();
+        try {
+            applicationInfo = pm.getApplicationInfo(packageName, PackageManager.GET_META_DATA);
+        } catch (PackageManager.NameNotFoundException e) {
+            logd("isApplicationSupportsP2P pkgName: " + packageName + " is not installed.");
+        }
+        if (applicationInfo == null || applicationInfo.metaData == null) {
+            logd("isApplicationSupportsP2P pkgName: " + packageName + " meta-data info is empty.");
+            return false;
+        }
+        return applicationInfo.metaData.getBoolean(
+                SatelliteManager.METADATA_SATELLITE_MANUAL_CONNECT_P2P_SUPPORT);
     }
 }

@@ -26,6 +26,7 @@ import android.telephony.CallQuality;
 import android.telephony.CellIdentity;
 import android.telephony.CellInfo;
 import android.telephony.LinkCapacityEstimate;
+import android.telephony.NetworkRegistrationInfo;
 import android.telephony.PhoneCapability;
 import android.telephony.PhysicalChannelConfig;
 import android.telephony.PreciseDataConnectionState;
@@ -159,4 +160,8 @@ public interface PhoneNotifier {
 
     /** Notify eligibility to connect to carrier roaming non-terrestrial network changed. */
     void notifyCarrierRoamingNtnEligibleStateChanged(Phone sender, boolean eligible);
+
+    /** Notify carrier roaming non-terrestrial available services changed. */
+    void notifyCarrierRoamingNtnAvailableServicesChanged(
+            Phone sender, @NetworkRegistrationInfo.ServiceType int[] availableServices);
 }

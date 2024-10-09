@@ -5484,6 +5484,15 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
         mNotifier.notifyCarrierRoamingNtnEligibleStateChanged(this, eligible);
     }
 
+    /**
+     * Notify external listeners that carrier roaming non-terrestrial available services changed.
+     * @param availableServices The list of the supported services.
+     */
+    public void notifyCarrierRoamingNtnAvailableServicesChanged(
+            @NetworkRegistrationInfo.ServiceType int[] availableServices) {
+        mNotifier.notifyCarrierRoamingNtnAvailableServicesChanged(this, availableServices);
+    }
+
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {
         pw.println("Phone: subId=" + getSubId());
         pw.println(" mPhoneId=" + mPhoneId);

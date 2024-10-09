@@ -26,6 +26,7 @@ import android.telephony.CallQuality;
 import android.telephony.CellIdentity;
 import android.telephony.CellInfo;
 import android.telephony.LinkCapacityEstimate;
+import android.telephony.NetworkRegistrationInfo;
 import android.telephony.PhoneCapability;
 import android.telephony.PhysicalChannelConfig;
 import android.telephony.PreciseCallState;
@@ -328,6 +329,13 @@ public class DefaultPhoneNotifier implements PhoneNotifier {
     public void notifyCarrierRoamingNtnEligibleStateChanged(Phone sender, boolean eligible) {
         mTelephonyRegistryMgr.notifyCarrierRoamingNtnEligibleStateChanged(
                 sender.getSubId(), eligible);
+    }
+
+    @Override
+    public void notifyCarrierRoamingNtnAvailableServicesChanged(
+            Phone sender, @NetworkRegistrationInfo.ServiceType int[] availableServices) {
+        mTelephonyRegistryMgr.notifyCarrierRoamingNtnAvailableServicesChanged(
+                sender.getSubId(), availableServices);
     }
 
     /**

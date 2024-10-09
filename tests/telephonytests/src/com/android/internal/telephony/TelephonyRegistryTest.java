@@ -125,6 +125,7 @@ public class TelephonyRegistryTest extends TelephonyTest {
     private Set<Integer> mSimultaneousCallingSubscriptions;
     private boolean mCarrierRoamingNtnMode;
     private boolean mCarrierRoamingNtnEligible;
+    private List<Integer> mCarrierRoamingNtnAvailableServices;
 
     // All events contribute to TelephonyRegistry#isPhoneStatePermissionRequired
     private static final Set<Integer> READ_PHONE_STATE_EVENTS;
@@ -307,6 +308,12 @@ public class TelephonyRegistryTest extends TelephonyTest {
         public void onCarrierRoamingNtnEligibleStateChanged(boolean eligible) {
             invocationCount.incrementAndGet();
             mCarrierRoamingNtnEligible = eligible;
+        }
+
+        @Override
+        public void onCarrierRoamingNtnAvailableServicesChanged(List<Integer> services) {
+            invocationCount.incrementAndGet();
+            mCarrierRoamingNtnAvailableServices = services;
         }
     }
 
@@ -1613,5 +1620,24 @@ public class TelephonyRegistryTest extends TelephonyTest {
         mTelephonyRegistry.notifyCarrierRoamingNtnEligibleStateChanged(subId, true);
         processAllMessages();
         assertTrue(mCarrierRoamingNtnEligible);
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_CARRIER_ROAMING_NB_IOT_NTN)
+    public void testNotifyCarrierRoamingNtnAvailableServicesChanged() {
+        int subId = INVALID_SUBSCRIPTION_ID;
+        doReturn(mMockSubInfo).when(mSubscriptionManager).getActiveSubscriptionInfo(anyInt());
+        doReturn(0/*slotIndex*/).when(mMockSubInfo).getSimSlotIndex();
+        int[] events = {TelephonyCallback.EVENT_CARRIER_ROAMING_NTN_AVAILABLE_SERVICES_CHANGED};
+
+        mTelephonyRegistry.listenWithEventList(false, false, subId, mContext.getOpPackageName(),
+                mContext.getAttributionTag(), mTelephonyCallback.callback, events, true);
+
+        int[] services = {3, 6};
+        mTelephonyRegistry.notifyCarrierRoamingNtnAvailableServicesChanged(subId, services);
+        processAllMessages();
+        int[] carrierServices = mCarrierRoamingNtnAvailableServices.stream()
+                .mapToInt(Integer::intValue).toArray();
+        assertTrue(Arrays.equals(carrierServices, services));
     }
 }
