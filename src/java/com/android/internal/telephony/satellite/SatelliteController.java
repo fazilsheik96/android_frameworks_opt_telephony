@@ -3227,6 +3227,36 @@ public class SatelliteController extends Handler {
     }
 
     /**
+     * Notify SMS received.
+     *
+     * @param subId The subId of the subscription used to receive SMS
+     */
+    public void onSmsReceived(int subId) {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
+            logd("onSmsReceived: carrierRoamingNbIotNtn is disabled");
+            return;
+        }
+
+        if (!isSatelliteEnabled()) {
+            logd("onSmsReceived: satellite is not enabled");
+            return;
+        }
+
+        int satelliteSubId = getHighestPrioritySubscrption();
+        if (subId != satelliteSubId) {
+            logd("onSmsReceived: SMS received " + subId
+                    + ", but not satellite subscription " + satelliteSubId);
+            return;
+        }
+
+        if (mDatagramController != null) {
+            mDatagramController.onSmsReceived(subId);
+        } else {
+            logd("onSmsReceived: DatagramController is not initialized");
+        }
+    }
+
+    /**
      * @return {@code true} if satellite is supported via OEM on the device,
      * {@code  false} otherwise.
      */
