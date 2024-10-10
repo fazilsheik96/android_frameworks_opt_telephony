@@ -54,7 +54,6 @@ import com.android.internal.telephony.data.TelephonyNetworkAgent.TelephonyNetwor
 import com.android.internal.telephony.data.SatelliteNetworkFactory;
 import com.android.internal.telephony.data.TelephonyNetworkFactory;
 import com.android.internal.telephony.emergency.EmergencyNumberTracker;
-import com.android.internal.telephony.flags.FeatureFlagsImpl;
 import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.flags.FeatureFlagsImpl;
 import com.android.internal.telephony.imsphone.ImsExternalCallTracker;
@@ -692,9 +691,9 @@ public class TelephonyComponentFactory {
     }
 
     public SubscriptionManagerService makeSubscriptionManagerService(
-            @NonNull Context context, @NonNull Looper looper) {
+            @NonNull Context context, @NonNull Looper looper, @NonNull FeatureFlags featureFlags) {
         Rlog.i(TAG, "make SubscriptionManagerService");
-        return new SubscriptionManagerService(context, looper, new FeatureFlagsImpl());
+        return new SubscriptionManagerService(context, looper, featureFlags);
     }
 
     /** Create CellularIdentifierDisclosureNotifier. */
