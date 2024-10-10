@@ -4678,25 +4678,29 @@ public class SatelliteController extends Handler {
     @NonNull private PersistableBundle getConfigForSubId(int subId) {
         PersistableBundle config = null;
         if (mCarrierConfigManager != null) {
-            config = mCarrierConfigManager.getConfigForSubId(subId,
-                    KEY_CARRIER_SUPPORTED_SATELLITE_SERVICES_PER_PROVIDER_BUNDLE,
-                    KEY_SATELLITE_ATTACH_SUPPORTED_BOOL,
-                    KEY_SATELLITE_ROAMING_TURN_OFF_SESSION_FOR_EMERGENCY_CALL_BOOL,
-                    KEY_SATELLITE_CONNECTION_HYSTERESIS_SEC_INT,
-                    KEY_SATELLITE_ENTITLEMENT_SUPPORTED_BOOL,
-                    KEY_CARRIER_ROAMING_SATELLITE_DEFAULT_SERVICES_INT_ARRAY,
-                    KEY_EMERGENCY_MESSAGING_SUPPORTED_BOOL,
-                    KEY_EMERGENCY_CALL_TO_SATELLITE_T911_HANDOVER_TIMEOUT_MILLIS_INT,
-                    KEY_SATELLITE_ESOS_SUPPORTED_BOOL,
-                    KEY_SATELLITE_ROAMING_P2P_SMS_SUPPORTED_BOOL,
-                    KEY_SATELLITE_NIDD_APN_NAME_STRING,
-                    KEY_CARRIER_ROAMING_NTN_CONNECT_TYPE_INT,
-                    KEY_CARRIER_SUPPORTED_SATELLITE_NOTIFICATION_HYSTERESIS_SEC_INT,
-                    KEY_CARRIER_ROAMING_NTN_EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_INT,
-                    KEY_SATELLITE_ROAMING_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT,
-                    KEY_SATELLITE_ROAMING_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT,
-                    KEY_SATELLITE_ROAMING_ESOS_INACTIVITY_TIMEOUT_SEC_INT
-            );
+            try {
+                config = mCarrierConfigManager.getConfigForSubId(subId,
+                        KEY_CARRIER_SUPPORTED_SATELLITE_SERVICES_PER_PROVIDER_BUNDLE,
+                        KEY_SATELLITE_ATTACH_SUPPORTED_BOOL,
+                        KEY_SATELLITE_ROAMING_TURN_OFF_SESSION_FOR_EMERGENCY_CALL_BOOL,
+                        KEY_SATELLITE_CONNECTION_HYSTERESIS_SEC_INT,
+                        KEY_SATELLITE_ENTITLEMENT_SUPPORTED_BOOL,
+                        KEY_CARRIER_ROAMING_SATELLITE_DEFAULT_SERVICES_INT_ARRAY,
+                        KEY_EMERGENCY_MESSAGING_SUPPORTED_BOOL,
+                        KEY_EMERGENCY_CALL_TO_SATELLITE_T911_HANDOVER_TIMEOUT_MILLIS_INT,
+                        KEY_SATELLITE_ESOS_SUPPORTED_BOOL,
+                        KEY_SATELLITE_ROAMING_P2P_SMS_SUPPORTED_BOOL,
+                        KEY_SATELLITE_NIDD_APN_NAME_STRING,
+                        KEY_CARRIER_ROAMING_NTN_CONNECT_TYPE_INT,
+                        KEY_CARRIER_SUPPORTED_SATELLITE_NOTIFICATION_HYSTERESIS_SEC_INT,
+                        KEY_CARRIER_ROAMING_NTN_EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_INT,
+                        KEY_SATELLITE_ROAMING_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT,
+                        KEY_SATELLITE_ROAMING_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT,
+                        KEY_SATELLITE_ROAMING_ESOS_INACTIVITY_TIMEOUT_SEC_INT
+                );
+            } catch (Exception e) {
+                logw("getConfigForSubId: " + e);
+            }
         }
         if (config == null || config.isEmpty()) {
             config = CarrierConfigManager.getDefaultConfig();
