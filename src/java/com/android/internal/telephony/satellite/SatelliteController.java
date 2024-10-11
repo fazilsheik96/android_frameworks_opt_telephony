@@ -1723,25 +1723,24 @@ public class SatelliteController extends Handler {
                 setSatellitePhone(subId);
                 String iccId = mSubscriptionManagerService.getSubscriptionInfo(subId).getIccId();
                 argument.setIccId(iccId);
-                boolean sendResponse = false;
                 synchronized (mSatelliteTokenProvisionedLock) {
                     if (!iccId.equals(mLastConfiguredIccId)) {
                         logd("updateSatelliteSubscription subId=" + subId + ", iccId=" + iccId
                                 + " to modem");
                         mSatelliteModemInterface.updateSatelliteSubscription(iccId, onCompleted);
-                    } else {
-                        sendResponse = true;
                     }
                 }
-                handleEventSatelliteSubscriptionProvisionStateChanged(
-                        argument.mSatelliteSubscriberInfoList, true);
-                if (sendResponse) {
-                    // The response is sent immediately because the ICCID has already been
-                    // delivered to the modem.
-                    Bundle bundle = new Bundle();
-                    bundle.putBoolean(SatelliteManager.KEY_PROVISION_SATELLITE_TOKENS, true);
-                    argument.mResult.send(SATELLITE_RESULT_SUCCESS, bundle);
+                if (provisionChanged) {
+                    handleEventSatelliteSubscriptionProvisionStateChanged();
                 }
+
+                // The response is sent immediately because the ICCID has already been
+                // delivered to the modem.
+                Bundle bundle = new Bundle();
+                bundle.putBoolean(
+                        argument.mProvisioned ? SatelliteManager.KEY_PROVISION_SATELLITE_TOKENS
+                                : SatelliteManager.KEY_DEPROVISION_SATELLITE_TOKENS, true);
+                argument.mResult.send(SATELLITE_RESULT_SUCCESS, bundle);
                 break;
             }
 
@@ -1758,10 +1757,6 @@ public class SatelliteController extends Handler {
                     }
                 }
                 logd("updateSatelliteSubscription result=" + error);
-                Bundle bundle = new Bundle();
-                bundle.putBoolean(SatelliteManager.KEY_PROVISION_SATELLITE_TOKENS,
-                        error == SATELLITE_RESULT_SUCCESS);
-                argument.mResult.send(error, bundle);
                 break;
             }
 
