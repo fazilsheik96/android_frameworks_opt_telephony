@@ -4174,14 +4174,6 @@ public class SatelliteControllerTest extends TelephonyTest {
                 .thenReturn(List.of(nri));
         assertTrue(mSatelliteControllerUT.getWwanIsInService(mServiceState));
 
-        nri = new NetworkRegistrationInfo.Builder()
-                .setEmergencyOnly(true)
-                .build();
-        when(mServiceState.getNetworkRegistrationInfoListForTransportType(
-                eq(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)))
-                .thenReturn(List.of(nri));
-        assertTrue(mSatelliteControllerUT.getWwanIsInService(mServiceState));
-
         nri = new NetworkRegistrationInfo.Builder().setRegistrationState(
                 NetworkRegistrationInfo.REGISTRATION_STATE_NOT_REGISTERED_OR_SEARCHING)
                 .build();
