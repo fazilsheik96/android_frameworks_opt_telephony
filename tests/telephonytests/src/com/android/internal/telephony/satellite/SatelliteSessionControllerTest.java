@@ -747,6 +747,79 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
     }
 
     @Test
+    public void testEsosP2pSmsInactivityTimerInConnectedState() {
+        // Send eSOS and SMS
+        // After 10 minutes SatelliteSessionController moves to idle
+        // TN network reports IN_SERVICE
+        // Report the callback only and don't auto exit
+
+        long passedTime = 0;
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        when(mMockSatelliteController.isSatelliteAttachRequired()).thenReturn(true);
+        // Support ESOS
+        when(mMockSatelliteController.isSatelliteEsosSupported(anyInt())).thenReturn(true);
+        when(mMockSatelliteController.getRequestIsEmergency()).thenReturn(true);
+        // Support P2P_SMS
+        when(mMockSatelliteController.isSatelliteRoamingP2pSmSSupported(
+                anyInt())).thenReturn(true);
+
+        // Setup carrier config for timer values
+        PersistableBundle bundle = new PersistableBundle();
+        bundle.putInt(KEY_SATELLITE_ROAMING_ESOS_INACTIVITY_TIMEOUT_SEC_INT,
+                ESOS_INACTIVITY_TIMEOUT_SEC);
+        bundle.putInt(KEY_SATELLITE_ROAMING_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT,
+                P2P_SMS_INACTIVITY_TIMEOUT_SEC);
+        when(mMockSatelliteController.getPersistableBundle(anyInt())).thenReturn(bundle);
+
+        // Since satellite is supported, SatelliteSessionController should move to POWER_OFF state.
+        assertNotNull(mTestSatelliteSessionController);
+        mTestSatelliteSessionController.setSatelliteEnabledForNtnOnlySubscription(false);
+        assertEquals(STATE_POWER_OFF, mTestSatelliteSessionController.getCurrentStateName());
+        // Set up Datagram SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE
+        setupDatagramTransferringState(true);
+
+        moveToNotConnectedState();
+        moveNotConnectedToConnectedState();
+
+        // Verify that ESOS, P2P_SMS timer are started.
+        verifyEsosP2pSmsInactivityTimer(true, true);
+
+        // Sent ESOS
+        // CONNECTED -> TRANSFERRING -> CONNECTED
+        sendMessage(DATAGRAM_TYPE_SOS_MESSAGE);
+
+        // Verify that ESOS, P2P_SMS timer are restarted.
+        verifyEsosP2pSmsInactivityTimer(true, true);
+
+        // Sent SMS
+        // CONNECTED -> TRANSFERRING -> CONNECTED
+        sendMessage(DATAGRAM_TYPE_SMS);
+
+        // Verify that ESOS, P2P_SMS timer are restarted.
+        verifyEsosP2pSmsInactivityTimer(true, true);
+
+        // Time shift to cause P2P_SMS timeout
+        passedTime = P2P_SMS_INACTIVITY_TIMEOUT_SEC * 1000;
+        moveTimeForward(P2P_SMS_INACTIVITY_TIMEOUT_SEC * 1000);
+        processAllMessages();
+
+        // Verify that keep ESOS timer, expired P2P_SMS timer.
+        // CONNECTED state
+        verifyEsosP2pSmsInactivityTimer(true, false);
+        assertEquals(STATE_CONNECTED, mTestSatelliteSessionController.getCurrentStateName());
+
+        // Time shift to cause ESOS timeout
+        moveTimeForward(ESOS_INACTIVITY_TIMEOUT_SEC * 1000 - passedTime);
+        processAllMessages();
+
+        // Verify that expired ESOS and P2P_SMS timer
+        // reported IDLE state.
+        verifyEsosP2pSmsInactivityTimer(false, false);
+        assertSuccessfulModemStateChangedCallback(
+                mTestSatelliteModemStateCallback, SatelliteManager.SATELLITE_MODEM_STATE_IDLE);
+    }
+
+    @Test
     public void testDisableSatelliteWhenCellularModemEnabledInIdleMode() {
         when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
         doNothing().when(mDeviceStateMonitor).registerForScreenStateChanged(

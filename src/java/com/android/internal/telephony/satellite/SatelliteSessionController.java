@@ -1311,11 +1311,16 @@ public class SatelliteSessionController extends StateMachine {
             mCurrentState = SATELLITE_MODEM_STATE_CONNECTED;
             notifyStateChangedEvent(SATELLITE_MODEM_STATE_CONNECTED);
             startNbIotInactivityTimer();
+            evaluateStartingEsosInactivityTimer();
+            evaluateStartingP2pSmsInactivityTimer();
         }
 
         @Override
         public void exit() {
             if (DBG) plogd("Exiting ConnectedState");
+
+            stopEsosInactivityTimer();
+            stopP2pSmsInactivityTimer();
         }
 
         @Override
@@ -1343,6 +1348,22 @@ public class SatelliteSessionController extends StateMachine {
                     break;
                 case EVENT_SCREEN_OFF_INACTIVITY_TIMER_TIMED_OUT:
                     handleEventScreenOffInactivityTimerTimedOut();
+                    break;
+                case EVENT_ESOS_INACTIVITY_TIMER_TIMED_OUT:
+                    if (isP2pSmsInActivityTimerStarted()) {
+                        plogd("ConnectedState: processing: P2P_SMS inactivity timer running "
+                                + "can not move to IDLE");
+                    } else {
+                        transitionTo(mIdleState);
+                    }
+                    break;
+                case EVENT_P2P_SMS_INACTIVITY_TIMER_TIMED_OUT:
+                    if (isEsosInActivityTimerStarted()) {
+                        plogd("ConnectedState: processing: ESOS inactivity timer running "
+                                + "can not move to IDLE");
+                    } else {
+                        transitionTo(mIdleState);
+                    }
                     break;
             }
             // Ignore all unexpected events.
