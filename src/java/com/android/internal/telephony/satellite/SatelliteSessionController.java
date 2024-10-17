@@ -40,18 +40,22 @@ import static android.telephony.satellite.SatelliteManager.SATELLITE_RESULT_SUCC
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
+import android.app.AlarmManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.os.AsyncResult;
 import android.os.Build;
+import android.os.HandlerExecutor;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Message;
 import android.os.PersistableBundle;
 import android.os.RemoteException;
+import android.os.SystemClock;
 import android.os.SystemProperties;
+import android.os.WorkSource;
 import android.telephony.DropBoxManagerLoggerBackend;
 import android.telephony.PersistentLogger;
 import android.telephony.Rlog;
@@ -183,8 +187,15 @@ public class SatelliteSessionController extends StateMachine {
     @Nullable private PersistentLogger mPersistentLogger = null;
     @Nullable private DeviceStateMonitor mDeviceStateMonitor;
     @NonNull private SessionMetricsStats mSessionMetricsStats;
-
     @NonNull private FeatureFlags mFeatureFlags;
+    @NonNull private AlarmManager mAlarmManager;
+    private final AlarmManager.OnAlarmListener mAlarmListener = new AlarmManager.OnAlarmListener() {
+        @Override
+        public void onAlarm() {
+            plogd("onAlarm: screen off timer expired");
+            sendMessage(EVENT_SCREEN_OFF_INACTIVITY_TIMER_TIMED_OUT);
+        }
+    };
 
 
     /**
@@ -297,6 +308,7 @@ public class SatelliteSessionController extends StateMachine {
         }
         mDeviceStateMonitor = satellitePhone.getDeviceStateMonitor();
         mSessionMetricsStats = SessionMetricsStats.getInstance();
+        mAlarmManager = mContext.getSystemService(AlarmManager.class);
 
         if (mFeatureFlags.carrierRoamingNbIotNtn()) {
             // Register to received Cellular service state
@@ -595,6 +607,9 @@ public class SatelliteSessionController extends StateMachine {
         plogd("cleanUpResource");
         mIsDeviceAlignedWithSatellite = false;
         unregisterForScreenStateChanged();
+        if (mAlarmManager != null) {
+            mAlarmManager.cancel(mAlarmListener);
+        }
 
         if (mFeatureFlags.carrierRoamingNbIotNtn()) {
             // Register to received Cellular service state
@@ -620,6 +635,16 @@ public class SatelliteSessionController extends StateMachine {
     @VisibleForTesting
     public void onCellularServiceStateChanged(ServiceState serviceState) {
         sendMessage(EVENT_SERVICE_STATE_CHANGED, new AsyncResult(null, serviceState, null));
+    }
+
+    /**
+     * Uses this function to set AlarmManager object for testing.
+     *
+     * @param alarmManager The instance of AlarmManager.
+     */
+    @VisibleForTesting
+    public void setAlarmManager(AlarmManager alarmManager) {
+        mAlarmManager = alarmManager;
     }
 
     private boolean isDemoMode() {
@@ -1666,13 +1691,26 @@ public class SatelliteSessionController extends StateMachine {
         if (!screenOn) {
             // Screen off, start timer
             int timeoutMillis = getScreenOffInactivityTimeoutDurationSec() * 1000;
-            sendMessageDelayed(EVENT_SCREEN_OFF_INACTIVITY_TIMER_TIMED_OUT, timeoutMillis);
 
+            if (mAlarmManager == null) {
+                plogd("handleEventScreenStateChanged: can not access AlarmManager to start timer");
+                return;
+            }
+
+            mAlarmManager.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    SystemClock.elapsedRealtime() + timeoutMillis,
+                    TAG, new HandlerExecutor(getHandler()), new WorkSource(), mAlarmListener);
             plogd("handleEventScreenStateChanged: start timer " + timeoutMillis);
         } else {
             // Screen on, stop timer
             removeMessages(EVENT_SCREEN_OFF_INACTIVITY_TIMER_TIMED_OUT);
 
+            if (mAlarmManager == null) {
+                plogd("handleEventScreenStateChanged: can not access AlarmManager to stop timer");
+                return;
+            }
+
+            mAlarmManager.cancel(mAlarmListener);
             plogd("handleEventScreenStateChanged: stop timer");
         }
     }
