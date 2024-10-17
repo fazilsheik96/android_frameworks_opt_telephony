@@ -415,7 +415,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
                         .setRecommendingHandoverType(getEmergencyCallToSatelliteHandoverType())
                         .setIsSatelliteAllowedInCurrentLocation(isSatelliteAllowed())
                         .setIsWifiConnected(mCountryDetector.isWifiNetworkConnected())
-                        .setCarrierId(getAvailableNtnCarrierID()).build());
+                        .setCarrierId(mSatelliteController.getSatelliteCarrierId()).build());
     }
 
     private void cleanUpResources(boolean isDialerNotified) {
@@ -739,12 +739,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
     public int getEmergencyCallToSatelliteHandoverType() {
         if (Flags.carrierRoamingNbIotNtn() && isSatelliteViaOemAvailable()
                 && isSatelliteConnectedViaCarrierWithinHysteresisTime()) {
-            Phone satellitePhone = mSatelliteController.getSatellitePhone();
-            if (satellitePhone == null) {
-                ploge("getEmergencyCallToSatelliteHandoverType: satellitePhone is null");
-                return EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_T911;
-            }
-            int satelliteSubId = satellitePhone.getSubId();
+            int satelliteSubId = mSatelliteController.getSelectedSatelliteSubId();
             return mSatelliteController.getCarrierRoamingNtnEmergencyCallToSatelliteHandoverType(
                     satelliteSubId);
         } else if (isSatelliteConnectedViaCarrierWithinHysteresisTime()) {
@@ -831,23 +826,6 @@ public class SatelliteSOSMessageRecommender extends Handler {
         } catch (RuntimeException e) {
             return false;
         }
-    }
-
-    /** Returns the carrier ID of NTN subscription */
-    private int getAvailableNtnCarrierID() {
-        Pair<Boolean, Integer> ntnSubInfo =
-                mSatelliteController.isUsingNonTerrestrialNetworkViaCarrier();
-        if (ntnSubInfo.first) {
-            TelephonyManager tm = mContext.getSystemService(TelephonyManager.class);
-            return tm.createForSubscriptionId(ntnSubInfo.second).getSimCarrierId();
-        }
-
-        Phone satellitePhone = mSatelliteController.getSatellitePhone();
-        if (satellitePhone != null) {
-            return satellitePhone.getCarrierId();
-        }
-
-        return TelephonyManager.UNKNOWN_CARRIER_ID;
     }
 
     private void plogd(@NonNull String log) {

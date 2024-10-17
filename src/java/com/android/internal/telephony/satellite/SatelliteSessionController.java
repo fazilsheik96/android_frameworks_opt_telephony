@@ -1431,12 +1431,7 @@ public class SatelliteSessionController extends StateMachine {
     }
 
     private int getSubId() {
-        Phone phone = mSatelliteController.getSatellitePhone();
-        if (phone == null) {
-            return SatelliteServiceUtils.getPhone().getSubId();
-        }
-
-        return phone.getSubId();
+        return mSatelliteController.getSelectedSatelliteSubId();
     }
 
     private void notifyStateChangedEvent(@SatelliteManager.SatelliteModemState int state) {

@@ -1717,11 +1717,11 @@ public class SatelliteControllerTest extends TelephonyTest {
                         logd("onSatelliteDatagramReceived");
                     }
                 };
-        when(mMockDatagramController.registerForSatelliteDatagram(eq(SUB_ID), eq(callback)))
+        when(mMockDatagramController.registerForSatelliteDatagram(anyInt(), eq(callback)))
                 .thenReturn(SATELLITE_RESULT_SUCCESS);
         int errorCode = mSatelliteControllerUT.registerForIncomingDatagram(callback);
         assertEquals(SATELLITE_RESULT_SUCCESS, errorCode);
-        verify(mMockDatagramController).registerForSatelliteDatagram(eq(SUB_ID), eq(callback));
+        verify(mMockDatagramController).registerForSatelliteDatagram(anyInt(), eq(callback));
     }
 
     @Test
@@ -1736,9 +1736,9 @@ public class SatelliteControllerTest extends TelephonyTest {
                     }
                 };
         doNothing().when(mMockDatagramController)
-                .unregisterForSatelliteDatagram(eq(SUB_ID), eq(callback));
+                .unregisterForSatelliteDatagram(anyInt(), eq(callback));
         mSatelliteControllerUT.unregisterForIncomingDatagram(callback);
-        verify(mMockDatagramController).unregisterForSatelliteDatagram(eq(SUB_ID), eq(callback));
+        verify(mMockDatagramController).unregisterForSatelliteDatagram(anyInt(), eq(callback));
     }
 
     @Test

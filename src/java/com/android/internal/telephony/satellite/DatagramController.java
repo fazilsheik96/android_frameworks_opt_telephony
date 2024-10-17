@@ -638,7 +638,7 @@ public class DatagramController {
                     }
                 };
                 pollPendingSatelliteDatagrams(
-                        SatelliteController.getInstance().getHighestPrioritySubscrption(),
+                        SatelliteController.getInstance().getSelectedSatelliteSubId(),
                         internalCallback);
             }
         }

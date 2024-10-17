@@ -703,7 +703,7 @@ public class DatagramReceiver extends Handler {
             stopDatagramWaitForConnectedStateTimer();
         }
 
-        int subId = SatelliteController.getInstance().getHighestPrioritySubscrption();
+        int subId = SatelliteController.getInstance().getSelectedSatelliteSubId();
         if (mDatagramController.isReceivingDatagrams()) {
             mDatagramController.updateReceiveStatus(subId,
                     SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE,

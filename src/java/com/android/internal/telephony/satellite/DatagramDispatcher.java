@@ -781,7 +781,7 @@ public class DatagramDispatcher extends Handler {
         mSendingInProgress = false;
         mIsEmergencyCommunicationEstablished = false;
 
-        int subId = SatelliteController.getInstance().getHighestPrioritySubscrption();
+        int subId = SatelliteController.getInstance().getSelectedSatelliteSubId();
         if (getPendingMessagesCount() > 0) {
             mDatagramController.updateSendStatus(subId,
                     mLastSendRequestDatagramType,
@@ -867,7 +867,7 @@ public class DatagramDispatcher extends Handler {
             @SatelliteManager.DatagramType int datagramType) {
         plogw("Timed out to wait for satellite connected before sending datagrams");
         synchronized (mLock) {
-            int subId = SatelliteController.getInstance().getHighestPrioritySubscrption();
+            int subId = SatelliteController.getInstance().getSelectedSatelliteSubId();
             // Update send status
             mDatagramController.updateSendStatus(subId,
                     datagramType,
@@ -1051,16 +1051,10 @@ public class DatagramDispatcher extends Handler {
      *                    carrier roaming nb iot ntn SMS.
      */
     public void sendSms(@NonNull PendingRequest pendingSms) {
-        Phone satellitePhone = SatelliteController.getInstance().getSatellitePhone();
-        if (satellitePhone == null) {
-            ploge("sendSms: satellitePhone is null.");
-            return;
-        }
-
         SatelliteController.getInstance().startPointingUI();
 
-        int subId = satellitePhone.getSubId();
-        long messageId = pendingSms.messageId;
+        int subId = SatelliteController.getInstance().getSelectedSatelliteSubId();
+        long messageId = pendingSms.uniqueMessageId;
         plogd("sendSms: subId=" + subId + " messageId:" + messageId);
 
         synchronized (mLock) {
@@ -1098,13 +1092,7 @@ public class DatagramDispatcher extends Handler {
             return;
         }
 
-        Phone satellitePhone = SatelliteController.getInstance().getSatellitePhone();
-        if (satellitePhone == null) {
-            ploge("sendPendingSms: satellitePhone is null.");
-            return;
-        }
-        int subId = satellitePhone.getSubId();
-
+        int subId = SatelliteController.getInstance().getSelectedSatelliteSubId();
         Set<Entry<Long, PendingRequest>> pendingSms = null;
         if (!mSendingInProgress) {
             pendingSms = mPendingSmsMap.entrySet();
