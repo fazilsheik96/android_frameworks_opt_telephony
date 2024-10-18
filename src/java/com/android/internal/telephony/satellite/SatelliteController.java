@@ -17,6 +17,7 @@
 package com.android.internal.telephony.satellite;
 
 import static android.provider.Settings.ACTION_SATELLITE_SETTING;
+import static android.telephony.CarrierConfigManager.CARRIER_ROAMING_NTN_CONNECT_AUTOMATIC;
 import static android.telephony.CarrierConfigManager.CARRIER_ROAMING_NTN_CONNECT_MANUAL;
 import static android.telephony.CarrierConfigManager.CARRIER_ROAMING_NTN_CONNECT_TYPE;
 import static android.telephony.CarrierConfigManager.KEY_CARRIER_ROAMING_NTN_CONNECT_TYPE_INT;
@@ -5818,19 +5819,8 @@ public class SatelliteController extends Handler {
 
         Pair<Boolean, Integer> isNtn = isUsingNonTerrestrialNetworkViaCarrier();
         if (isNtn.first) {
-            if (mSharedPreferences == null) {
-                try {
-                    mSharedPreferences = mContext.getSharedPreferences(SATELLITE_SHARED_PREF,
-                            Context.MODE_PRIVATE);
-                } catch (Exception e) {
-                    loge("Cannot get default shared preferences: " + e);
-                }
-            }
-            if (mSharedPreferences == null) {
-                loge("determineSystemNotification: Cannot get default shared preferences");
-                return;
-            }
-            if (!mSharedPreferences.getBoolean(SATELLITE_SYSTEM_NOTIFICATION_DONE_KEY, false)) {
+            if (!notificationKeyStatus && getCarrierRoamingNtnConnectType(isNtn.second)
+                    == CARRIER_ROAMING_NTN_CONNECT_AUTOMATIC) {
                 updateSatelliteSystemNotification(isNtn.second,
                         CarrierConfigManager.CARRIER_ROAMING_NTN_CONNECT_AUTOMATIC,
                         /*visible*/ true);
