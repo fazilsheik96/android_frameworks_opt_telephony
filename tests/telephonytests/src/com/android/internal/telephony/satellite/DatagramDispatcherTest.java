@@ -1201,8 +1201,8 @@ public class DatagramDispatcherTest extends TelephonyTest {
     private PendingRequest createPendingRequest() {
         return new PendingRequest(
                 SmsDispatchersController.PendingRequest.TYPE_TEXT, null, "test-app",
-                "1111", "2222", asArrayList(null), asArrayList(null),
-                false, null, 0, asArrayList("text"), null,
-                false, 0, false, 10, 100L, false);
+                Binder.getCallingUserHandle().getIdentifier(), "1111", "2222", asArrayList(null),
+                asArrayList(null), false, null, 0, asArrayList("text"), null, false, 0, false,
+                10, 100L, false, false);
     }
 }

@@ -65,6 +65,7 @@ import android.service.carrier.CarrierMessagingService;
 import android.telephony.SmsMessage;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
+import android.text.TextUtils;
 import android.util.LocalLog;
 import android.util.Pair;
 
@@ -750,6 +751,11 @@ public abstract class InboundSmsHandler extends StateMachine {
             // Device doesn't support receiving SMS,
             log("Received short message on device which doesn't support "
                     + "receiving SMS. Ignored.");
+            return Intents.RESULT_SMS_HANDLED;
+        }
+
+        if (isMtSmsPollingMessage(smsb)) {
+            log("Received MT SMS polling message. Ignored.");
             return Intents.RESULT_SMS_HANDLED;
         }
 
@@ -1927,6 +1933,17 @@ public abstract class InboundSmsHandler extends StateMachine {
         // Needs phone package permissions.
         deleteFromRawTable(receiver.mDeleteWhere, receiver.mDeleteWhereArgs, MARK_DELETED);
         sendMessage(EVENT_BROADCAST_COMPLETE);
+    }
+
+    private boolean isMtSmsPollingMessage(@NonNull SmsMessageBase smsb) {
+        if (!mFeatureFlags.carrierRoamingNbIotNtn()
+                || !mContext.getResources().getBoolean(R.bool.config_enabled_mt_sms_polling)) {
+            return false;
+        }
+        String mtSmsPollingText = mContext.getResources()
+                .getString(R.string.config_mt_sms_polling_text);
+        return !TextUtils.isEmpty(mtSmsPollingText)
+                && mtSmsPollingText.equals(smsb.getMessageBody());
     }
 
     /** Checks whether the flag to skip new message notification is set in the bitmask returned

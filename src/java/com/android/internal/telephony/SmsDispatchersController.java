@@ -29,6 +29,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.res.Resources;
 import android.net.Uri;
 import android.os.AsyncResult;
 import android.os.Binder;
@@ -46,6 +47,7 @@ import android.telephony.ServiceState;
 import android.telephony.SmsManager;
 import android.telephony.SmsMessage;
 import android.telephony.TelephonyManager;
+import android.telephony.SubscriptionManager;
 import android.telephony.emergency.EmergencyNumber;
 import android.telephony.satellite.SatelliteManager;
 import android.text.TextUtils;
@@ -65,6 +67,7 @@ import com.android.internal.telephony.gsm.GsmInboundSmsHandler;
 import com.android.internal.telephony.gsm.GsmSMSDispatcher;
 import com.android.internal.telephony.satellite.DatagramDispatcher;
 import com.android.internal.telephony.satellite.SatelliteController;
+import com.android.internal.R;
 import com.android.telephony.Rlog;
 
 import java.io.FileDescriptor;
@@ -242,13 +245,16 @@ public class SmsDispatchersController extends Handler {
         public final int validityPeriod;
         public final long messageId;
         public final boolean skipShortCodeCheck;
+        public final long uniqueMessageId;
+        public final boolean isMtSmsPolling;
 
         public PendingRequest(int type, SMSDispatcher.SmsTracker tracker, String callingPackage,
                 int callingUser, String destAddr, String scAddr,
                 ArrayList<PendingIntent> sentIntents, ArrayList<PendingIntent> deliveryIntents,
                 boolean isForVvm, byte[] data, int destPort, ArrayList<String> texts,
                 Uri messageUri, boolean persistMessage, int priority, boolean expectMore,
-                int validityPeriod, long messageId, boolean skipShortCodeCheck) {
+                int validityPeriod, long messageId, boolean skipShortCodeCheck,
+                boolean isMtSmsPolling) {
             this.type = type;
             this.tracker = tracker;
             this.callingPackage = callingPackage;
@@ -275,6 +281,7 @@ public class SmsDispatchersController extends Handler {
             } else {
                 this.uniqueMessageId = getNextUniqueMessageId();
             }
+            this.isMtSmsPolling = isMtSmsPolling;
         }
 
         public static long getNextUniqueMessageId() {
@@ -831,7 +838,7 @@ public class SmsDispatchersController extends Handler {
                         null, UserHandle.USER_NULL, null, null,
                         null, null, false, null, 0,
                         null, null, false,
-                        0, false, 0, 0L, false);
+                        0, false, 0, 0L, false, false);
                 args.arg3 = "sendRetrySms";
                 sendMessage(obtainMessage(EVENT_REQUEST_DOMAIN_SELECTION, args));
                 return;
@@ -1608,7 +1615,7 @@ public class SmsDispatchersController extends Handler {
                             destAddr, scAddr, asArrayList(sentIntent),
                             asArrayList(deliveryIntent), isForVvm, data, destPort, null,
                             null, false, 0, false, 0,
-                            0L, false),
+                            0L, false, false),
                     "sendData");
             return;
         }
@@ -1841,7 +1848,7 @@ public class SmsDispatchersController extends Handler {
                 callingPkg, callingUser, destAddr, scAddr, asArrayList(sentIntent),
                 asArrayList(deliveryIntent), isForVvm, null, 0, asArrayList(text),
                 messageUri, persistMessage, priority, expectMore, validityPeriod, messageId,
-                skipShortCodeCheck);
+                skipShortCodeCheck, false);
 
         if (SatelliteController.getInstance().isInCarrierRoamingNbIotNtn(mPhone)) {
             // Send P2P SMS using carrier roaming NB IOT NTN
@@ -2005,7 +2012,7 @@ public class SmsDispatchersController extends Handler {
         PendingRequest pendingRequest = new PendingRequest(PendingRequest.TYPE_MULTIPART_TEXT, null,
                 callingPkg, callingUser, destAddr, scAddr, sentIntents, deliveryIntents, false,
                 null, 0, parts, messageUri, persistMessage, priority, expectMore,
-                validityPeriod, messageId, false);
+                validityPeriod, messageId, false, false);
 
         if (SatelliteController.getInstance().isInCarrierRoamingNbIotNtn(mPhone)) {
             // Send multipart P2P SMS using carrier roaming NB IOT NTN
@@ -2182,7 +2189,7 @@ public class SmsDispatchersController extends Handler {
      */
     public void sendCarrierRoamingNbIotNtnText(@NonNull PendingRequest request) {
         if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
-            logd("onSendCarrierRoamingNbIotNtnTextError: carrier roaming nb iot ntn "
+            logd("sendCarrierRoamingNbIotNtnText: carrier roaming nb iot ntn "
                     + "feature flag is disabled");
             return;
         }
@@ -2210,6 +2217,42 @@ public class SmsDispatchersController extends Handler {
         sendMessage(obtainMessage(EVENT_SEND_TEXT_OVER_NTN_ERROR, pendingRequest));
     }
 
+    /**
+     * This API should be used only by {@link DatagramDispatcher} to send MT SMS Polling message
+     * over non-terrestrial network.
+     * To enable users to receive incoming messages, the device needs to send an MO SMS to itself
+     * to trigger SMSC to send all pending SMS to the particular subscription.
+     */
+    public void sendMtSmsPollingMessage() {
+        if (!SatelliteController.getInstance().isInCarrierRoamingNbIotNtn(mPhone)) {
+            logd("sendMtSmsPollingMessage: not in roaming nb iot ntn");
+            return;
+        }
+
+        SubscriptionManager subscriptionManager = (SubscriptionManager) mContext
+                .getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE);
+        String destAddr = subscriptionManager.getPhoneNumber(mPhone.getSubId());
+        if (TextUtils.isEmpty(destAddr)) {
+            logd("sendMtSmsPollingMessage: destAddr is null or empty.");
+            return;
+        }
+
+        String mtSmsPollingText = mContext.getResources()
+                .getString(R.string.config_mt_sms_polling_text);
+        if (TextUtils.isEmpty(mtSmsPollingText)) {
+            logd("sendMtSmsPollingMessage: mtSmsPollingText is null or empty.");
+            return;
+        }
+
+        String callingPackage = mContext.getPackageName();
+        PendingRequest pendingRequest = new PendingRequest(PendingRequest.TYPE_TEXT, null,
+                callingPackage, Binder.getCallingUserHandle().getIdentifier(), destAddr,
+                getSmscAddressFromUSIMWithPhoneIdentity(callingPackage), asArrayList(null),
+                asArrayList(null), false, null, 0, asArrayList(mtSmsPollingText), null, false, 0,
+                false, 5, 0L, true, true);
+
+        DatagramDispatcher.getInstance().sendSms(pendingRequest);
+    }
 
     public interface SmsInjectionCallback {
         void onSmsInjectedResult(int result);

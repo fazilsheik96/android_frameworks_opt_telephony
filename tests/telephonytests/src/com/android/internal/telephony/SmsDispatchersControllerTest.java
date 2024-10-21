@@ -1376,6 +1376,6 @@ public class SmsDispatchersControllerTest extends TelephonyTest {
                 SmsDispatchersController.PendingRequest.TYPE_TEXT, null, "test-app",
                 "1111", "2222", asArrayList(mSentIntent), asArrayList(null),
                 false, null, 0, asArrayList("text"), null,
-                false, 0, false, 10, 100L, false);
+                false, 0, false, 10, 100L, false, false);
     }
 }
