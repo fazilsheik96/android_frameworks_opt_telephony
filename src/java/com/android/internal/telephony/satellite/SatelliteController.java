@@ -115,6 +115,7 @@ import android.telephony.ServiceState;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
+import android.telephony.TelephonyRegistryManager;
 import android.telephony.satellite.INtnSignalStrengthCallback;
 import android.telephony.satellite.ISatelliteCapabilitiesCallback;
 import android.telephony.satellite.ISatelliteDatagramCallback;
@@ -4203,6 +4204,9 @@ public class SatelliteController extends Handler {
         if (!enabled) {
             mIsModemEnabledReportingNtnSignalStrength.set(false);
         }
+        if (mFeatureFlags.satelliteStateChangeListener()) {
+            notifyEnabledStateChanged(enabled);
+        }
     }
 
     private void registerForPendingDatagramCount() {
@@ -7336,7 +7340,6 @@ public class SatelliteController extends Handler {
         mContext.registerReceiver(mPackageStateChangedReceiver, packageFilter,
                 mContext.RECEIVER_EXPORTED);
     }
-
 
     private void notifyEnabledStateChanged(boolean isEnabled) {
         TelephonyRegistryManager trm = mContext.getSystemService(TelephonyRegistryManager.class);

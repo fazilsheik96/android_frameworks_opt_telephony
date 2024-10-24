@@ -42,6 +42,7 @@ import android.content.Intent;
 import android.content.pm.UserInfo;
 import android.net.LinkProperties;
 import android.os.Build;
+import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.UserHandle;
@@ -103,6 +104,7 @@ public class TelephonyRegistryTest extends TelephonyTest {
     // Mocked classes
     private SubscriptionInfo mMockSubInfo;
     private TelephonyRegistry.ConfigurationProvider mMockConfigurationProvider;
+    private IBinder mMockIBinder;
 
     private TelephonyCallbackWrapper mTelephonyCallback;
     private List<LinkCapacityEstimate> mLinkCapacityEstimateList;
@@ -126,6 +128,7 @@ public class TelephonyRegistryTest extends TelephonyTest {
     private boolean mCarrierRoamingNtnMode;
     private boolean mCarrierRoamingNtnEligible;
     private List<Integer> mCarrierRoamingNtnAvailableServices;
+    private boolean mIsSatelliteEnabled;
 
     // All events contribute to TelephonyRegistry#isPhoneStatePermissionRequired
     private static final Set<Integer> READ_PHONE_STATE_EVENTS;
@@ -317,6 +320,18 @@ public class TelephonyRegistryTest extends TelephonyTest {
         }
     }
 
+    public class MySatelliteStateChangeListener implements ISatelliteStateChangeListener {
+        @Override
+        public void onSatelliteEnabledStateChanged(boolean isEnabled) throws RemoteException {
+            mIsSatelliteEnabled = isEnabled;
+        }
+
+        @Override
+        public IBinder asBinder() {
+            return mMockIBinder;
+        }
+    }
+
     private void addTelephonyRegistryService() {
         mServiceManagerMockedServices.put("telephony.registry", mTelephonyRegistry.asBinder());
         mTelephonyRegistry.systemRunning();
@@ -329,6 +344,7 @@ public class TelephonyRegistryTest extends TelephonyTest {
         super.setUp(getClass().getSimpleName());
         mMockSubInfo = mock(SubscriptionInfo.class);
         mMockConfigurationProvider = mock(TelephonyRegistry.ConfigurationProvider.class);
+        mMockIBinder = mock(IBinder.class);
         when(mMockConfigurationProvider.getRegistrationLimit()).thenReturn(-1);
         when(mMockConfigurationProvider.isRegistrationLimitEnabledInPlatformCompat(anyInt()))
                 .thenReturn(false);
@@ -352,6 +368,7 @@ public class TelephonyRegistryTest extends TelephonyTest {
         processAllMessages();
         assertEquals(mTelephonyRegistry.asBinder(),
                 ServiceManager.getService("telephony.registry"));
+        doReturn(new int[]{1}).when(mSubscriptionManager).getActiveSubscriptionIdList();
     }
 
     @After
@@ -1639,5 +1656,76 @@ public class TelephonyRegistryTest extends TelephonyTest {
         int[] carrierServices = mCarrierRoamingNtnAvailableServices.stream()
                 .mapToInt(Integer::intValue).toArray();
         assertTrue(Arrays.equals(carrierServices, services));
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_SATELLITE_STATE_CHANGE_LISTENER)
+    public void testNotifySatelliteStateChanged_onRegistration_getNotified() {
+        MySatelliteStateChangeListener listener = new MySatelliteStateChangeListener();
+        // Set initial satellite enabled state to true
+        mTelephonyRegistry.notifySatelliteStateChanged(true);
+
+        try {
+            // Start monitoring
+            mTelephonyRegistry.addSatelliteStateChangeListener(listener,
+                    mContext.getOpPackageName(), mContext.getAttributionTag());
+            processAllMessages();
+
+            // verify latest state is immediately available on registration
+            assertTrue(mIsSatelliteEnabled);
+        } finally {
+            // Clean up
+            mTelephonyRegistry.removeSatelliteStateChangeListener(listener,
+                    mContext.getOpPackageName());
+        }
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_SATELLITE_STATE_CHANGE_LISTENER)
+    public void testNotifySatelliteStateChanged_duringRegistration_getNotified() {
+        MySatelliteStateChangeListener listener = new MySatelliteStateChangeListener();
+        // Set initial satellite enabled state to true
+        mTelephonyRegistry.notifySatelliteStateChanged(true);
+
+        try {
+            // Start monitoring
+            mTelephonyRegistry.addSatelliteStateChangeListener(listener,
+                    mContext.getOpPackageName(), mContext.getAttributionTag());
+
+            // Satellite enabled state changed
+            mTelephonyRegistry.notifySatelliteStateChanged(false);
+            processAllMessages();
+            // We can receive the new state
+            assertFalse(mIsSatelliteEnabled);
+        } finally {
+            // Clean up
+            mTelephonyRegistry.removeSatelliteStateChangeListener(listener,
+                    mContext.getOpPackageName());
+        }
+    }
+
+    @Test
+    @EnableFlags(Flags.FLAG_SATELLITE_STATE_CHANGE_LISTENER)
+    public void testNotifySatelliteStateChanged_removeRegistration_notNotified() {
+        MySatelliteStateChangeListener listener = new MySatelliteStateChangeListener();
+        // Set initial satellite enabled state to true
+        mTelephonyRegistry.notifySatelliteStateChanged(true);
+
+        try {
+            // Start monitoring
+            mTelephonyRegistry.addSatelliteStateChangeListener(listener,
+                    mContext.getOpPackageName(), mContext.getAttributionTag());
+            mTelephonyRegistry.notifySatelliteStateChanged(false);
+        } finally {
+            // Stop monitoring from now on
+            mTelephonyRegistry.removeSatelliteStateChangeListener(listener,
+                    mContext.getOpPackageName());
+        }
+
+        // Satellite enabled state changed again
+        mTelephonyRegistry.notifySatelliteStateChanged(true);
+        processAllMessages();
+        // We should not receive the new state change after monitoring end
+        assertFalse(mIsSatelliteEnabled);
     }
 }
