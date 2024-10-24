@@ -113,12 +113,16 @@ import static org.mockito.Mockito.when;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.NotificationManager;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
+import android.hardware.devicestate.DeviceState;
+import android.net.Uri;
 import android.os.AsyncResult;
 import android.os.Bundle;
 import android.os.CancellationSignal;
@@ -192,6 +196,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
@@ -4816,7 +4821,7 @@ public class SatelliteControllerTest extends TelephonyTest {
             logd("NameNotFoundException");
         }
         assertTrue(mSatelliteControllerUT
-                .isP2PSmsDisallowedOnCarrierRoamingNtn(mPhone));
+                .isP2PSmsDisallowedOnCarrierRoamingNtn(/*subId*/ SUB_ID));
     }
 
     @Test
@@ -4838,7 +4843,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         }
         // If it is automatic connection case, it is not support the callback.
         assertFalse(mSatelliteControllerUT
-                .isP2PSmsDisallowedOnCarrierRoamingNtn(mPhone));
+                .isP2PSmsDisallowedOnCarrierRoamingNtn(/*subId*/ SUB_ID));
     }
 
     ApplicationInfo getApplicationInfo() {
@@ -4848,6 +4853,84 @@ public class SatelliteControllerTest extends TelephonyTest {
                 METADATA_SATELLITE_MANUAL_CONNECT_P2P_SUPPORT, true);
         return applicationInfo;
     }
+
+    @Test
+    public void testRegisterApplicationStateChanged() {
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
+        mCarrierConfigBundle.putBoolean(KEY_SATELLITE_ATTACH_SUPPORTED_BOOL, false);
+        when(mMockSubscriptionManagerService.getActiveSubIdList(true))
+                .thenReturn(new int[]{SUB_ID1});
+
+        ArgumentCaptor<IntentFilter> intentFilterCaptor =
+                ArgumentCaptor.forClass(IntentFilter.class);
+        ArgumentCaptor<BroadcastReceiver> receiverCaptor =
+                ArgumentCaptor.forClass(BroadcastReceiver.class);
+        verify(mContext).registerReceiver(receiverCaptor.capture(), intentFilterCaptor.capture(),
+                anyInt());
+
+        BroadcastReceiver receiver = receiverCaptor.getValue();
+        mSatelliteControllerUT =
+                new TestSatelliteController(mContext, Looper.myLooper(), mFeatureFlags);
+        assertFalse(mSatelliteControllerUT.isApplicationUpdated);
+        Intent intent = new Intent(Intent.ACTION_PACKAGE_ADDED);
+        intent.setData(Uri.parse("com.example.app"));
+        receiver.onReceive(mContext, intent);
+        CountDownLatch latch1 = new CountDownLatch(1);
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            latch1.countDown();
+        }, 100);
+        try {
+            latch1.await();
+        } catch (InterruptedException e) {
+        }
+        assertTrue(mSatelliteControllerUT.isApplicationUpdated);
+        mSatelliteControllerUT =
+                new TestSatelliteController(mContext, Looper.myLooper(), mFeatureFlags);
+        assertFalse(mSatelliteControllerUT.isApplicationUpdated);
+        intent = new Intent(Intent.ACTION_PACKAGE_REPLACED);
+        intent.setData(Uri.parse("com.example.app"));
+        receiver.onReceive(mContext, intent);
+        CountDownLatch latch2 = new CountDownLatch(1);
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            latch2.countDown();
+        }, 100);
+        try {
+            latch2.await();
+        } catch (InterruptedException e) {
+        }
+        assertTrue(mSatelliteControllerUT.isApplicationUpdated);
+        mSatelliteControllerUT =
+                new TestSatelliteController(mContext, Looper.myLooper(), mFeatureFlags);
+        assertFalse(mSatelliteControllerUT.isApplicationUpdated);
+        intent = new Intent(Intent.ACTION_PACKAGE_REMOVED);
+        intent.setData(Uri.parse("com.example.app"));
+        receiver.onReceive(mContext, intent);
+        CountDownLatch latch3 = new CountDownLatch(1);
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            latch3.countDown();
+        }, 100);
+        try {
+            latch3.await();
+        } catch (InterruptedException e) {
+        }
+        assertTrue(mSatelliteControllerUT.isApplicationUpdated);
+        mSatelliteControllerUT =
+                new TestSatelliteController(mContext, Looper.myLooper(), mFeatureFlags);
+        assertFalse(mSatelliteControllerUT.isApplicationUpdated);
+        intent = new Intent(Intent.ACTION_PACKAGE_ADDED);
+        intent.setData(Uri.parse("com.example.different"));
+        receiver.onReceive(mContext, intent);
+        CountDownLatch latch4 = new CountDownLatch(1);
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            latch4.countDown();
+        }, 100);
+        try {
+            latch4.await();
+        } catch (InterruptedException e) {
+        }
+        assertFalse(mSatelliteControllerUT.isApplicationUpdated);
+    }
+
     private void verifyProvisionStatusPerSubscriberIdGetFromDb(boolean provision) {
         doReturn(provision).when(
                 mMockSubscriptionManagerService).isSatelliteProvisionedForNonIpDatagram(anyInt());
@@ -5605,12 +5688,13 @@ public class SatelliteControllerTest extends TelephonyTest {
         public int satelliteModeSettingValue = SATELLITE_MODE_ENABLED_FALSE;
         public boolean setSettingsKeyToAllowDeviceRotationCalled = false;
         public OutcomeReceiver<Boolean, SatelliteException> isSatelliteAllowedCallback = null;
-        public String packageName = "com.example.app";
+        public static boolean isApplicationUpdated;
 
         TestSatelliteController(
                 Context context, Looper looper, @NonNull FeatureFlags featureFlags) {
             super(context, looper, featureFlags);
             logd("Constructing TestSatelliteController");
+            isApplicationUpdated = false;
         }
 
         @Override
@@ -5687,7 +5771,13 @@ public class SatelliteControllerTest extends TelephonyTest {
 
         @Override
         protected String getConfigSatelliteGatewayServicePackage() {
+            String packageName = "com.example.app";
             return packageName;
+        }
+
+        @Override
+        protected void handleCarrierRoamingNtnAvailableServicesChanged(int subId) {
+            isApplicationUpdated = true;
         }
 
         void setSatelliteProvisioned(@Nullable Boolean isProvisioned) {

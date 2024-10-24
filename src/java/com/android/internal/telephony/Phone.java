@@ -137,6 +137,7 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -5490,6 +5491,8 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
      */
     public void notifyCarrierRoamingNtnAvailableServicesChanged(
             @NetworkRegistrationInfo.ServiceType int[] availableServices) {
+        logd("notifyCarrierRoamingNtnAvailableServicesChanged availableServices:"
+                + Arrays.toString(availableServices));
         mNotifier.notifyCarrierRoamingNtnAvailableServicesChanged(this, availableServices);
     }
 
