@@ -1588,7 +1588,7 @@ public class EmergencyStateTracker {
         final boolean isAirplaneModeOn = isAirplaneModeOn(mContext);
         boolean needToTurnOnRadio = !isRadioOn() || isAirplaneModeOn;
         final SatelliteController satelliteController = SatelliteController.getInstance();
-        boolean needToTurnOffSatellite = satelliteController.isSatelliteEnabled();
+        boolean needToTurnOffSatellite = satelliteController.isSatelliteEnabledOrBeingEnabled();
 
         if (isAirplaneModeOn && !isPowerOff()
                 && !phone.getServiceStateTracker().getDesiredPowerState()) {
@@ -1614,7 +1614,7 @@ public class EmergencyStateTracker {
                 @Override
                 public void onComplete(RadioOnStateListener listener, boolean isRadioReady) {
                     if (!isRadioReady) {
-                        if (satelliteController.isSatelliteEnabled()) {
+                        if (satelliteController.isSatelliteEnabledOrBeingEnabled()) {
                             // Could not turn satellite off
                             Rlog.e(TAG, "Failed to turn off satellite modem.");
                             completeEmergencyMode(emergencyType, DisconnectCause.SATELLITE_ENABLED);
@@ -1647,7 +1647,7 @@ public class EmergencyStateTracker {
                         return false;
                     }
                     return phone.getServiceStateTracker().isRadioOn()
-                            && !satelliteController.isSatelliteEnabled();
+                            && !satelliteController.isSatelliteEnabledOrBeingEnabled();
                 }
 
                 @Override
@@ -1659,7 +1659,7 @@ public class EmergencyStateTracker {
                     }
                     // onTimeout shall be called only with the Phone for emergency
                     return phone.getServiceStateTracker().isRadioOn()
-                            && !satelliteController.isSatelliteEnabled();
+                            && !satelliteController.isSatelliteEnabledOrBeingEnabled();
                 }
             }, !isTestEmergencyNumber, phone, isTestEmergencyNumber, waitForInServiceTimeout,
                     /* forNormalRoutingEmergencyCall */ false);

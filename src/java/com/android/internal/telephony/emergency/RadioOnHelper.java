@@ -104,11 +104,8 @@ public class RadioOnHelper implements RadioOnStateListener.Callback {
         }
         powerOnRadio(forEmergencyCall, phoneForEmergencyCall, isTestEmergencyNumber,
                 forNormalRoutingEmergencyCall);
-        if (SatelliteController.getInstance().isSatelliteEnabled()
-                || SatelliteController.getInstance().isSatelliteBeingEnabled()) {
-            // TODO: phoneForEmergencyCall is actually ignored, SatelliteController#mSatelliePhone
-            //  is being used instead.
-            powerOffSatellite(phoneForEmergencyCall);
+        if (SatelliteController.getInstance().isSatelliteEnabledOrBeingEnabled()) {
+            powerOffSatellite();
         }
     }
 
@@ -162,7 +159,7 @@ public class RadioOnHelper implements RadioOnStateListener.Callback {
      * Attempt to power off the satellite modem. We'll eventually get an
      * onSatelliteModemStateChanged() callback when the satellite modem is successfully disabled.
      */
-    private void powerOffSatellite(Phone phoneForEmergencyCall) {
+    private void powerOffSatellite() {
         SatelliteController satelliteController = SatelliteController.getInstance();
         satelliteController.requestSatelliteEnabled(
                 false /* enableSatellite */, false /* enableDemoMode */, false /* isEmergency */,
