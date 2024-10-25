@@ -321,7 +321,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
             boolean isCellularAvailable = SatelliteServiceUtils.isCellularAvailable();
             if (!isCellularAvailable
                     && isSatelliteAllowed()
-                    && (isSatelliteViaOemAvailable()
+                    && (isDeviceProvisioned()
                     || isSatelliteConnectedViaCarrierWithinHysteresisTime())
                     && shouldTrackCall(mEmergencyConnection.getState())) {
                 plogd("handleTimeoutEvent: Sent EVENT_DISPLAY_EMERGENCY_MESSAGE to Dialer");
@@ -359,8 +359,8 @@ public class SatelliteSOSMessageRecommender extends Handler {
      * @return {@code true} if satellite is provisioned via OEM else return {@code false}
      */
     @VisibleForTesting
-    public boolean isSatelliteViaOemAvailable() {
-        Boolean satelliteProvisioned = mSatelliteController.isSatelliteViaOemProvisioned();
+    public boolean isDeviceProvisioned() {
+        Boolean satelliteProvisioned = mSatelliteController.isDeviceProvisioned();
         return satelliteProvisioned != null ? satelliteProvisioned : false;
     }
 
@@ -737,7 +737,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
 
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
     public int getEmergencyCallToSatelliteHandoverType() {
-        if (Flags.carrierRoamingNbIotNtn() && isSatelliteViaOemAvailable()
+        if (Flags.carrierRoamingNbIotNtn() && isDeviceProvisioned()
                 && isSatelliteConnectedViaCarrierWithinHysteresisTime()) {
             int satelliteSubId = mSatelliteController.getSelectedSatelliteSubId();
             return mSatelliteController.getCarrierRoamingNtnEmergencyCallToSatelliteHandoverType(
@@ -799,7 +799,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
     }
 
     private boolean isSatelliteViaOemProvisioned() {
-        Boolean provisioned = mSatelliteController.isSatelliteViaOemProvisioned();
+        Boolean provisioned = mSatelliteController.isDeviceProvisioned();
         return (provisioned != null) && provisioned;
     }
 

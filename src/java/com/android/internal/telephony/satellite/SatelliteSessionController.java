@@ -310,20 +310,6 @@ public class SatelliteSessionController extends StateMachine {
         mSessionMetricsStats = SessionMetricsStats.getInstance();
         mAlarmManager = mContext.getSystemService(AlarmManager.class);
 
-        if (mFeatureFlags.carrierRoamingNbIotNtn()) {
-            // Register to received Cellular service state
-            for (Phone phone : PhoneFactory.getPhones()) {
-                if (phone == null) continue;
-
-                phone.registerForServiceStateChanged(
-                        getHandler(), EVENT_SERVICE_STATE_CHANGED, null);
-                if (DBG) {
-                    plogd("SatelliteSessionController: registerForServiceStateChanged phoneId "
-                            + phone.getPhoneId());
-                }
-            }
-        }
-
         addState(mUnavailableState);
         addState(mPowerOffState);
         addState(mEnablingState);
@@ -922,12 +908,7 @@ public class SatelliteSessionController extends StateMachine {
                     handleSatelliteModemStateChanged(msg);
                     break;
                 case EVENT_ENABLE_CELLULAR_MODEM_WHILE_SATELLITE_MODE_IS_ON_DONE:
-                    if (!mIgnoreCellularServiceState) {
-                        handleEventEnableCellularModemWhileSatelliteModeIsOnDone();
-                    } else {
-                        plogd("IdleState: processing: ignore "
-                                + "EVENT_ENABLE_CELLULAR_MODEM_WHILE_SATELLITE_MODE_IS_ON_DONE");
-                    }
+                    plogd("EVENT_ENABLE_CELLULAR_MODEM_WHILE_SATELLITE_MODE_IS_ON_DONE");
                     break;
                 case EVENT_SERVICE_STATE_CHANGED:
                     if (!mIgnoreCellularServiceState) {
@@ -967,22 +948,6 @@ public class SatelliteSessionController extends StateMachine {
                     ploge("Unexpected transferring state received for non-NB-IOT NTN");
                 }
             }
-        }
-
-        private void handleEventEnableCellularModemWhileSatelliteModeIsOnDone() {
-            if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
-                Rlog.d(TAG, "handleEventEnableCellularModemWhileSatelliteModeIsOnDone: "
-                        + "carrierRoamingNbIotNtn is disabled");
-                return;
-            }
-
-            ServiceState serviceState = mSatelliteController.getSatellitePhone().getServiceState();
-            if (serviceState == null) {
-                plogd("handleEventEnableCellularModemWhileSatelliteModeIsOnDone: "
-                        + "can't access ServiceState");
-                return;
-            }
-            handleEventServiceStateChanged(serviceState);
         }
 
         private void handleEventServiceStateChanged(ServiceState serviceState) {

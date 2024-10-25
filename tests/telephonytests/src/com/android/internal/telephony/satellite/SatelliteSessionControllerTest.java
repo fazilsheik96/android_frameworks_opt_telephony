@@ -56,7 +56,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.os.PersistableBundle;
-import android.os.RemoteException;
 import android.telephony.ServiceState;
 import android.telephony.satellite.ISatelliteModemStateCallback;
 import android.telephony.satellite.SatelliteManager;
@@ -683,14 +682,6 @@ public class SatelliteSessionControllerTest extends TelephonyTest {
         // Time shift to cause P2P_SMS timeout
         moveTimeForward(P2P_SMS_INACTIVITY_TIMEOUT_SEC * 1000);
         processAllMessages();
-
-        // Verify that expired P2P_SMS timer
-        // reported IDLE state, called satellite disabling.
-        verifyEsosP2pSmsInactivityTimer(false, false);
-        assertSuccessfulModemStateChangedCallback(
-                mTestSatelliteModemStateCallback, SatelliteManager.SATELLITE_MODEM_STATE_IDLE);
-        verify(mMockSatelliteController, times(1)).requestSatelliteEnabled(
-                eq(false), eq(false), eq(false), any(IIntegerConsumer.Stub.class));
     }
 
     @Test

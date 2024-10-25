@@ -84,12 +84,13 @@ import static com.android.internal.telephony.satellite.SatelliteController.SATEL
 import static com.android.internal.telephony.satellite.SatelliteController.SATELLITE_MODE_ENABLED_TRUE;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -636,7 +637,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         doNothing().when(mMockProvisionMetricsStats).reportProvisionMetrics();
         doNothing().when(mMockControllerMetricsStats).reportDeprovisionCount(anyInt());
         when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
-        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(false);
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
         doReturn(mSST).when(mPhone).getServiceStateTracker();
         doReturn(mSST).when(mPhone2).getServiceStateTracker();
         doReturn(mServiceState).when(mSST).getServiceState();
@@ -1021,7 +1022,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         clearInvocations(mMockSatelliteSessionController);
         clearInvocations(mMockDatagramController);
         mSatelliteControllerUT.setSatelliteSessionController(mMockSatelliteSessionController);
-        when(mMockSatelliteSessionController.isInDisablingState()).thenReturn(true);
+        mSatelliteControllerUT.isSatelliteBeingDisabled = true;
         mSatelliteControllerUT.setSettingsKeyForSatelliteModeCalled = false;
         mSatelliteControllerUT.setSettingsKeyToAllowDeviceRotationCalled = false;
         setUpResponseForRequestSatelliteEnabled(false, false, false, SATELLITE_RESULT_SUCCESS);
@@ -1040,7 +1041,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         verify(mMockSatelliteSessionController, times(2)).setDemoMode(eq(false));
         verify(mMockDatagramController, times(2)).setDemoMode(eq(false));
         verify(mMockControllerMetricsStats, times(1)).onSatelliteDisabled();
-        when(mMockSatelliteSessionController.isInDisablingState()).thenReturn(false);
+        mSatelliteControllerUT.isSatelliteBeingDisabled = false;
 
         // Fail to enable satellite when radio is off.
         mIIntegerConsumerResults.clear();
@@ -1188,7 +1189,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         mIIntegerConsumerResults.clear();
         mIIntegerConsumerSemaphore.drainPermits();
         mSatelliteControllerUT.setSatelliteSessionController(mMockSatelliteSessionController);
-        when(mMockSatelliteSessionController.isInDisablingState()).thenReturn(true);
+        mSatelliteControllerUT.isSatelliteBeingDisabled = true;
         mSatelliteControllerUT.requestSatelliteEnabled(true, false, false, mIIntegerConsumer);
         processAllMessages();
         assertTrue(waitForIIntegerConsumerResult(1));
@@ -1197,7 +1198,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         mIIntegerConsumerResults.clear();
         mIIntegerConsumerSemaphore.drainPermits();
         resetSatelliteControllerUTToOffAndProvisionedState();
-        when(mMockSatelliteSessionController.isInDisablingState()).thenReturn(false);
+        mSatelliteControllerUT.isSatelliteBeingDisabled = false;
 
         /**
          * Make areAllRadiosDisabled return false and move mWaitingForRadioDisabled to true, which
@@ -1711,6 +1712,14 @@ public class SatelliteControllerTest extends TelephonyTest {
                 semaphore, 1, "testRegisterForSatelliteProvisionStateChanged"));
         assertEquals(SATELLITE_RESULT_SUCCESS, errorCode);
 
+        try {
+            setSatelliteSubscriberTesting();
+        } catch (Exception ex) {
+            fail("provisionSatelliteService.setSatelliteSubscriberTesting: ex=" + ex);
+        }
+        doReturn(true).when(mMockSubscriptionManagerService).isSatelliteProvisionedForNonIpDatagram(
+                anyInt());
+
         String mText = "This is test provision data.";
         byte[] testProvisionData = mText.getBytes();
         CancellationSignal cancellationSignal = new CancellationSignal();
@@ -1857,6 +1866,8 @@ public class SatelliteControllerTest extends TelephonyTest {
 
     @Test
     public void testProvisionSatelliteService() {
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(false);
+
         String mText = "This is test provision data.";
         byte[] testProvisionData = mText.getBytes();
         CancellationSignal cancellationSignal = new CancellationSignal();
@@ -1941,6 +1952,7 @@ public class SatelliteControllerTest extends TelephonyTest {
 
     @Test
     public void testDeprovisionSatelliteService() {
+        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(false);
         mIIntegerConsumerSemaphore.drainPermits();
         mIIntegerConsumerResults.clear();
         setUpResponseForRequestIsSatelliteSupported(false, SATELLITE_RESULT_SUCCESS);
@@ -2545,14 +2557,14 @@ public class SatelliteControllerTest extends TelephonyTest {
 
         clearInvocations(mMockSatelliteSessionController);
         clearInvocations(mMockDatagramController);
-        when(mMockSatelliteSessionController.isInDisablingState()).thenReturn(true);
+        mSatelliteControllerUT.isSatelliteBeingDisabled = true;
         sendSatelliteModemStateChangedEvent(SATELLITE_MODEM_STATE_NOT_CONNECTED, null);
         processAllMessages();
         verify(mMockSatelliteSessionController, times(1)).onSatelliteModemStateChanged(
                 SATELLITE_MODEM_STATE_NOT_CONNECTED);
 
         clearInvocations(mMockSatelliteSessionController);
-        when(mMockSatelliteSessionController.isInDisablingState()).thenReturn(false);
+        mSatelliteControllerUT.isSatelliteBeingDisabled = false;
         sendSatelliteModemStateChangedEvent(SATELLITE_MODEM_STATE_NOT_CONNECTED, null);
         processAllMessages();
         verify(mMockSatelliteSessionController, never()).onSatelliteModemStateChanged(
@@ -2562,7 +2574,6 @@ public class SatelliteControllerTest extends TelephonyTest {
     @Test
     public void testRequestNtnSignalStrengthWithFeatureFlagEnabled() {
         when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(true);
-
         resetSatelliteControllerUT();
 
         mRequestNtnSignalStrengthSemaphore.drainPermits();
@@ -4749,6 +4760,7 @@ public class SatelliteControllerTest extends TelephonyTest {
                 .thenReturn(allSubInfos);
 
         when(mSubscriptionInfo.isSatelliteESOSSupported()).thenReturn(true);
+        when(mSubscriptionInfo.isActive()).thenReturn(true);
         when(mMockSubscriptionManagerService.getSubscriptionInfoInternal(SUB_ID))
                 .thenReturn(subInfoInternal);
 
@@ -5517,6 +5529,15 @@ public class SatelliteControllerTest extends TelephonyTest {
         setUpResponseForRequestIsSatelliteProvisioned(false, SATELLITE_RESULT_SUCCESS);
         verifySatelliteSupported(true, SATELLITE_RESULT_SUCCESS);
         verifySatelliteProvisioned(false, SATELLITE_RESULT_SUCCESS);
+
+        try {
+            setSatelliteSubscriberTesting();
+        } catch (Exception ex) {
+            fail("provisionSatelliteService.setSatelliteSubscriberTesting: ex=" + ex);
+        }
+        doReturn(true).when(mMockSubscriptionManagerService).isSatelliteProvisionedForNonIpDatagram(
+                anyInt());
+
         cancelRemote = mSatelliteControllerUT.provisionSatelliteService(
                 TEST_SATELLITE_TOKEN,
                 testProvisionData, mIIntegerConsumer);
@@ -5689,6 +5710,8 @@ public class SatelliteControllerTest extends TelephonyTest {
         public boolean setSettingsKeyToAllowDeviceRotationCalled = false;
         public OutcomeReceiver<Boolean, SatelliteException> isSatelliteAllowedCallback = null;
         public static boolean isApplicationUpdated;
+        public String packageName = "com.example.app";
+        public boolean isSatelliteBeingDisabled = false;
 
         TestSatelliteController(
                 Context context, Looper looper, @NonNull FeatureFlags featureFlags) {
@@ -5770,6 +5793,10 @@ public class SatelliteControllerTest extends TelephonyTest {
         }
 
         @Override
+        public boolean isSatelliteBeingDisabled() {
+            return isSatelliteBeingDisabled;
+        }
+
         protected String getConfigSatelliteGatewayServicePackage() {
             String packageName = "com.example.app";
             return packageName;
@@ -5781,8 +5808,8 @@ public class SatelliteControllerTest extends TelephonyTest {
         }
 
         void setSatelliteProvisioned(@Nullable Boolean isProvisioned) {
-            synchronized (mSatelliteViaOemProvisionLock) {
-                mIsSatelliteViaOemProvisioned = isProvisioned;
+            synchronized (mDeviceProvisionLock) {
+                mIsDeviceProvisioned = isProvisioned;
             }
         }
 
