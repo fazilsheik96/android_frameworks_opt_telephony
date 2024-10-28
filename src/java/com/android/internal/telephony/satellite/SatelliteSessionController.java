@@ -188,6 +188,8 @@ public class SatelliteSessionController extends StateMachine {
     @Nullable private DeviceStateMonitor mDeviceStateMonitor;
     @NonNull private SessionMetricsStats mSessionMetricsStats;
     @NonNull private FeatureFlags mFeatureFlags;
+    @SatelliteManager.SatelliteModemState private int mModemStateFromController =
+            SATELLITE_MODEM_STATE_UNKNOWN;
     @NonNull private AlarmManager mAlarmManager;
     private final AlarmManager.OnAlarmListener mAlarmListener = new AlarmManager.OnAlarmListener() {
         @Override
@@ -383,6 +385,10 @@ public class SatelliteSessionController extends StateMachine {
      */
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PACKAGE)
     public void onSatelliteModemStateChanged(@SatelliteManager.SatelliteModemState int state) {
+        if (mFeatureFlags.carrierRoamingNbIotNtn()) {
+            plogd("onSatelliteModemStateChanged from SatelliteController : " + state);
+            mModemStateFromController = state;
+        }
         sendMessage(EVENT_SATELLITE_MODEM_STATE_CHANGED, state);
     }
 
@@ -993,7 +999,15 @@ public class SatelliteSessionController extends StateMachine {
                     int error = SatelliteServiceUtils.getSatelliteError(
                             result, "DisableCellularModemWhileSatelliteModeIsOnDone");
                     if (error == SatelliteManager.SATELLITE_RESULT_SUCCESS) {
-                        transitionTo(mNotConnectedState);
+                        if (mFeatureFlags.carrierRoamingNbIotNtn()
+                                && mModemStateFromController == SATELLITE_MODEM_STATE_CONNECTED) {
+                            ploge("mPreviousState : " + mPreviousState
+                                    + " mModemStateFromController : "
+                                    + mModemStateFromController + " I->C");
+                            transitionTo(mConnectedState);
+                        } else {
+                            transitionTo(mNotConnectedState);
+                        }
                     }
                     mIsDisableCellularModemInProgress = false;
                 } else {
@@ -1653,6 +1667,13 @@ public class SatelliteSessionController extends StateMachine {
         }
         mIsScreenOn = screenOn;
 
+        if (mSatelliteController.getRequestIsEmergency()) {
+            if (DBG) logd("handleEventScreenStateChanged: Emergency mode");
+            // This is for coexistence
+            // emergency mode can be set after registerForScreenStateChanged() called for P2P-sms
+            return;
+        }
+
         if (!screenOn) {
             // Screen off, start timer
             int timeoutMillis = getScreenOffInactivityTimeoutDurationSec() * 1000;
@@ -1807,6 +1828,15 @@ public class SatelliteSessionController extends StateMachine {
     }
 
     private void handleEventScreenOffInactivityTimerTimedOut() {
+        if (mSatelliteController.getRequestIsEmergency()) {
+            loge("handleEventScreenOffInactivityTimerTimedOut: Emergency mode");
+            /* This is for coexistence
+             * mIsEmergency can be set after
+             * EVENT_SCREEN_OFF_INACTIVITY_TIMER_TIMED_OUT timer started
+             */
+            return;
+        }
+
         plogd("handleEventScreenOffInactivityTimerTimedOut: request disable satellite");
 
         mSatelliteController.requestSatelliteEnabled(
