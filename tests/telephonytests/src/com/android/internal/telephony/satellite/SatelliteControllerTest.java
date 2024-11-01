@@ -2531,6 +2531,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         assertTrue(
                 mQueriedSatelliteCapabilities.getSupportedRadioTechnologies().contains(
                         satelliteController.getSupportedNtnRadioTechnology()));
+        assertEquals(mQueriedSatelliteCapabilities.getMaxBytesPerOutgoingDatagram(), 255);
         assertTrue(satelliteController.isSatelliteAttachRequired());
 
         when(mFeatureFlags.oemEnabledSatelliteFlag()).thenReturn(false);

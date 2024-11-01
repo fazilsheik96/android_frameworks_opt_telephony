@@ -2315,6 +2315,7 @@ public class SatelliteController extends Handler {
         synchronized (mSatelliteCapabilitiesLock) {
             if (mSatelliteCapabilities != null) {
                 Bundle bundle = new Bundle();
+                overrideSatelliteCapabilitiesIfApplicable();
                 bundle.putParcelable(SatelliteManager.KEY_SATELLITE_CAPABILITIES,
                         mSatelliteCapabilities);
                 result.send(SATELLITE_RESULT_SUCCESS, bundle);
@@ -4450,13 +4451,11 @@ public class SatelliteController extends Handler {
 
         synchronized (mSatelliteCapabilitiesLock) {
             mSatelliteCapabilities = capabilities;
+            overrideSatelliteCapabilitiesIfApplicable();
         }
 
         List<ISatelliteCapabilitiesCallback> deadCallersList = new ArrayList<>();
         mSatelliteCapabilitiesChangedListeners.values().forEach(listener -> {
-            synchronized (this.mSatelliteCapabilitiesLock) {
-                overrideSatelliteCapabilitiesIfApplicable();
-            }
             try {
                 listener.onSatelliteCapabilitiesChanged(this.mSatelliteCapabilities);
             } catch (RemoteException e) {
@@ -4920,7 +4919,8 @@ public class SatelliteController extends Handler {
                         KEY_CARRIER_ROAMING_NTN_EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_INT,
                         KEY_SATELLITE_ROAMING_SCREEN_OFF_INACTIVITY_TIMEOUT_SEC_INT,
                         KEY_SATELLITE_ROAMING_P2P_SMS_INACTIVITY_TIMEOUT_SEC_INT,
-                        KEY_SATELLITE_ROAMING_ESOS_INACTIVITY_TIMEOUT_SEC_INT
+                        KEY_SATELLITE_ROAMING_ESOS_INACTIVITY_TIMEOUT_SEC_INT,
+                        KEY_SATELLITE_SOS_MAX_DATAGRAM_SIZE
                 );
             } catch (Exception e) {
                 logw("getConfigForSubId: " + e);
