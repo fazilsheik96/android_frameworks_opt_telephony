@@ -156,6 +156,7 @@ import com.android.internal.telephony.satellite.metrics.ProvisionMetricsStats;
 import com.android.internal.telephony.satellite.metrics.SessionMetricsStats;
 import com.android.internal.telephony.subscription.SubscriptionInfoInternal;
 import com.android.internal.telephony.subscription.SubscriptionManagerService;
+import com.android.internal.telephony.util.ArrayUtils;
 import com.android.internal.telephony.util.TelephonyUtils;
 import com.android.internal.util.FunctionalUtils;
 
@@ -3696,7 +3697,7 @@ public class SatelliteController extends Handler {
      * @return {@code true} if phone is in carrier roaming nb iot ntn mode,
      * else {@return false}
      */
-    public boolean isInCarrierRoamingNbIotNtn(@NonNull Phone phone) {
+    private boolean isInCarrierRoamingNbIotNtn(@NonNull Phone phone) {
         if (!mFeatureFlags.carrierRoamingNbIotNtn()) {
             plogd("isInCarrierRoamingNbIotNtn: carrier roaming nb iot ntn "
                     + "feature flag is disabled");
@@ -3714,6 +3715,14 @@ public class SatelliteController extends Handler {
                       + " is not carrier roaming ntn eligible.");
             return false;
         }
+
+        int subId = phone.getSubId();
+        if (subId != getSelectedSatelliteSubId()) {
+            plogd("isInCarrierRoamingNbIotNtn: subId=" + subId
+                    + " does not match satellite subId=" + getSelectedSatelliteSubId());
+            return false;
+        }
+
         plogd("isInCarrierRoamingNbIotNtn: carrier roaming ntn eligible for phone"
                   + " associated with subId " + phone.getSubId());
         return true;
@@ -6806,8 +6815,9 @@ public class SatelliteController extends Handler {
             return false;
         }
 
-        if (!isSatelliteServiceSupportedByCarrier(subId,
-                NetworkRegistrationInfo.SERVICE_TYPE_SMS)) {
+
+        int[] services = getSupportedServicesOnCarrierRoamingNtn(subId);
+        if (!ArrayUtils.contains(services, NetworkRegistrationInfo.SERVICE_TYPE_SMS)) {
             plogd("isCarrierRoamingNtnEligible[phoneId=" + phone.getPhoneId()
                     + "]: SMS is not supported by carrier");
             return false;
@@ -7222,25 +7232,30 @@ public class SatelliteController extends Handler {
             return;
         }
         plogd("updateLastNotifiedNtnAvailableServicesAndNotify: phoneId= " + phone.getPhoneId());
+        int[] services = getSupportedServicesOnCarrierRoamingNtn(subId);
+        phone.notifyCarrierRoamingNtnAvailableServicesChanged(services);
+    }
 
+    /** Return services that are supported on carrier roaming non-terrestrial network. */
+    public int[] getSupportedServicesOnCarrierRoamingNtn(int subId) {
         SatelliteManager satelliteManager = mContext.getSystemService(SatelliteManager.class);
         if (satelliteManager == null) {
             plogd("updateLastNotifiedNtnAvailableServicesAndNotify: satelliteManager is null");
-            phone.notifyCarrierRoamingNtnAvailableServicesChanged(new int[0]);
-            return;
+            return new int[0];
         }
+
         List<Integer> satelliteDisallowedReasons = satelliteManager.getSatelliteDisallowedReasons();
         if (isSatelliteSupportedViaCarrier(subId)
                 && (satelliteDisallowedReasons != null && !satelliteDisallowedReasons.isEmpty())) {
+            // TODO: b/377367448 Cleanup get supported satellite services to align with starlink.
             int[] services = getSupportedSatelliteServicesForCarrier(subId);
             if (isP2PSmsDisallowedOnCarrierRoamingNtn(subId)) {
                 services = Arrays.stream(services).filter(
                         value -> value != NetworkRegistrationInfo.SERVICE_TYPE_SMS).toArray();
             }
-            phone.notifyCarrierRoamingNtnAvailableServicesChanged(services);
-        } else {
-            phone.notifyCarrierRoamingNtnAvailableServicesChanged(new int[0]);
+            return services;
         }
+        return new int[0];
     }
 
     /**
@@ -7320,5 +7335,31 @@ public class SatelliteController extends Handler {
         packageFilter.addDataScheme("package");
         mContext.registerReceiver(mPackageStateChangedReceiver, packageFilter,
                 mContext.RECEIVER_EXPORTED);
+    }
+
+
+    private void notifyEnabledStateChanged(boolean isEnabled) {
+        TelephonyRegistryManager trm = mContext.getSystemService(TelephonyRegistryManager.class);
+        if (trm == null) {
+            loge("Telephony registry service is down!");
+            return;
+        }
+
+        trm.notifySatelliteStateChanged(isEnabled);
+        logd("notifyEnabledStateChanged to " + isEnabled);
+    }
+
+    /** Returns whether to send SMS to DatagramDispatcher or not. */
+    public boolean shouldSendSmsToDatagramDispatcher(@NonNull Phone phone) {
+        if (!isInCarrierRoamingNbIotNtn(phone)) {
+            return false;
+        }
+
+        if (isDemoModeEnabled()) {
+            return false;
+        }
+
+        int[] services = getSupportedServicesOnCarrierRoamingNtn(phone.getSubId());
+        return ArrayUtils.contains(services, NetworkRegistrationInfo.SERVICE_TYPE_SMS);
     }
 }

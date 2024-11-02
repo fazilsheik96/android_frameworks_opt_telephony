@@ -4065,6 +4065,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(true);
         when(mServiceState.getState()).thenReturn(ServiceState.STATE_OUT_OF_SERVICE);
         when(mServiceState2.getState()).thenReturn(ServiceState.STATE_OUT_OF_SERVICE);
+        mSatelliteControllerUT.mIsApplicationSupportsP2P = true;
         mCarrierConfigBundle.putBoolean(KEY_SATELLITE_ATTACH_SUPPORTED_BOOL, true);
         mCarrierConfigBundle.putInt(KEY_CARRIER_ROAMING_NTN_CONNECT_TYPE_INT, 1);
         mCarrierConfigBundle.putBoolean(KEY_SATELLITE_ROAMING_P2P_SMS_SUPPORTED_BOOL, true);
@@ -4123,6 +4124,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         when(mFeatureFlags.carrierEnabledSatelliteFlag()).thenReturn(true);
         when(mServiceState2.getState()).thenReturn(ServiceState.STATE_OUT_OF_SERVICE);
         when(mServiceState.getState()).thenReturn(ServiceState.STATE_OUT_OF_SERVICE);
+        mSatelliteControllerUT.mIsApplicationSupportsP2P = true;
         mCarrierConfigBundle.putBoolean(KEY_SATELLITE_ATTACH_SUPPORTED_BOOL, true);
         mCarrierConfigBundle.putInt(KEY_CARRIER_ROAMING_NTN_CONNECT_TYPE_INT, 1);
         mCarrierConfigBundle.putInt(
@@ -5713,6 +5715,7 @@ public class SatelliteControllerTest extends TelephonyTest {
         public static boolean isApplicationUpdated;
         public String packageName = "com.example.app";
         public boolean isSatelliteBeingDisabled = false;
+        public boolean mIsApplicationSupportsP2P = false;
 
         TestSatelliteController(
                 Context context, Looper looper, @NonNull FeatureFlags featureFlags) {
@@ -5807,6 +5810,17 @@ public class SatelliteControllerTest extends TelephonyTest {
         protected void handleCarrierRoamingNtnAvailableServicesChanged(int subId) {
             isApplicationUpdated = true;
         }
+
+        @Override
+        public boolean isApplicationSupportsP2P(String packageName) {
+            return mIsApplicationSupportsP2P;
+        }
+
+        @Override
+        public int[] getSupportedServicesOnCarrierRoamingNtn(int subId) {
+            return new int[]{3, 5};
+        }
+
 
         void setSatelliteProvisioned(@Nullable Boolean isProvisioned) {
             synchronized (mDeviceProvisionLock) {
