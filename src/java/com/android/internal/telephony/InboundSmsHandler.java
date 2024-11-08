@@ -74,6 +74,7 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.telephony.SmsConstants.MessageClass;
 import com.android.internal.telephony.analytics.TelephonyAnalytics;
 import com.android.internal.telephony.analytics.TelephonyAnalytics.SmsMmsAnalytics;
+import com.android.internal.telephony.flags.FeatureFlags;
 import com.android.internal.telephony.metrics.TelephonyMetrics;
 import com.android.internal.telephony.satellite.SatelliteController;
 import com.android.internal.telephony.satellite.metrics.CarrierRoamingSatelliteSessionStats;
@@ -286,6 +287,8 @@ public abstract class InboundSmsHandler extends StateMachine {
 
     private List<SmsFilter> mSmsFilters;
 
+    protected final @NonNull FeatureFlags mFeatureFlags;
+
     /**
      * Create a new SMS broadcast helper.
      * @param name the class name for logging
@@ -293,9 +296,10 @@ public abstract class InboundSmsHandler extends StateMachine {
      * @param storageMonitor the SmsStorageMonitor to check for storage availability
      */
     protected InboundSmsHandler(String name, Context context, SmsStorageMonitor storageMonitor,
-            Phone phone, Looper looper) {
+            Phone phone, Looper looper, FeatureFlags featureFlags) {
         super(name, looper);
 
+        mFeatureFlags = featureFlags;
         mContext = context;
         mStorageMonitor = storageMonitor;
         mPhone = phone;
