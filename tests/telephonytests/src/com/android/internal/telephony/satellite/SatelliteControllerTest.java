@@ -16,11 +16,6 @@
 
 package com.android.internal.telephony.satellite;
 
-import static android.hardware.devicestate.DeviceState.PROPERTY_FOLDABLE_DISPLAY_CONFIGURATION_INNER_PRIMARY;
-import static android.hardware.devicestate.DeviceState.PROPERTY_FOLDABLE_DISPLAY_CONFIGURATION_OUTER_PRIMARY;
-import static android.hardware.devicestate.DeviceState.PROPERTY_FOLDABLE_HARDWARE_CONFIGURATION_FOLD_IN_CLOSED;
-import static android.hardware.devicestate.DeviceState.PROPERTY_FOLDABLE_HARDWARE_CONFIGURATION_FOLD_IN_OPEN;
-import static android.hardware.devicestate.feature.flags.Flags.FLAG_DEVICE_STATE_PROPERTY_MIGRATION;
 import static android.telephony.CarrierConfigManager.CARRIER_ROAMING_NTN_CONNECT_AUTOMATIC;
 import static android.telephony.CarrierConfigManager.KEY_CARRIER_ROAMING_NTN_CONNECT_TYPE_INT;
 import static android.telephony.CarrierConfigManager.KEY_CARRIER_SUPPORTED_SATELLITE_NOTIFICATION_HYSTERESIS_SEC_INT;
@@ -123,7 +118,6 @@ import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
-import android.hardware.devicestate.DeviceState;
 import android.net.Uri;
 import android.os.AsyncResult;
 import android.os.Bundle;
@@ -4292,86 +4286,6 @@ public class SatelliteControllerTest extends TelephonyTest {
         assertEquals(expectedErrorCode, resultErrorCode[0]);
     }
 
-    @RequiresFlagsDisabled(FLAG_DEVICE_STATE_PROPERTY_MIGRATION)
-    @Test
-    public void testDetermineIsFoldable_overlayConfigurationValues() {
-        // isFoldable should return false with the base configuration.
-        assertFalse(mSatelliteControllerUT.isFoldable(mContext,
-                mSatelliteControllerUT.getSupportedDeviceStates()));
-
-        mContextFixture.putIntArrayResource(R.array.config_foldedDeviceStates, new int[2]);
-        assertTrue(mSatelliteControllerUT.isFoldable(mContext,
-                mSatelliteControllerUT.getSupportedDeviceStates()));
-    }
-
-    @RequiresFlagsEnabled(FLAG_DEVICE_STATE_PROPERTY_MIGRATION)
-    @Test
-    public void testDetermineIsFoldable_deviceStateManager() {
-        // isFoldable should return false with the base configuration.
-        assertFalse(mSatelliteControllerUT.isFoldable(mContext,
-                mSatelliteControllerUT.getSupportedDeviceStates()));
-
-        DeviceState foldedDeviceState = new DeviceState(new DeviceState.Configuration.Builder(
-                0 /* identifier */, "FOLDED")
-                .setSystemProperties(Set.of(PROPERTY_FOLDABLE_DISPLAY_CONFIGURATION_OUTER_PRIMARY))
-                .setPhysicalProperties(
-                        Set.of(PROPERTY_FOLDABLE_HARDWARE_CONFIGURATION_FOLD_IN_CLOSED))
-                .build());
-        DeviceState unfoldedDeviceState = new DeviceState(new DeviceState.Configuration.Builder(
-                1 /* identifier */, "UNFOLDED")
-                .setSystemProperties(Set.of(PROPERTY_FOLDABLE_DISPLAY_CONFIGURATION_INNER_PRIMARY))
-                .setPhysicalProperties(
-                        Set.of(PROPERTY_FOLDABLE_HARDWARE_CONFIGURATION_FOLD_IN_OPEN))
-                .build());
-        List<DeviceState> foldableDeviceStateList = List.of(foldedDeviceState, unfoldedDeviceState);
-        assertTrue(mSatelliteControllerUT.isFoldable(mContext, foldableDeviceStateList));
-    }
-
-    @Test
-    public void testTerrestrialNetworkAvailableChangedCallback() {
-        when(mFeatureFlags.carrierRoamingNbIotNtn()).thenReturn(true);
-        Semaphore semaphore = new Semaphore(0);
-        final int[] receivedScanResult = new int[1];
-        ISatelliteModemStateCallback callback = new ISatelliteModemStateCallback.Stub() {
-            @Override
-            public void onSatelliteModemStateChanged(int state) {
-                logd("onSatelliteModemStateChanged: state=" + state);
-            }
-
-            @Override
-            public void onEmergencyModeChanged(boolean isEmergency) {
-                logd("onEmergencyModeChanged: emergency=" + isEmergency);
-            }
-
-            @Override
-            public void onRegistrationFailure(int causeCode) {
-                logd("onRegistrationFailure: causeCode=" + causeCode);
-            }
-
-            @Override
-            public void onTerrestrialNetworkAvailableChanged(boolean isAvailable) {
-                logd("onTerrestrialNetworkAvailableChanged: isAvailable=" + isAvailable);
-                receivedScanResult[0] = isAvailable ? 1 : 0;
-                semaphore.release();
-            }
-        };
-        resetSatelliteControllerUTToSupportedAndProvisionedState();
-        mSatelliteControllerUT.setSatelliteSessionController(mMockSatelliteSessionController);
-
-        int RegisterErrorCode = mSatelliteControllerUT.registerForSatelliteModemStateChanged(
-                callback);
-        assertEquals(SATELLITE_RESULT_SUCCESS, RegisterErrorCode);
-        verify(mMockSatelliteSessionController).registerForSatelliteModemStateChanged(callback);
-
-        int expectedErrorCode = 1;
-        mIIntegerConsumerResults.clear();
-        sendTerrestrialNetworkAvailableChangedEvent(true, null);
-        processAllMessages();
-        assertTrue(waitForForEvents(
-                semaphore, 1, "testRegistrationFailureCallback"));
-        assertEquals(expectedErrorCode, receivedScanResult[0]);
-    }
-
     private boolean mProvisionState = false;
     private int mProvisionSateResultCode = -1;
     private Semaphore mProvisionSateSemaphore = new Semaphore(0);
@@ -5800,12 +5714,6 @@ public class SatelliteControllerTest extends TelephonyTest {
                 }
             }
             return false;
-        }
-
-        @Override
-        protected List<DeviceState> getSupportedDeviceStates() {
-            return List.of(new DeviceState(new DeviceState.Configuration.Builder(0 /* identifier */,
-                    "DEFAULT" /* name */).build()));
         }
 
         @Override
