@@ -861,26 +861,24 @@ public class PersistAtomsStorage {
     /** Adds a new {@link CarrierRoamingSatelliteControllerStats} to the storage. */
     public synchronized void addCarrierRoamingSatelliteControllerStats(
             CarrierRoamingSatelliteControllerStats stats) {
-        // CarrierRoamingSatelliteController is a single data point
-        CarrierRoamingSatelliteControllerStats[] atomArray =
-                mAtoms.carrierRoamingSatelliteControllerStats;
-        if (atomArray == null || atomArray.length == 0) {
-            atomArray = new CarrierRoamingSatelliteControllerStats[] {new
-                    CarrierRoamingSatelliteControllerStats()};
+        CarrierRoamingSatelliteControllerStats existingStats = find(stats);
+        if (existingStats != null) {
+            existingStats.configDataSource = stats.configDataSource;
+            existingStats.countOfEntitlementStatusQueryRequest +=
+                    stats.countOfEntitlementStatusQueryRequest;
+            existingStats.countOfSatelliteConfigUpdateRequest +=
+                    stats.countOfSatelliteConfigUpdateRequest;
+            existingStats.countOfSatelliteNotificationDisplayed +=
+                    stats.countOfSatelliteNotificationDisplayed;
+            existingStats.satelliteSessionGapMinSec = stats.satelliteSessionGapMinSec;
+            existingStats.satelliteSessionGapAvgSec = stats.satelliteSessionGapAvgSec;
+            existingStats.satelliteSessionGapMaxSec = stats.satelliteSessionGapMaxSec;
+            existingStats.isDeviceEntitled = stats.isDeviceEntitled;
+        } else {
+            mAtoms.carrierRoamingSatelliteControllerStats = insertAtRandomPlace(
+                    mAtoms.carrierRoamingSatelliteControllerStats, stats, mMaxNumSatelliteStats);
         }
 
-        CarrierRoamingSatelliteControllerStats atom = atomArray[0];
-        atom.configDataSource = stats.configDataSource;
-        atom.countOfEntitlementStatusQueryRequest += stats.countOfEntitlementStatusQueryRequest;
-        atom.countOfSatelliteConfigUpdateRequest += stats.countOfSatelliteConfigUpdateRequest;
-        atom.countOfSatelliteNotificationDisplayed += stats.countOfSatelliteNotificationDisplayed;
-        atom.satelliteSessionGapMinSec = stats.satelliteSessionGapMinSec;
-        atom.satelliteSessionGapAvgSec = stats.satelliteSessionGapAvgSec;
-        atom.satelliteSessionGapMaxSec = stats.satelliteSessionGapMaxSec;
-        atom.carrierId = stats.carrierId;
-        atom.isDeviceEntitled = stats.isDeviceEntitled;
-
-        mAtoms.carrierRoamingSatelliteControllerStats = atomArray;
         saveAtomsToFile(SAVE_TO_FILE_DELAY_FOR_UPDATE_MILLIS);
     }
 
@@ -2385,6 +2383,21 @@ public class PersistAtomsStorage {
                     && stats.signalStrength == key.signalStrength
                     && stats.validationResult == key.validationResult
                     && stats.handoverAttempted == key.handoverAttempted) {
+                return stats;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Returns CarrierRoamingSatelliteControllerStats atom that has same carrier_id value or
+     * {@code null} if does not exist.
+     */
+    private @Nullable CarrierRoamingSatelliteControllerStats find(
+            CarrierRoamingSatelliteControllerStats key) {
+        for (CarrierRoamingSatelliteControllerStats stats :
+                mAtoms.carrierRoamingSatelliteControllerStats) {
+            if (stats.carrierId == key.carrierId) {
                 return stats;
             }
         }

@@ -104,6 +104,8 @@ public class SatelliteModemInterface {
             new RegistrantList();
     @NonNull private final RegistrantList mSatelliteRegistrationFailureRegistrants =
             new RegistrantList();
+    @NonNull private final RegistrantList mTerrestrialNetworkAvailableChangedRegistrants =
+            new RegistrantList();
 
     private class SatelliteListener extends ISatelliteListener.Stub {
 
@@ -190,6 +192,11 @@ public class SatelliteModemInterface {
         @Override
         public void onRegistrationFailure(int causeCode) {
             mSatelliteRegistrationFailureRegistrants.notifyResult(causeCode);
+        }
+
+        @Override
+        public void onTerrestrialNetworkAvailableChanged(boolean isAvailable) {
+            mTerrestrialNetworkAvailableChangedRegistrants.notifyResult(isAvailable);
         }
 
         private boolean notifyResultIfExpectedListener() {
@@ -587,6 +594,27 @@ public class SatelliteModemInterface {
     }
 
     /**
+     * Registers for the terrestrial network available changed.
+     *
+     * @param h Handler for notification message.
+     * @param what User-defined message code.
+     * @param obj User object.
+     */
+    public void registerForTerrestrialNetworkAvailableChanged(
+            @NonNull Handler h, int what, @Nullable Object obj) {
+        mTerrestrialNetworkAvailableChangedRegistrants.add(h, what, obj);
+    }
+
+    /**
+     * Unregisters for the terrestrial network available changed.
+     *
+     * @param h Handler to be removed from the registrant list.
+     */
+    public void unregisterForTerrestrialNetworkAvailableChanged(@NonNull Handler h) {
+        mTerrestrialNetworkAvailableChangedRegistrants.remove(h);
+    }
+
+    /**
      * Request to enable or disable the satellite service listening mode.
      * Listening mode allows the satellite service to listen for incoming pages.
      *
@@ -652,14 +680,14 @@ public class SatelliteModemInterface {
                 };
 
                 if (mSatelliteController.isDemoModeEnabled()) {
-                    mDemoSimulator.enableCellularModemWhileSatelliteModeIsOn(
+                    mDemoSimulator.enableTerrestrialNetworkScanWhileSatelliteModeIsOn(
                             enabled, errorCallback);
                 } else {
-                    mSatelliteService.enableCellularModemWhileSatelliteModeIsOn(
+                    mSatelliteService.enableTerrestrialNetworkScanWhileSatelliteModeIsOn(
                             enabled, errorCallback);
                 }
             } catch (RemoteException e) {
-                ploge("enableCellularModemWhileSatelliteModeIsOn: RemoteException " + e);
+                ploge("enableTerrestrialNetworkScanWhileSatelliteModeIsOn: RemoteException " + e);
                 if (message != null) {
                     sendMessageWithResult(
                             message, null, SatelliteManager.SATELLITE_RESULT_SERVICE_ERROR);

@@ -321,7 +321,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
             boolean isCellularAvailable = SatelliteServiceUtils.isCellularAvailable();
             if (!isCellularAvailable
                     && isSatelliteAllowed()
-                    && (isSatelliteViaOemAvailable()
+                    && (isDeviceProvisioned()
                     || isSatelliteConnectedViaCarrierWithinHysteresisTime())
                     && shouldTrackCall(mEmergencyConnection.getState())) {
                 plogd("handleTimeoutEvent: Sent EVENT_DISPLAY_EMERGENCY_MESSAGE to Dialer");
@@ -359,8 +359,8 @@ public class SatelliteSOSMessageRecommender extends Handler {
      * @return {@code true} if satellite is provisioned via OEM else return {@code false}
      */
     @VisibleForTesting
-    public boolean isSatelliteViaOemAvailable() {
-        Boolean satelliteProvisioned = mSatelliteController.isSatelliteViaOemProvisioned();
+    public boolean isDeviceProvisioned() {
+        Boolean satelliteProvisioned = mSatelliteController.isDeviceProvisioned();
         return satelliteProvisioned != null ? satelliteProvisioned : false;
     }
 
@@ -415,7 +415,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
                         .setRecommendingHandoverType(getEmergencyCallToSatelliteHandoverType())
                         .setIsSatelliteAllowedInCurrentLocation(isSatelliteAllowed())
                         .setIsWifiConnected(mCountryDetector.isWifiNetworkConnected())
-                        .setCarrierId(getAvailableNtnCarrierID()).build());
+                        .setCarrierId(mSatelliteController.getSatelliteCarrierId()).build());
     }
 
     private void cleanUpResources(boolean isDialerNotified) {
@@ -737,14 +737,9 @@ public class SatelliteSOSMessageRecommender extends Handler {
 
     @VisibleForTesting(visibility = VisibleForTesting.Visibility.PRIVATE)
     public int getEmergencyCallToSatelliteHandoverType() {
-        if (Flags.carrierRoamingNbIotNtn() && isSatelliteViaOemAvailable()
+        if (Flags.carrierRoamingNbIotNtn() && isDeviceProvisioned()
                 && isSatelliteConnectedViaCarrierWithinHysteresisTime()) {
-            Phone satellitePhone = mSatelliteController.getSatellitePhone();
-            if (satellitePhone == null) {
-                ploge("getEmergencyCallToSatelliteHandoverType: satellitePhone is null");
-                return EMERGENCY_CALL_TO_SATELLITE_HANDOVER_TYPE_T911;
-            }
-            int satelliteSubId = satellitePhone.getSubId();
+            int satelliteSubId = mSatelliteController.getSelectedSatelliteSubId();
             return mSatelliteController.getCarrierRoamingNtnEmergencyCallToSatelliteHandoverType(
                     satelliteSubId);
         } else if (isSatelliteConnectedViaCarrierWithinHysteresisTime()) {
@@ -804,7 +799,7 @@ public class SatelliteSOSMessageRecommender extends Handler {
     }
 
     private boolean isSatelliteViaOemProvisioned() {
-        Boolean provisioned = mSatelliteController.isSatelliteViaOemProvisioned();
+        Boolean provisioned = mSatelliteController.isDeviceProvisioned();
         return (provisioned != null) && provisioned;
     }
 
@@ -831,23 +826,6 @@ public class SatelliteSOSMessageRecommender extends Handler {
         } catch (RuntimeException e) {
             return false;
         }
-    }
-
-    /** Returns the carrier ID of NTN subscription */
-    private int getAvailableNtnCarrierID() {
-        Pair<Boolean, Integer> ntnSubInfo =
-                mSatelliteController.isUsingNonTerrestrialNetworkViaCarrier();
-        if (ntnSubInfo.first) {
-            TelephonyManager tm = mContext.getSystemService(TelephonyManager.class);
-            return tm.createForSubscriptionId(ntnSubInfo.second).getSimCarrierId();
-        }
-
-        Phone satellitePhone = mSatelliteController.getSatellitePhone();
-        if (satellitePhone != null) {
-            return satellitePhone.getCarrierId();
-        }
-
-        return TelephonyManager.UNKNOWN_CARRIER_ID;
     }
 
     private void plogd(@NonNull String log) {
