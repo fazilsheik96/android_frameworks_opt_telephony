@@ -141,14 +141,13 @@ public class ControllerMetricsStats {
             builder.setCountOfDemoModeOutgoingDatagramSuccess(ADD_COUNT);
         } else {
             builder.setCountOfOutgoingDatagramSuccess(ADD_COUNT);
-        }
-
-        if (SatelliteServiceUtils.isSosMessage(datagramType)) {
-            builder.setCountOfDatagramTypeSosSmsSuccess(ADD_COUNT);
-        } else if (datagramType == SatelliteManager.DATAGRAM_TYPE_LOCATION_SHARING) {
-            builder.setCountOfDatagramTypeLocationSharingSuccess(ADD_COUNT);
-        } else if (datagramType == SatelliteManager.DATAGRAM_TYPE_KEEP_ALIVE) {
-            builder.setCountOfDatagramTypeKeepAliveSuccess(ADD_COUNT).build();
+            if (SatelliteServiceUtils.isSosMessage(datagramType)) {
+                builder.setCountOfDatagramTypeSosSmsSuccess(ADD_COUNT);
+            } else if (datagramType == SatelliteManager.DATAGRAM_TYPE_LOCATION_SHARING) {
+                builder.setCountOfDatagramTypeLocationSharingSuccess(ADD_COUNT);
+            } else if (datagramType == SatelliteManager.DATAGRAM_TYPE_KEEP_ALIVE) {
+                builder.setCountOfDatagramTypeKeepAliveSuccess(ADD_COUNT).build();
+            }
         }
 
         SatelliteStats.SatelliteControllerParams controllerParam = builder.build();
@@ -166,14 +165,13 @@ public class ControllerMetricsStats {
             builder.setCountOfDemoModeOutgoingDatagramFail(ADD_COUNT);
         } else {
             builder.setCountOfOutgoingDatagramFail(ADD_COUNT);
-        }
-
-        if (SatelliteServiceUtils.isSosMessage(datagramType)) {
-            builder.setCountOfDatagramTypeSosSmsFail(ADD_COUNT);
-        } else if (datagramType == SatelliteManager.DATAGRAM_TYPE_LOCATION_SHARING) {
-            builder.setCountOfDatagramTypeLocationSharingFail(ADD_COUNT);
-        } else if (datagramType == SatelliteManager.DATAGRAM_TYPE_KEEP_ALIVE) {
-            builder.setCountOfDatagramTypeKeepAliveFail(ADD_COUNT);
+            if (SatelliteServiceUtils.isSosMessage(datagramType)) {
+                builder.setCountOfDatagramTypeSosSmsFail(ADD_COUNT);
+            } else if (datagramType == SatelliteManager.DATAGRAM_TYPE_LOCATION_SHARING) {
+                builder.setCountOfDatagramTypeLocationSharingFail(ADD_COUNT);
+            } else if (datagramType == SatelliteManager.DATAGRAM_TYPE_KEEP_ALIVE) {
+                builder.setCountOfDatagramTypeKeepAliveFail(ADD_COUNT);
+            }
         }
 
         SatelliteStats.SatelliteControllerParams controllerParam = builder.build();
