@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+/*
+ * Changes from Qualcomm Innovation Center, Inc. are provided under the following license:
+ * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 package com.android.internal.telephony.data;
 
 import android.annotation.CallbackExecutor;
@@ -1540,9 +1546,7 @@ public class DataRetryManager extends Handler {
                     dataRetryEntry.retryDelayMillis);
         } else {
             if (mFlags.useAlarmCallback()) {
-                // No need to wake up the device, the retry can wait util next time the device wake
-                // up to save power.
-                mAlarmManager.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME,
+                mAlarmManager.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP,
                         dataRetryEntry.retryElapsedTime,
                         "dataRetryHash-" + dataRetryEntry.hashCode() /*debug tag*/,
                         Runnable::run,
