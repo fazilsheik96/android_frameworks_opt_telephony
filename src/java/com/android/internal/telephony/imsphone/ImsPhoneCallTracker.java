@@ -4139,7 +4139,15 @@ public class ImsPhoneCallTracker extends CallTracker implements ImsPullCall {
             if (mForegroundCall.getState() != ImsPhoneCall.State.ACTIVE) {
                 if (mRingingCall.getState().isRinging()) {
                     // Drop pending MO. We should address incoming call first
-                    mPendingMO = null;
+                    if (mPendingMO != null && !mPendingMO.isEmergency()) {
+                        log("onCallTerminated: drop pending MO call for incoming call");
+                        mPendingMO.setDisconnectCause(DisconnectCause.CANT_CALL_WHILE_RINGING);
+                        mPendingMO.onDisconnect();
+                        removeConnection(mPendingMO);
+                        mPendingMO = null;
+                        updatePhoneState();
+                        removeMessages(EVENT_DIAL_PENDINGMO);
+                    }
                 }
             }
 

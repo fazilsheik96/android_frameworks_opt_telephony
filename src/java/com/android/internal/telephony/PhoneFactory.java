@@ -219,7 +219,7 @@ public class PhoneFactory {
                 Rlog.i(LOG_TAG, "Creating SubscriptionManagerService");
                 sSubscriptionManagerService = TelephonyComponentFactory.getInstance().inject(
                         SubscriptionManagerService.class.getName())
-                        .makeSubscriptionManagerService(context, Looper.myLooper());
+                        .makeSubscriptionManagerService(context, Looper.myLooper(), featureFlags);
 
                 TelephonyComponentFactory.getInstance().inject(MultiSimSettingController.class.
                         getName()).initMultiSimSettingController(context, featureFlags);
