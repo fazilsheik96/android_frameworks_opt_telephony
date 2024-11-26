@@ -3439,7 +3439,7 @@ public class ServiceStateTrackerTest extends TelephonyTest {
         doReturn(Arrays.asList("10123")).when(mSatelliteController).getSatellitePlmnsForCarrier(
                 anyInt());
         doReturn(satelliteSupportedServiceList).when(mSatelliteController)
-                .getSupportedSatelliteServices(sst.mSubId, "10123");
+                .getSupportedSatelliteServicesForPlmn(sst.mSubId, "10123");
 
         assertFalse(sst.mSS.isUsingNonTerrestrialNetwork());
 

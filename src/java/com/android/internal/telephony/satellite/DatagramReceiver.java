@@ -352,10 +352,12 @@ public class DatagramReceiver extends Handler {
 
                     if (pendingCount <= 0 && satelliteDatagram == null) {
                         sInstance.mDatagramController.updateReceiveStatus(mSubId,
+                                SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE,
                                 SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_NONE,
                                 pendingCount, SatelliteManager.SATELLITE_RESULT_SUCCESS);
                     } else if (satelliteDatagram != null) {
                         sInstance.mDatagramController.updateReceiveStatus(mSubId,
+                                SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE,
                                 SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_SUCCESS,
                                 pendingCount, SatelliteManager.SATELLITE_RESULT_SUCCESS);
 
@@ -376,6 +378,7 @@ public class DatagramReceiver extends Handler {
 
                     if (pendingCount <= 0) {
                         sInstance.mDatagramController.updateReceiveStatus(mSubId,
+                                SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE,
                                 SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
                                 pendingCount, SatelliteManager.SATELLITE_RESULT_SUCCESS);
                     } else {
@@ -473,10 +476,12 @@ public class DatagramReceiver extends Handler {
                 plogd("EVENT_POLL_PENDING_SATELLITE_DATAGRAMS_DONE error: " + error);
                 if (error != SatelliteManager.SATELLITE_RESULT_SUCCESS) {
                     mDatagramController.updateReceiveStatus(request.subId,
+                            SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE,
                             SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_FAILED,
                             mDatagramController.getReceivePendingCount(), error);
 
                     mDatagramController.updateReceiveStatus(request.subId,
+                            SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE,
                             SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
                             mDatagramController.getReceivePendingCount(),
                             SatelliteManager.SATELLITE_RESULT_SUCCESS);
@@ -615,6 +620,7 @@ public class DatagramReceiver extends Handler {
                 mPendingPollSatelliteDatagramsRequest = new DatagramReceiverHandlerRequest(
                         callback, SatelliteServiceUtils.getPhone(), subId);
                 mDatagramController.updateReceiveStatus(subId,
+                        SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE,
                         SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_WAITING_TO_CONNECT,
                         mDatagramController.getReceivePendingCount(),
                         SatelliteManager.SATELLITE_RESULT_SUCCESS);
@@ -624,6 +630,7 @@ public class DatagramReceiver extends Handler {
         }
 
         mDatagramController.updateReceiveStatus(subId,
+                SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE,
                 SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVING,
                 mDatagramController.getReceivePendingCount(),
                 SatelliteManager.SATELLITE_RESULT_SUCCESS);
@@ -696,14 +703,16 @@ public class DatagramReceiver extends Handler {
             stopDatagramWaitForConnectedStateTimer();
         }
 
-        int subId = SatelliteController.getInstance().getHighestPrioritySubscrption();
+        int subId = SatelliteController.getInstance().getSelectedSatelliteSubId();
         if (mDatagramController.isReceivingDatagrams()) {
             mDatagramController.updateReceiveStatus(subId,
+                    SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE,
                     SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_FAILED,
                     mDatagramController.getReceivePendingCount(),
                     SatelliteManager.SATELLITE_RESULT_REQUEST_ABORTED);
         }
         mDatagramController.updateReceiveStatus(subId,
+                SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE,
                 SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE, 0,
                 SatelliteManager.SATELLITE_RESULT_SUCCESS);
         cleanupDemoModeResources();
@@ -857,11 +866,13 @@ public class DatagramReceiver extends Handler {
 
             plogw("Timed out to wait for satellite connected before polling datagrams");
             mDatagramController.updateReceiveStatus(mPendingPollSatelliteDatagramsRequest.subId,
+                    SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE,
                     SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_RECEIVE_FAILED,
                     mDatagramController.getReceivePendingCount(),
                     SatelliteManager.SATELLITE_RESULT_NOT_REACHABLE);
 
             mDatagramController.updateReceiveStatus(mPendingPollSatelliteDatagramsRequest.subId,
+                    SatelliteManager.DATAGRAM_TYPE_SOS_MESSAGE,
                     SatelliteManager.SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE,
                     mDatagramController.getReceivePendingCount(),
                     SatelliteManager.SATELLITE_RESULT_SUCCESS);

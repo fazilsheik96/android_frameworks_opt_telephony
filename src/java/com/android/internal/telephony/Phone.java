@@ -137,6 +137,7 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -5482,6 +5483,17 @@ public abstract class Phone extends Handler implements PhoneInternalInterface {
     public void notifyCarrierRoamingNtnEligibleStateChanged(boolean eligible) {
         logd("notifyCarrierRoamingNtnEligibleStateChanged eligible:" + eligible);
         mNotifier.notifyCarrierRoamingNtnEligibleStateChanged(this, eligible);
+    }
+
+    /**
+     * Notify external listeners that carrier roaming non-terrestrial available services changed.
+     * @param availableServices The list of the supported services.
+     */
+    public void notifyCarrierRoamingNtnAvailableServicesChanged(
+            @NetworkRegistrationInfo.ServiceType int[] availableServices) {
+        logd("notifyCarrierRoamingNtnAvailableServicesChanged availableServices:"
+                + Arrays.toString(availableServices));
+        mNotifier.notifyCarrierRoamingNtnAvailableServicesChanged(this, availableServices);
     }
 
     public void dump(FileDescriptor fd, PrintWriter pw, String[] args) {

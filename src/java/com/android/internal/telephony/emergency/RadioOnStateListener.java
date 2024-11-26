@@ -157,6 +157,11 @@ public class RadioOnStateListener {
         public void onRegistrationFailure(int causeCode) {
             Rlog.d(TAG, "onRegistrationFailure: causeCode " + causeCode);
         }
+
+        @Override
+        public void onTerrestrialNetworkAvailableChanged(boolean isAvailable) {
+            Rlog.d(TAG, "onTerrestrialNetworkAvailableChanged: isAvailable " + isAvailable);
+        }
     };
 
     private Callback mCallback; // The callback to notify upon completion.
