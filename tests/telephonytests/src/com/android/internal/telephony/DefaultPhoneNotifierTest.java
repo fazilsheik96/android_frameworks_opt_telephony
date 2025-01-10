@@ -410,4 +410,15 @@ public class DefaultPhoneNotifierTest extends TelephonyTest {
         verify(mTelephonyRegistryManager).notifyCarrierRoamingNtnEligibleStateChanged(
                 eq(subId), eq(true));
     }
+
+    @Test
+    @SmallTest
+    public void testCarrierRoamingNtnAvailableServicesChanged() {
+        int subId = mPhone.getSubId();
+        int[] testServices = {3, 6};
+        mDefaultPhoneNotifierUT.notifyCarrierRoamingNtnAvailableServicesChanged(
+                mPhone, testServices);
+        verify(mTelephonyRegistryManager).notifyCarrierRoamingNtnAvailableServicesChanged(
+                eq(subId), eq(testServices));
+    }
 }

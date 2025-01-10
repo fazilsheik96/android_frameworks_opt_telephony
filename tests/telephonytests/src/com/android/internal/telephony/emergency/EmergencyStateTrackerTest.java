@@ -346,7 +346,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
                 true /* isRadioOn */);
         when(mSST.isRadioOn()).thenReturn(true);
         // Satellite enabled
-        when(mSatelliteController.isSatelliteEnabled()).thenReturn(true);
+        when(mSatelliteController.isSatelliteEnabledOrBeingEnabled()).thenReturn(true);
 
         setConfigForDdsSwitch(testPhone, null,
                 CarrierConfigManager.Gps.SUPL_EMERGENCY_MODE_TYPE_DP_ONLY, "150");
@@ -363,7 +363,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         // isOkToCall() should return true once satellite modem is off
         assertFalse(callback.getValue()
                 .isOkToCall(testPhone, ServiceState.STATE_IN_SERVICE, false));
-        when(mSatelliteController.isSatelliteEnabled()).thenReturn(false);
+        when(mSatelliteController.isSatelliteEnabledOrBeingEnabled()).thenReturn(false);
         assertTrue(callback.getValue()
                 .isOkToCall(testPhone, ServiceState.STATE_IN_SERVICE, false));
         // Once radio on is complete, trigger delay dial
@@ -391,7 +391,7 @@ public class EmergencyStateTrackerTest extends TelephonyTest {
         Phone testPhone = setupTestPhoneForEmergencyCall(false /* isRoaming */,
                 true /* isRadioOn */);
         // Satellite enabled
-        when(mSatelliteController.isSatelliteEnabled()).thenReturn(true);
+        when(mSatelliteController.isSatelliteEnabledOrBeingEnabled()).thenReturn(true);
 
         CompletableFuture<Integer> future = emergencyStateTracker.startEmergencyCall(testPhone,
                 mTestConnection1, false);

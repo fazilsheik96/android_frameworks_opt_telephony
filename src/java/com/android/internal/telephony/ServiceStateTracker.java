@@ -14,6 +14,11 @@
  * limitations under the License.
  */
 
+/* Changes from Qualcomm Innovation Center, Inc. are provided under the following license:
+ * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
 package com.android.internal.telephony;
 
 import static android.provider.Telephony.ServiceStateTable.getUriForSubscriptionId;
@@ -747,7 +752,7 @@ public class ServiceStateTracker extends Handler {
                 if (mSS.isIwlanPreferred() != isIwlanPreferred) {
                     log("onPreferredTransportChanged: IwlanPreferred is changed to "
                             + isIwlanPreferred);
-                    mSS.setIwlanPreferred(isIwlanPreferred);
+                    combinePsRegistrationStates(mSS);
                     mPhone.notifyServiceStateChanged(mPhone.getServiceState());
                 }
             }
@@ -1145,6 +1150,8 @@ public class ServiceStateTracker extends Handler {
         if (power) {
             if (forEmergencyCall) {
                 clearAllRadioOffReasons();
+                removeMessages(EVENT_SET_RADIO_POWER_OFF);
+                mPendingRadioPowerOffAfterDataOff = false;
             } else {
                 mRadioPowerOffReasons.remove(reason);
             }

@@ -62,3 +62,11 @@ flag {
     purpose: PURPOSE_BUGFIX
   }
 }
+
+# OWNER=rambowang TARGET=25Q2
+flag {
+  name: "satellite_state_change_listener"
+  namespace: "telephony"
+  description: "Introduce SatelliteManager APIs for carrier apps to monitor satellite state change"
+  bug: "357638490"
+}

@@ -92,8 +92,8 @@ public class DatagramControllerTest extends TelephonyTest {
         // Move both send and receive to IDLE state
         mDatagramControllerUT.updateSendStatus(SUB_ID, DATAGRAM_TYPE_UNKNOWN,
                 SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE, 0, SATELLITE_RESULT_SUCCESS);
-        mDatagramControllerUT.updateReceiveStatus(SUB_ID, SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE, 0,
-                SATELLITE_RESULT_SUCCESS);
+        mDatagramControllerUT.updateReceiveStatus(SUB_ID, DATAGRAM_TYPE_SOS_MESSAGE,
+                SATELLITE_DATAGRAM_TRANSFER_STATE_IDLE, 0, SATELLITE_RESULT_SUCCESS);
         pushDemoModeSosDatagram(DATAGRAM_TYPE_SOS_MESSAGE);
     }
 
@@ -197,7 +197,7 @@ public class DatagramControllerTest extends TelephonyTest {
                 errorCode);
 
         verify(mMockSatelliteSessionController)
-                .onDatagramTransferStateChanged(eq(sendState), anyInt());
+                .onDatagramTransferStateChanged(eq(sendState), anyInt(), anyInt());
         verify(mMockPointingAppController).updateSendDatagramTransferState(
                 eq(SUB_ID), eq(datagramType), eq(sendState), eq(sendPendingCount), eq(errorCode));
 
@@ -219,10 +219,10 @@ public class DatagramControllerTest extends TelephonyTest {
         int receivePendingCount = 1;
         int errorCode = SATELLITE_RESULT_SUCCESS;
         mDatagramControllerUT.updateReceiveStatus(
-                SUB_ID, receiveState, receivePendingCount, errorCode);
+                SUB_ID, DATAGRAM_TYPE_SOS_MESSAGE, receiveState, receivePendingCount, errorCode);
 
         verify(mMockSatelliteSessionController)
-                .onDatagramTransferStateChanged(anyInt(), eq(receiveState));
+                .onDatagramTransferStateChanged(anyInt(), eq(receiveState), anyInt());
         verify(mMockPointingAppController).updateReceiveDatagramTransferState(
                 eq(SUB_ID), eq(receiveState), eq(receivePendingCount), eq(errorCode));
 

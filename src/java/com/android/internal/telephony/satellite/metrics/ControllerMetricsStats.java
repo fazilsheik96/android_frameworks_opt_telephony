@@ -141,14 +141,13 @@ public class ControllerMetricsStats {
             builder.setCountOfDemoModeOutgoingDatagramSuccess(ADD_COUNT);
         } else {
             builder.setCountOfOutgoingDatagramSuccess(ADD_COUNT);
-        }
-
-        if (SatelliteServiceUtils.isSosMessage(datagramType)) {
-            builder.setCountOfDatagramTypeSosSmsSuccess(ADD_COUNT);
-        } else if (datagramType == SatelliteManager.DATAGRAM_TYPE_LOCATION_SHARING) {
-            builder.setCountOfDatagramTypeLocationSharingSuccess(ADD_COUNT);
-        } else if (datagramType == SatelliteManager.DATAGRAM_TYPE_KEEP_ALIVE) {
-            builder.setCountOfDatagramTypeKeepAliveSuccess(ADD_COUNT).build();
+            if (SatelliteServiceUtils.isSosMessage(datagramType)) {
+                builder.setCountOfDatagramTypeSosSmsSuccess(ADD_COUNT);
+            } else if (datagramType == SatelliteManager.DATAGRAM_TYPE_LOCATION_SHARING) {
+                builder.setCountOfDatagramTypeLocationSharingSuccess(ADD_COUNT);
+            } else if (datagramType == SatelliteManager.DATAGRAM_TYPE_KEEP_ALIVE) {
+                builder.setCountOfDatagramTypeKeepAliveSuccess(ADD_COUNT).build();
+            }
         }
 
         SatelliteStats.SatelliteControllerParams controllerParam = builder.build();
@@ -166,14 +165,13 @@ public class ControllerMetricsStats {
             builder.setCountOfDemoModeOutgoingDatagramFail(ADD_COUNT);
         } else {
             builder.setCountOfOutgoingDatagramFail(ADD_COUNT);
-        }
-
-        if (SatelliteServiceUtils.isSosMessage(datagramType)) {
-            builder.setCountOfDatagramTypeSosSmsFail(ADD_COUNT);
-        } else if (datagramType == SatelliteManager.DATAGRAM_TYPE_LOCATION_SHARING) {
-            builder.setCountOfDatagramTypeLocationSharingFail(ADD_COUNT);
-        } else if (datagramType == SatelliteManager.DATAGRAM_TYPE_KEEP_ALIVE) {
-            builder.setCountOfDatagramTypeKeepAliveFail(ADD_COUNT);
+            if (SatelliteServiceUtils.isSosMessage(datagramType)) {
+                builder.setCountOfDatagramTypeSosSmsFail(ADD_COUNT);
+            } else if (datagramType == SatelliteManager.DATAGRAM_TYPE_LOCATION_SHARING) {
+                builder.setCountOfDatagramTypeLocationSharingFail(ADD_COUNT);
+            } else if (datagramType == SatelliteManager.DATAGRAM_TYPE_KEEP_ALIVE) {
+                builder.setCountOfDatagramTypeKeepAliveFail(ADD_COUNT);
+            }
         }
 
         SatelliteStats.SatelliteControllerParams controllerParam = builder.build();
@@ -369,6 +367,54 @@ public class ControllerMetricsStats {
             loge("BatteryManager is null");
             return 0;
         }
+    }
+
+    /** Capture the latest provisioned state for satellite service */
+    @VisibleForTesting
+    public void setIsProvisioned(boolean isProvisioned) {
+        logd("setIsProvisioned:" + isProvisioned);
+        mSatelliteStats.onSatelliteControllerMetrics(
+                new SatelliteStats.SatelliteControllerParams.Builder()
+                        .setIsProvisioned(isProvisioned)
+                        .build());
+    }
+
+    /** Capture the NB-IoT NTN carrier ID */
+    @VisibleForTesting
+    public void setCarrierId(int carrierId) {
+        logd("setCarrierId:" + carrierId);
+        mSatelliteStats.onSatelliteControllerMetrics(
+                new SatelliteStats.SatelliteControllerParams.Builder()
+                        .setCarrierId(carrierId)
+                        .build());
+    }
+
+    /**
+     * Report a counter when allowed state has changed.
+     */
+    public void reportAllowedStateChanged() {
+        logd("reportAllowedStateChanged:");
+        mSatelliteStats.onSatelliteControllerMetrics(
+                new SatelliteStats.SatelliteControllerParams.Builder()
+                        .setCountOfSatelliteAllowedStateChangedEvents(ADD_COUNT)
+                        .build());
+    }
+
+    /**
+     * Report a counter when location query was successful or failed.
+     */
+    public void reportLocationQuerySuccessful(boolean result) {
+        SatelliteStats.SatelliteControllerParams.Builder builder;
+        if (result) {
+            builder = new SatelliteStats.SatelliteControllerParams.Builder()
+                    .setCountOfSuccessfulLocationQueries(ADD_COUNT);
+        } else {
+            builder = new SatelliteStats.SatelliteControllerParams.Builder()
+                    .setCountOfFailedLocationQueries(ADD_COUNT);
+        }
+        SatelliteStats.SatelliteControllerParams controllerParam = builder.build();
+        logd("reportLocationQuerySuccessful:" + controllerParam);
+        mSatelliteStats.onSatelliteControllerMetrics(controllerParam);
     }
 
     /** Receives the battery status whether it is in charging or not, update interval is 60 sec. */

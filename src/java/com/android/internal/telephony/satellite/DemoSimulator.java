@@ -131,7 +131,7 @@ public class DemoSimulator extends StateMachine {
                 NtnSignalStrength ntnSignalStrength = new NtnSignalStrength();
                 ntnSignalStrength.signalStrengthLevel = 0;
                 mISatelliteListener.onSatelliteModemStateChanged(
-                        SatelliteModemState.SATELLITE_MODEM_STATE_NOT_CONNECTED);
+                        SatelliteModemState.SATELLITE_MODEM_STATE_OUT_OF_SERVICE);
                 mISatelliteListener.onNtnSignalStrengthChanged(ntnSignalStrength);
 
                 synchronized (mLock) {
@@ -191,7 +191,7 @@ public class DemoSimulator extends StateMachine {
                 NtnSignalStrength ntnSignalStrength = new NtnSignalStrength();
                 ntnSignalStrength.signalStrengthLevel = 2;
                 mISatelliteListener.onSatelliteModemStateChanged(
-                        SatelliteModemState.SATELLITE_MODEM_STATE_CONNECTED);
+                        SatelliteModemState.SATELLITE_MODEM_STATE_IN_SERVICE);
                 mISatelliteListener.onNtnSignalStrengthChanged(ntnSignalStrength);
 
                 synchronized (mLock) {
@@ -287,12 +287,12 @@ public class DemoSimulator extends StateMachine {
      *                             and {@code false} to disable
      * @param errorCallback The callback to receive the error code result of the operation.
      */
-    public void enableCellularModemWhileSatelliteModeIsOn(boolean enabled,
+    public void enableTerrestrialNetworkScanWhileSatelliteModeIsOn(boolean enabled,
             @NonNull IIntegerConsumer errorCallback) {
         try {
             errorCallback.accept(SatelliteResult.SATELLITE_RESULT_SUCCESS);
         } catch (RemoteException e) {
-            loge("enableCellularModemWhileSatelliteModeIsOn: RemoteException " + e);
+            loge("enableTerrestrialNetworkScanWhileSatelliteModeIsOn: RemoteException " + e);
         }
     }
 
